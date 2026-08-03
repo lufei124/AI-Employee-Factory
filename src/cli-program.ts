@@ -1,0 +1,412 @@
+import path from 'node:path';
+import YAML from 'yaml';
+import chalk from 'chalk';
+import { Command } from 'commander';
+import { confirm, input, password, select } from '@inquirer/prompts';
+import type { CreateAgentInput } from './core/create-agent.js';
+import { AgentCtlError } from './core/errors.js';
+import { resolveFactoryPaths, displayPath } from './core/paths.js';
+import { RegistryStore } from './core/registry.js';
+import type { RuntimeProvider } from './schemas/agent-schema.js';
+import { FactoryApplication } from './application/factory-application.js';
+import { startWebConsole } from './web/start.js';
+
+function context() {
+  const paths = resolveFactoryPaths();
+  const registry = new RegistryStore(paths.registryFile);
+  return { paths, application: new FactoryApplication(paths, registry) };
+}
+
+async function confirmDanger(message: string, yes: boolean): Promise<void> {
+  if (yes) return;
+  if (!(await confirm({ message, default: false })))
+    throw new AgentCtlError('OPERATION_FAILED', '操作已取消。');
+}
+
+async function createInputFromOptions(options: Record<string, unknown>): Promise<CreateAgentInput> {
+  const runtime =
+    (options.runtime as RuntimeProvider | undefined) ??
+    (await select({
+      message: '选择运行器',
+      choices: [
+        { name: 'Claude Code', value: 'claude' },
+        { name: 'OpenAI Codex', value: 'codex' },
+      ],
+    }));
+  const preset = options.preset as string | undefined;
+  const id = (options.id as string | undefined) ?? (await input({ message: 'Agent ID' }));
+  const name = (options.name as string | undefined) ?? (await input({ message: '员工名称' }));
+  const feishu = (options.feishu as 'dedicated' | 'disabled' | undefined) ?? 'dedicated';
+  const result: CreateAgentInput = { id, name, runtime, feishu };
+  if (preset) result.preset = preset;
+  if (typeof options.description === 'string') result.description = options.description;
+  if (Array.isArray(options.goal)) result.goals = options.goal as string[];
+  if (typeof options.model === 'string') result.model = options.model;
+  return result;
+}
+
+export function createProgram(): Command {
+  const program = new Command('agentctl')
+    .description('本地 AI 员工创建与管理平台')
+    .version('0.1.0');
+
+  program
+    .command('web')
+    .description('启动本机 Web 管理控制台')
+    .option('--port <port>', '本机端口，0 表示自动选择', '0')
+    .option('--no-open', '不自动打开浏览器')
+    .action(async (options: { port: string; open: boolean }) => {
+      const port = Number(options.port);
+      if (!Number.isInteger(port) || port < 0 || port > 65535) {
+        throw new AgentCtlError('VALIDATION_ERROR', 'port 必须是 0 到 65535 的整数。');
+      }
+      const { application } = context();
+      const running = await startWebConsole({
+        application,
+        port,
+        openBrowser: options.open,
+        handleSignals: true,
+      });
+      console.log(chalk.green('✓ Web 管理控制台已启动'));
+      console.log(`地址：${running.url}`);
+      console.log('按 Ctrl+C 停止。');
+    });
+
+  program
+    .command('init')
+    .description('初始化 AI Employees 控制面')
+    .option('--dry-run', '只显示将创建的目录')
+    .action(async (options: { dryRun?: boolean }) => {
+      const { paths, application } = context();
+      if (options.dryRun) {
+        console.log(YAML.stringify(paths));
+        return;
+      }
+      await application.initialize();
+      console.log(chalk.green('✓ Factory 已初始化'));
+      console.log(`Node.js: ${process.version}`);
+      for (const [name, version] of Object.entries(await application.dependencyVersions()))
+        console.log(`${name}: ${version}`);
+      console.log(`Registry: ${displayPath(paths.registryFile)}`);
+    });
+
+  program
+    .command('create')
+    .description('创建隔离的 AI 员工')
+    .option('--id <id>')
+    .option('--name <name>')
+    .option('--runtime <provider>', 'claude 或 codex')
+    .option('--preset <preset>')
+    .option('--feishu <mode>', 'dedicated 或 disabled', 'dedicated')
+    .option('--description <description>')
+    .option('--goal <goal...>')
+    .option('--model <model>')
+    .option('--dry-run')
+    .action(async (options: Record<string, unknown>) => {
+      const { paths, application } = context();
+      await application.initialize();
+      const createInput = await createInputFromOptions(options);
+      if (options.dryRun) {
+        console.log(
+          YAML.stringify({
+            input: createInput,
+            workspace: path.join(paths.workspaceRoot, createInput.id),
+            runtime_home: path.join(paths.runtimesDir, createInput.id, createInput.runtime),
+            bridge_home: path.join(paths.bridgesDir, createInput.id),
+          }),
+        );
+        return;
+      }
+      const result = await application.createAgent(createInput);
+      console.log(chalk.green(`✓ 已创建 ${createInput.name} (${result.id})`));
+      console.log(`Workspace: ${displayPath(result.workspace)}`);
+      console.log(`下一步: agentctl runtime login ${result.id}`);
+      if (createInput.feishu === 'dedicated')
+        console.log(`飞书授权: agentctl bridge authorize ${result.id}`);
+      console.log(`诊断: agentctl doctor ${result.id}`);
+    });
+
+  program
+    .command('list')
+    .description('列出 AI 员工')
+    .action(async () => {
+      const { application } = context();
+      const agents = await application.listAgents();
+      if (!agents.length) return console.log('尚未创建 AI 员工。');
+      for (const agent of agents)
+        console.log(`${agent.id}\t${agent.name}\t${agent.runtime}\t${agent.status}`);
+    });
+
+  program
+    .command('show <agent-id>')
+    .description('显示 Agent 配置')
+    .action(async (id: string) => {
+      const { application } = context();
+      console.log(YAML.stringify(await application.getAgent(id)));
+    });
+
+  for (const verb of ['start', 'stop', 'restart', 'status'] as const) {
+    program
+      .command(`${verb} <agent-id>`)
+      .description(`${verb} Agent 后台服务`)
+      .action(async (id: string) => {
+        const { application } = context();
+        const result = await application.lifecycleAction(id, verb);
+        if (verb === 'status') console.log(`${id}: ${result.state}`);
+        else console.log(chalk.green(`✓ ${id} ${verb}`));
+      });
+  }
+
+  program
+    .command('chat <agent-id>')
+    .description('进入 Agent 交互会话')
+    .action(async (id: string) => {
+      const { application } = context();
+      process.exitCode = await application.chat(id);
+    });
+
+  program
+    .command('run <agent-id> <task>')
+    .description('执行单次 Agent 任务')
+    .option('--timeout <seconds>', '超时秒数', '900')
+    .action(async (id: string, task: string, options: { timeout: string }) => {
+      const { application } = context();
+      const result = await application.runAgent(id, task, Number(options.timeout));
+      process.exitCode = result.exitCode;
+    });
+
+  program
+    .command('logs <agent-id>')
+    .description('查看 Agent 最新日志')
+    .option('--lines <count>', '显示行数', '200')
+    .option('--follow', '持续跟随')
+    .action(async (id: string, options: { lines: string; follow?: boolean }) => {
+      const { application } = context();
+      const lines = Number(options.lines);
+      if (options.follow) {
+        process.exitCode = await application.followLatestLog(id, lines);
+      } else {
+        console.log((await application.readLatestLog(id, lines)).content);
+      }
+    });
+
+  const runtime = program.command('runtime').description('运行器登录与状态');
+  runtime.command('login <agent-id>').action(async (id: string) => runRuntimeAuth(id, 'login'));
+  runtime.command('status <agent-id>').action(async (id: string) => runRuntimeAuth(id, 'status'));
+
+  const bridge = program.command('bridge').description('飞书 Bridge 授权与状态');
+  bridge
+    .command('authorize <agent-id>')
+    .option('--app-id <id>')
+    .option('--tenant <tenant>', 'feishu 或 lark', 'feishu')
+    .action(async (id: string, options: { appId?: string; tenant: 'feishu' | 'lark' }) => {
+      const { application } = context();
+      process.exitCode = await application.bridgeAuthorize(id, options);
+    });
+  bridge.command('status <agent-id>').action(async (id: string) => {
+    const { application } = context();
+    const result = await application.bridgeStatus(id);
+    if (result.exitCode === 0) {
+      console.log(result.output);
+    } else {
+      console.log('待授权');
+      process.exitCode = 5;
+    }
+  });
+
+  registerJobCommands(program);
+  registerSkillCommands(program);
+
+  program
+    .command('archive <agent-id>')
+    .description('非破坏性归档 Agent')
+    .option('--dry-run')
+    .option('--yes')
+    .action(async (id: string, options: { dryRun?: boolean; yes?: boolean }) => {
+      const { application } = context();
+      const { registry: agent } = await application.getAgent(id);
+      if (options.dryRun)
+        return console.log(`将停止服务并归档 ${id}，保留 ${displayPath(agent.workspace.path)}`);
+      await confirmDanger(`归档 ${id}？Workspace 和正式记忆会保留。`, options.yes === true);
+      await application.archiveAgent(id);
+      console.log(chalk.green(`✓ ${id} 已归档`));
+    });
+
+  program
+    .command('doctor [agent-id]')
+    .description('诊断 Factory 或 Agent')
+    .action(async (id?: string) => {
+      const { application } = context();
+      const report = await application.doctor(id);
+      for (const check of report.checks) {
+        const marker =
+          check.status === 'pass'
+            ? chalk.green('通过')
+            : check.status === 'warn'
+              ? chalk.yellow('警告')
+              : chalk.red('失败');
+        console.log(`${marker}  ${check.label}：${check.detail}`);
+        if (check.remediation) console.log(`      解决方法：${check.remediation}`);
+      }
+      console.log(
+        `汇总：${report.summary.pass} 通过 / ${report.summary.warn} 警告 / ${report.summary.fail} 失败`,
+      );
+      if (report.summary.fail > 0) process.exitCode = 6;
+    });
+  program
+    .command('backup <agent-id>')
+    .description('备份 Agent')
+    .option('--output <path>')
+    .option('--include-runtime')
+    .action(async (id: string, options: { output?: string; includeRuntime?: boolean }) => {
+      const { application } = context();
+      const backupOptions: { output?: string; includeRuntime?: boolean; passphrase?: string } = {};
+      if (options.output) backupOptions.output = options.output;
+      if (options.includeRuntime) {
+        backupOptions.includeRuntime = true;
+        backupOptions.passphrase = await password({
+          message: '请输入 Runtime 备份加密密码',
+          mask: '*',
+        });
+      }
+      const output = await application.createBackup(id, backupOptions);
+      console.log(chalk.green(`✓ 备份已生成：${displayPath(output)}`));
+    });
+  program
+    .command('restore <backup-path>')
+    .description('恢复 Agent 备份')
+    .option('--new-id <id>')
+    .option('--new-name <name>')
+    .option('--dry-run')
+    .option('--yes')
+    .action(
+      async (
+        backupPath: string,
+        options: { newId?: string; newName?: string; dryRun?: boolean; yes?: boolean },
+      ) => {
+        const { application } = context();
+        const encrypted = backupPath.endsWith('.enc');
+        const passphrase = encrypted
+          ? await password({ message: '请输入备份解密密码', mask: '*' })
+          : undefined;
+        if (!options.dryRun)
+          await confirmDanger(
+            `从 ${path.resolve(backupPath)} 恢复 Agent？不会覆盖已有数据。`,
+            options.yes === true,
+          );
+        const restoreOptions: {
+          newId?: string;
+          newName?: string;
+          passphrase?: string;
+          dryRun?: boolean;
+        } = {};
+        if (options.newId) restoreOptions.newId = options.newId;
+        if (options.newName) restoreOptions.newName = options.newName;
+        if (passphrase) restoreOptions.passphrase = passphrase;
+        if (options.dryRun) restoreOptions.dryRun = true;
+        const result = await application.restoreBackupPath(backupPath, restoreOptions);
+        console.log(
+          options.dryRun
+            ? YAML.stringify(result)
+            : chalk.green(`✓ 已恢复 ${result.id}：${displayPath(result.workspace)}`),
+        );
+        if (!options.dryRun)
+          console.log(
+            `下一步：agentctl runtime login ${result.id} && agentctl doctor ${result.id}`,
+          );
+      },
+    );
+
+  const internal = new Command('_service').description('内部 launchd 入口');
+  program.addCommand(internal, { hidden: true });
+  internal.command('bridge <agent-id>').action(async (id: string) => {
+    const { application } = context();
+    process.exitCode = await application.runBridgeService(id);
+  });
+  internal.command('job <agent-id> <job-id>').action(async (id: string, jobId: string) => {
+    const { application } = context();
+    process.exitCode = await application.runJobService(id, jobId);
+  });
+  return program;
+}
+
+async function runRuntimeAuth(id: string, operation: 'login' | 'status'): Promise<void> {
+  const { application } = context();
+  process.exitCode = await application.runtimeAuth(id, operation);
+}
+
+function registerJobCommands(program: Command): void {
+  const group = program.command('job').description('定时任务管理');
+  group.command('list <agent-id>').action(async (id: string) => {
+    const { application } = context();
+    for (const job of await application.listJobs(id))
+      console.log(
+        `${job.id}\t${job.enabled ? 'enabled' : 'disabled'}\t${job.schedule.time}\t${job.execution.type}`,
+      );
+  });
+  group.command('validate <agent-id> [job-id]').action(async (id: string, jobId?: string) => {
+    const { application } = context();
+    const all = await application.listJobs(id);
+    const jobs = jobId ? all.filter((job) => job.id === jobId) : all;
+    if (jobId && jobs.length === 0)
+      throw new AgentCtlError('NOT_FOUND', `定时任务不存在：${jobId}`);
+    console.log(chalk.green(`✓ ${jobs.length} 个任务配置有效`));
+  });
+  group.command('run <agent-id> <job-id>').action(async (id: string, jobId: string) => {
+    const { application } = context();
+    const job = (await application.listJobs(id)).find((item) => item.id === jobId);
+    if (!job) throw new AgentCtlError('NOT_FOUND', `定时任务不存在：${jobId}`);
+    if (!job.enabled) console.log(chalk.yellow('注意：正在手工运行已禁用任务。'));
+    process.exitCode = (await application.runJob(id, jobId)).exitCode;
+  });
+  for (const verb of ['enable', 'disable'] as const) {
+    group.command(`${verb} <agent-id> <job-id>`).action(async (id: string, jobId: string) => {
+      const { application } = context();
+      await application.setJobEnabled(id, jobId, verb === 'enable');
+      console.log(chalk.green(`✓ ${jobId} ${verb}d`));
+    });
+  }
+  group.command('install <agent-id> <job-path>').action(async (id: string, source: string) => {
+    const { application } = context();
+    const job = await application.installJob(id, source);
+    console.log(chalk.green(`✓ 已安装任务 ${job.id}`));
+  });
+  group
+    .command('uninstall <agent-id> <job-id>')
+    .option('--dry-run')
+    .option('--yes')
+    .action(async (id: string, jobId: string, options: { dryRun?: boolean; yes?: boolean }) => {
+      if (options.dryRun) return console.log(`将归档任务 ${jobId}`);
+      await confirmDanger(`归档任务 ${jobId}？`, options.yes === true);
+      const { application } = context();
+      await application.archiveJob(id, jobId);
+    });
+}
+
+function registerSkillCommands(program: Command): void {
+  const group = program.command('skill').description('Skill 管理');
+  group.command('list <agent-id>').action(async (id: string) => {
+    const { application } = context();
+    for (const skill of await application.listSkills(id))
+      console.log(`${skill.name}\t${skill.version}\t${skill.digest.slice(0, 12)}`);
+  });
+  group
+    .command('install <agent-id> <skill-path>')
+    .option('--dry-run')
+    .action(async (id: string, source: string, options: { dryRun?: boolean }) => {
+      if (options.dryRun) return console.log(`将从 ${path.resolve(source)} 安装 Skill`);
+      const { application } = context();
+      const skill = await application.installSkill(id, source);
+      console.log(chalk.green(`✓ 已安装 ${skill.name}@${skill.version}`));
+    });
+  group
+    .command('remove <agent-id> <skill-name>')
+    .option('--dry-run')
+    .option('--yes')
+    .action(async (id: string, name: string, options: { dryRun?: boolean; yes?: boolean }) => {
+      if (options.dryRun) return console.log(`将归档 Skill ${name}`);
+      await confirmDanger(`归档 Skill ${name}？`, options.yes === true);
+      const { application } = context();
+      await application.removeSkill(id, name);
+    });
+}

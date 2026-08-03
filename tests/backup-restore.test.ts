@@ -1,0 +1,86 @@
+import fs from 'fs-extra';
+import os from 'node:os';
+import path from 'node:path';
+import * as tar from 'tar';
+import { afterEach, describe, expect, it } from 'vitest';
+import { BackupService } from '../src/core/backup.js';
+import { CreateAgentService } from '../src/core/create-agent.js';
+import { initializeFactory } from '../src/core/config.js';
+import { resolveFactoryPaths } from '../src/core/paths.js';
+import { RegistryStore } from '../src/core/registry.js';
+
+const roots: string[] = [];
+
+async function setup() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-backup-'));
+  roots.push(root);
+  const paths = resolveFactoryPaths({
+    HOME: root,
+    AI_EMPLOYEES_HOME: path.join(root, 'private'),
+    AI_EMPLOYEES_WORKSPACE_ROOT: path.join(root, 'agents'),
+  });
+  await initializeFactory(paths);
+  const registry = new RegistryStore(paths.registryFile);
+  await new CreateAgentService(paths, registry).create({
+    id: 'user-operations',
+    name: '用户运营专员',
+    runtime: 'claude',
+    preset: 'user-operations',
+    feishu: 'dedicated',
+  });
+  return { root, paths, registry, service: new BackupService(paths, registry) };
+}
+
+afterEach(async () => Promise.all(roots.splice(0).map((root) => fs.remove(root))));
+
+describe('BackupService', () => {
+  it('writes a portable archive with manifest and checksums but no runtime or secrets', async () => {
+    const { root, registry, service } = await setup();
+    const agent = (await registry.read()).agents[0];
+    if (!agent) throw new Error('missing agent');
+    await fs.outputFile(path.join(agent.workspace.path, '.env'), 'TOKEN=do-not-back-up');
+
+    const backup = await service.backup('user-operations');
+    const extract = path.join(root, 'extract');
+    await fs.ensureDir(extract);
+    await tar.x({ file: backup, cwd: extract });
+
+    expect(await fs.pathExists(path.join(extract, 'manifest.yaml'))).toBe(true);
+    expect(await fs.pathExists(path.join(extract, 'checksums.txt'))).toBe(true);
+    expect(await fs.pathExists(path.join(extract, 'workspace/agent.yaml'))).toBe(true);
+    expect(await fs.pathExists(path.join(extract, 'workspace/.git'))).toBe(true);
+    expect(await fs.pathExists(path.join(extract, 'workspace/.env'))).toBe(false);
+    expect(await fs.pathExists(path.join(extract, 'runtime'))).toBe(false);
+  });
+
+  it('requires encryption when native runtime is included', async () => {
+    const { service } = await setup();
+    await expect(service.backup('user-operations', { includeRuntime: true })).rejects.toThrow(
+      '密码',
+    );
+    const backup = await service.backup('user-operations', {
+      includeRuntime: true,
+      passphrase: 'correct horse battery staple',
+    });
+    expect(backup.endsWith('.aief.enc')).toBe(true);
+    expect((await fs.readFile(backup, 'utf8')).startsWith('AIEF1\n')).toBe(true);
+  });
+
+  it('restores portable data under a new id with fresh private homes', async () => {
+    const { paths, registry, service } = await setup();
+    const backup = await service.backup('user-operations');
+
+    const restored = await service.restore(backup, { newId: 'user-operations-copy' });
+
+    expect(restored.id).toBe('user-operations-copy');
+    expect(await fs.pathExists(path.join(paths.workspaceRoot, restored.id, 'agent.yaml'))).toBe(
+      true,
+    );
+    expect(await fs.pathExists(path.join(paths.runtimesDir, restored.id, 'claude'))).toBe(true);
+    expect(await fs.readdir(path.join(paths.runtimesDir, restored.id, 'claude'))).toEqual([]);
+    expect((await registry.read()).agents.map((agent) => agent.id)).toEqual([
+      'user-operations',
+      'user-operations-copy',
+    ]);
+  });
+});

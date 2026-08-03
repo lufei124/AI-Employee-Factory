@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "e2e/**/*.ts",
+    "vitest.config.ts",
+    "playwright.config.ts"
+  ]
+}

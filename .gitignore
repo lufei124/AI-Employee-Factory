@@ -1,0 +1,23 @@
+# Node.js
+node_modules/
+dist/
+build/
+coverage/
+playwright-report/
+test-results/
+.worktrees/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 环境与密钥
+.env
+.env.*
+!.env.example
+
+# 系统
+.DS_Store
+
+# 注意：.agent/ 必须提交到仓库（多 Agent 协作簿记），不要忽略它。
