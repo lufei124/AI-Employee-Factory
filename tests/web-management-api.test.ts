@@ -127,7 +127,7 @@ describe('Web management API', () => {
           headers: readHeaders,
         })
       ).json().data.runtimeLogin,
-    ).toBe('agentctl runtime login user-operations');
+    ).toBe('agentctl runtime sync user-operations');
     await server.close();
   });
 
@@ -150,6 +150,47 @@ describe('Web management API', () => {
     });
     expect(archived.statusCode).toBe(200);
     expect(archived.json().data.state).toBe('archived');
+    await server.close();
+  });
+
+  it('moves and restores an Agent through confirmed trash endpoints', async () => {
+    const { server, readHeaders, writeHeaders } = await setup();
+    const rejected = await server.inject({
+      method: 'POST',
+      url: '/api/v1/agents/user-operations/actions/trash',
+      headers: writeHeaders,
+      payload: { confirmId: 'another-agent' },
+    });
+    expect(rejected.statusCode).toBe(400);
+
+    const moved = await server.inject({
+      method: 'POST',
+      url: '/api/v1/agents/user-operations/actions/trash',
+      headers: writeHeaders,
+      payload: { confirmId: 'user-operations' },
+    });
+    expect(moved.statusCode).toBe(200);
+    const trashId = moved.json<{ data: { trashId: string } }>().data.trashId;
+    expect(
+      (await server.inject({ method: 'GET', url: '/api/v1/agents', headers: readHeaders })).json()
+        .data,
+    ).toEqual([]);
+    expect(
+      (await server.inject({ method: 'GET', url: '/api/v1/trash', headers: readHeaders })).json()
+        .data[0].trashId,
+    ).toBe(trashId);
+
+    const restored = await server.inject({
+      method: 'POST',
+      url: `/api/v1/trash/${trashId}/actions/restore`,
+      headers: writeHeaders,
+      payload: { confirmTrashId: trashId },
+    });
+    expect(restored.statusCode).toBe(200);
+    expect(
+      (await server.inject({ method: 'GET', url: '/api/v1/agents', headers: readHeaders })).json()
+        .data[0].id,
+    ).toBe('user-operations');
     await server.close();
   });
 

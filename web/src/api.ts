@@ -45,6 +45,16 @@ export interface AgentDocument {
   dirty: boolean;
 }
 
+export interface TrashEntry {
+  trashId: string;
+  agentId: string;
+  name: string;
+  deletedAt: string;
+  expiresAt: string;
+  remainingDays: number;
+  state: 'moving' | 'ready' | 'restoring' | 'purging' | 'failed';
+}
+
 export interface JobConfig {
   schema_version: 1;
   id: string;
@@ -153,6 +163,20 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(action === 'archive' ? { confirmId } : {}),
     }),
+  trashAgent: (id: string) =>
+    request<TrashEntry>(`/agents/${encodeURIComponent(id)}/actions/trash`, {
+      method: 'POST',
+      body: JSON.stringify({ confirmId: id }),
+    }),
+  listTrash: () => request<TrashEntry[]>('/trash'),
+  restoreTrash: (trashId: string) =>
+    request<{ restored: boolean; trashId: string }>(
+      `/trash/${encodeURIComponent(trashId)}/actions/restore`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ confirmTrashId: trashId }),
+      },
+    ),
   readDocument: (id: string, key: string) =>
     request<AgentDocument>(`/agents/${encodeURIComponent(id)}/documents/${key}`),
   saveDocument: (id: string, key: string, content: string) =>

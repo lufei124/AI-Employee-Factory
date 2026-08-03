@@ -16,6 +16,7 @@ export async function initializeFactory(paths: FactoryPaths): Promise<void> {
       paths.schedulesDir,
       paths.logsDir,
       paths.backupsDir,
+      paths.trashDir,
       paths.locksDir,
     ].map((directory) => fs.ensureDir(directory)),
   );
@@ -37,6 +38,7 @@ export async function initializeFactory(paths: FactoryPaths): Promise<void> {
     fs.chmod(paths.registryDir, 0o700),
     fs.chmod(paths.runtimesDir, 0o700),
     fs.chmod(paths.bridgesDir, 0o700),
+    fs.chmod(paths.trashDir, 0o700),
     fs.chmod(paths.locksDir, 0o700),
   ]);
 }

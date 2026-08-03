@@ -1,7 +1,7 @@
 import fs from 'fs-extra';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FactoryApplication } from '../src/application/factory-application.js';
 import { resolveFactoryPaths } from '../src/core/paths.js';
 import { RegistryStore } from '../src/core/registry.js';
@@ -25,6 +25,10 @@ describe('startWebConsole', () => {
       AI_EMPLOYEES_WORKSPACE_ROOT: path.join(root, 'agents'),
     });
     const application = new FactoryApplication(paths, new RegistryStore(paths.registryFile));
+    const purge = vi.spyOn(application, 'purgeExpiredTrash').mockResolvedValue({
+      purged: [],
+      wouldPurge: [],
+    });
 
     const running = await startWebConsole({
       application,
@@ -40,6 +44,7 @@ describe('startWebConsole', () => {
 
     expect(running.origin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     expect(running.url).toBe(`${running.origin}/#session=fragment-secret`);
+    expect(purge).toHaveBeenCalledOnce();
     const response = await running.server.inject({
       method: 'GET',
       url: '/',

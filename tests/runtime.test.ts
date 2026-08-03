@@ -1,3 +1,6 @@
+import fs from 'fs-extra';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildRuntimeEnvironment } from '../src/core/runtime.js';
 import { ClaudeRuntimeAdapter } from '../src/runtimes/claude-adapter.js';
@@ -46,6 +49,61 @@ describe('runtime environment isolation', () => {
     expect(env).not.toHaveProperty('OPENAI_API_KEY');
     expect(env).not.toHaveProperty('AWS_SECRET_ACCESS_KEY');
     expect(env.HOME).toBe('/Users/person');
+  });
+
+  it('syncs only the active CC Switch provider into the isolated Claude home', async () => {
+    const runtime = (await import('../src/core/runtime.js')) as Record<string, unknown>;
+    const sync = runtime.syncCcSwitchClaudeProvider;
+    expect(sync).toBeTypeOf('function');
+    if (typeof sync !== 'function') return;
+
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-cc-switch-'));
+    try {
+      const claudeAgent = {
+        ...agent('claude'),
+        runtime_home: { path: path.join(root, 'private/runtime') },
+      };
+      await fs.outputJson(path.join(root, '.claude/settings.json'), {
+        env: {
+          ANTHROPIC_BASE_URL: 'https://relay.example.test',
+          ANTHROPIC_AUTH_TOKEN: 'provider-secret',
+          ANTHROPIC_DEFAULT_SONNET_MODEL: 'relay-sonnet',
+          OPENAI_API_KEY: 'must-not-copy',
+          CLAUDE_CONFIG_DIR: '/must/not/copy',
+        },
+        theme: 'dark',
+      });
+      await fs.outputJson(path.join(claudeAgent.runtime_home.path, 'settings.json'), {
+        permissions: { defaultMode: 'default' },
+        env: { EMPLOYEE_LOCAL_SETTING: 'keep-me', ANTHROPIC_AUTH_TOKEN: 'old-secret' },
+      });
+
+      const summary = (await sync(claudeAgent, root)) as { keys: string[] };
+      const isolated = await fs.readJson(path.join(claudeAgent.runtime_home.path, 'settings.json'));
+
+      expect(isolated).toMatchObject({
+        permissions: { defaultMode: 'default' },
+        env: {
+          EMPLOYEE_LOCAL_SETTING: 'keep-me',
+          ANTHROPIC_BASE_URL: 'https://relay.example.test',
+          ANTHROPIC_AUTH_TOKEN: 'provider-secret',
+          ANTHROPIC_DEFAULT_SONNET_MODEL: 'relay-sonnet',
+        },
+      });
+      expect(isolated.env).not.toHaveProperty('OPENAI_API_KEY');
+      expect(isolated.env).not.toHaveProperty('CLAUDE_CONFIG_DIR');
+      expect(summary.keys).toEqual([
+        'ANTHROPIC_AUTH_TOKEN',
+        'ANTHROPIC_BASE_URL',
+        'ANTHROPIC_DEFAULT_SONNET_MODEL',
+      ]);
+      expect(JSON.stringify(summary)).not.toContain('provider-secret');
+      expect(
+        (await fs.stat(path.join(claudeAgent.runtime_home.path, 'settings.json'))).mode & 0o777,
+      ).toBe(0o600);
+    } finally {
+      await fs.remove(root);
+    }
   });
 });
 

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { AgentCtlError } from './errors.js';
 
 export interface FactoryPaths {
+  userHome: string;
   home: string;
   workspaceRoot: string;
   registryDir: string;
@@ -14,6 +15,7 @@ export interface FactoryPaths {
   schedulesDir: string;
   logsDir: string;
   backupsDir: string;
+  trashDir: string;
   locksDir: string;
 }
 
@@ -55,6 +57,7 @@ export function resolveFactoryPaths(env: NodeJS.ProcessEnv = process.env): Facto
   );
   const registryDir = path.join(home, 'registry');
   return {
+    userHome: homeDir,
     home,
     workspaceRoot,
     registryDir,
@@ -66,6 +69,7 @@ export function resolveFactoryPaths(env: NodeJS.ProcessEnv = process.env): Facto
     schedulesDir: path.join(home, 'schedules'),
     logsDir: path.join(home, 'logs'),
     backupsDir: path.join(home, 'backups'),
+    trashDir: path.join(home, 'trash'),
     locksDir: path.join(home, 'locks'),
   };
 }

@@ -15,6 +15,7 @@ import {
   Save,
   Square,
   Terminal,
+  Trash2,
   Upload,
 } from 'lucide-react';
 import {
@@ -64,12 +65,16 @@ function OverviewTab({
   const [error, setError] = useState('');
   const [pendingAction, setPendingAction] = useState<'start' | 'stop' | 'restart'>();
   const [feedback, setFeedback] = useState('');
+  const [trashing, setTrashing] = useState(false);
   const [task, setTask] = useState('');
   const [operation, setOperation] = useState<OperationDto>();
   const terminalGuidance = [
     {
-      label: '登录 AI 运行器',
-      description: '首次使用或登录失效时执行；登录该员工专属的 Claude/Codex 环境。',
+      label: registry.runtime.provider === 'claude' ? '同步 CC Switch Provider' : '登录 Codex',
+      description:
+        registry.runtime.provider === 'claude'
+          ? '读取 CC Switch 当前 Claude Provider，并安全同步到该员工的隔离环境。'
+          : '首次使用或登录失效时执行；登录该员工专属的 Codex 环境。',
       command: guidance.runtimeLogin,
     },
     {
@@ -81,7 +86,7 @@ function OverviewTab({
     },
     {
       label: '开始终端对话',
-      description: '登录完成后执行；在员工 Workspace 中开启与 AI 员工的交互会话。',
+      description: 'Provider 同步或登录完成后执行；在员工 Workspace 中开启交互会话。',
       command: guidance.chat,
     },
   ];
@@ -140,6 +145,30 @@ function OverviewTab({
         >
           <Archive size={15} />
           归档
+        </button>
+        <button
+          className="button ghost danger-text"
+          disabled={trashing || Boolean(pendingAction)}
+          onClick={async () => {
+            if (
+              !window.confirm(
+                `将 ${registry.name} 的 Workspace、Runtime、飞书配置、日志和任务全部移入回收站？7 天内可以恢复。`,
+              )
+            )
+              return;
+            setError('');
+            setTrashing(true);
+            try {
+              await api.trashAgent(registry.id);
+              window.location.hash = '#/agents';
+            } catch (cause) {
+              setError(cause instanceof Error ? cause.message : String(cause));
+              setTrashing(false);
+            }
+          }}
+        >
+          <Trash2 size={15} />
+          {trashing ? '正在移入…' : '移入回收站'}
         </button>
       </div>
       {feedback && (

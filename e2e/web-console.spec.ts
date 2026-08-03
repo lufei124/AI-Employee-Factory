@@ -94,14 +94,14 @@ test('initializes, creates, manages, backs up, and restores an isolated employee
   await expect(page.getByText('创建预览')).toBeVisible();
   await page.getByRole('button', { name: '创建员工' }).click();
   await expect(page.getByText('员工创建完成')).toBeVisible();
-  const loginCommand = 'agentctl runtime login user-operations';
-  await page.getByRole('button', { name: `复制命令 ${loginCommand}` }).click();
+  const setupCommand = 'agentctl runtime sync user-operations';
+  await page.getByRole('button', { name: `复制命令 ${setupCommand}` }).click();
   await expect(page.getByText('已复制')).toBeVisible();
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(loginCommand);
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(setupCommand);
   await page.getByRole('link', { name: '进入员工详情' }).click();
 
   await expect(page.getByText('运行器已锁定')).toBeVisible();
-  await expect(page.getByText('agentctl runtime login user-operations')).toBeVisible();
+  await expect(page.getByText('agentctl runtime sync user-operations')).toBeVisible();
   await page.getByRole('button', { name: 'Skills' }).click();
   await expect(page.getByText('feedback-analyze')).toBeVisible();
   await expect(page.getByText('feedback-collect')).toBeVisible();
@@ -150,4 +150,28 @@ test('initializes, creates, manages, backs up, and restores an isolated employee
   expect(await fs.pathExists(path.join(root, 'private/runtimes/user-operations/claude'))).toBe(
     true,
   );
+
+  await page.goto(`${new URL(consoleUrl).origin}/#/agents/user-operations`);
+  await expect(page.getByText('用户运营专员')).toBeVisible();
+  page.once('dialog', (dialog) => void dialog.accept());
+  await page.getByRole('button', { name: '移入回收站' }).click();
+  await expect(page).toHaveURL(/#\/agents$/);
+  await expect(page.getByText('user-operations', { exact: true })).toHaveCount(0);
+  await page.getByRole('link', { name: '备份恢复' }).click();
+  const trashPanel = page
+    .getByRole('heading', { name: '员工回收站' })
+    .locator('xpath=ancestor::section');
+  await expect(trashPanel).toBeVisible();
+  await expect(trashPanel.getByText(/user-operations ·/)).toBeVisible();
+  page.once('dialog', (dialog) => void dialog.accept());
+  await page.getByRole('button', { name: '恢复员工' }).click();
+  await expect(trashPanel.getByText(/user-operations ·/)).toHaveCount(0);
+  expect(
+    (
+      await page.evaluate(async () => {
+        const response = await fetch('/api/v1/agents');
+        return (await response.json()) as { data: Array<{ id: string; status: string }> };
+      })
+    ).data,
+  ).toContainEqual(expect.objectContaining({ id: 'user-operations', status: 'stopped' }));
 });

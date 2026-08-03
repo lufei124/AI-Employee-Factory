@@ -20,6 +20,11 @@ export interface StartWebConsoleOptions {
 }
 
 export async function startWebConsole(options: StartWebConsoleOptions) {
+  await options.application.purgeExpiredTrash().catch((error: unknown) => {
+    console.warn(
+      `警告：回收站过期清理失败：${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
   const bootstrapToken = options.bootstrapToken ?? randomBytes(32).toString('base64url');
   const publicDir =
     options.publicDir ?? path.dirname(fileURLToPath(new URL('./index.html', import.meta.url)));

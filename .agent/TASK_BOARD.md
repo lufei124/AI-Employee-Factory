@@ -4,14 +4,68 @@ Coordinator: codex-20260803-01
 
 > 新任务 ID 分配：读取本看板取最大编号 N，先 `mkdir .agent/task-ids/TASK-(N+1)` 原子占位（已存在则编号 +1 重试），占位成功后再写入本看板任务行。占位目录永不删除，作为已用编号记录。撞号时后到者不得覆盖先到者的看板行。
 
-| Task ID  | 标题                           | Owner agent       | Status | Branch/worktree                    | Allowed scope           | Dependencies                      | 更新时间               |
-| -------- | ------------------------------ | ----------------- | ------ | ---------------------------------- | ----------------------- | --------------------------------- | ---------------------- |
-| TASK-001 | 实现 AI Employee Factory v1    | codex-20260803-01 | DONE   | current workspace (new repository) | 全仓库                  | 用户批准的 v1 实施计划            | 2026-08-03 15:10 +0800 |
-| TASK-002 | 实现本地 Web 管理控制台        | codex-20260803-01 | DONE   | current workspace (no HEAD)        | 全仓库                  | TASK-001、用户批准的 Web 实施计划 | 2026-08-03 16:38 +0800 |
-| TASK-003 | 优化操作中心与 Agent ID 交互   | codex-20260803-01 | DONE   | current workspace (no HEAD)        | Web UI 与相关测试       | TASK-002、用户 UI 反馈            | 2026-08-03 17:54 +0800 |
-| TASK-004 | 修复创建完成页命令复制         | codex-20260803-01 | DONE   | current workspace (no HEAD)        | Web UI 与相关测试       | TASK-003、用户 UI 反馈            | 2026-08-03 18:03 +0800 |
-| TASK-005 | 补充终端命令用途说明           | codex-20260803-01 | DONE   | current workspace (no HEAD)        | Web UI 与相关测试       | TASK-004、用户 UI 反馈            | 2026-08-03 18:10 +0800 |
-| TASK-006 | 修复生命周期反馈与 Skills 崩溃 | codex-20260803-01 | DONE   | current workspace (no HEAD)        | 生命周期、Skills 与测试 | TASK-005、用户 UI 反馈            | 2026-08-03 18:19 +0800 |
+| Task ID  | 标题                                 | Owner agent        | Status | Branch/worktree                    | Allowed scope                    | Dependencies                      | 更新时间               |
+| -------- | ------------------------------------ | ------------------ | ------ | ---------------------------------- | -------------------------------- | --------------------------------- | ---------------------- |
+| TASK-001 | 实现 AI Employee Factory v1          | codex-20260803-01  | DONE   | current workspace (new repository) | 全仓库                           | 用户批准的 v1 实施计划            | 2026-08-03 15:10 +0800 |
+| TASK-002 | 实现本地 Web 管理控制台              | codex-20260803-01  | DONE   | current workspace (no HEAD)        | 全仓库                           | TASK-001、用户批准的 Web 实施计划 | 2026-08-03 16:38 +0800 |
+| TASK-003 | 优化操作中心与 Agent ID 交互         | codex-20260803-01  | DONE   | current workspace (no HEAD)        | Web UI 与相关测试                | TASK-002、用户 UI 反馈            | 2026-08-03 17:54 +0800 |
+| TASK-004 | 修复创建完成页命令复制               | codex-20260803-01  | DONE   | current workspace (no HEAD)        | Web UI 与相关测试                | TASK-003、用户 UI 反馈            | 2026-08-03 18:03 +0800 |
+| TASK-005 | 补充终端命令用途说明                 | codex-20260803-01  | DONE   | current workspace (no HEAD)        | Web UI 与相关测试                | TASK-004、用户 UI 反馈            | 2026-08-03 18:10 +0800 |
+| TASK-006 | 修复生命周期反馈与 Skills 崩溃       | codex-20260803-01  | DONE   | current workspace (no HEAD)        | 生命周期、Skills 与测试          | TASK-005、用户 UI 反馈            | 2026-08-03 18:19 +0800 |
+| TASK-007 | 独立核实已提交基线                   | claude-20260803-01 | DONE   | master (34a98b8)                   | 只读验证                         | TASK-001~006                      | 2026-08-03 18:24 +0800 |
+| TASK-008 | 默认接入 CC Switch 并核查飞书 Bridge | codex-20260803-01  | DONE   | master (34a98b8)                   | Runtime、Bridge、Web、文档与测试 | TASK-007、用户新要求              | 2026-08-03 18:47 +0800 |
+| TASK-009 | 实现员工回收站与 7 天延迟清理        | codex-20260803-01  | DONE   | master (34a98b8)                   | 应用层、存储、CLI、Web、测试     | TASK-008、用户确认的回收站设计    | 2026-08-03 19:20 +0800 |
+
+## TASK-009 详情
+
+```text
+Task ID: TASK-009
+Title: 实现员工回收站与 7 天延迟清理
+Owner agent: codex-20260803-01
+Status: DONE
+Branch/worktree: master (34a98b8)
+Allowed scope: Agent 回收站应用服务、Registry、服务卸载、CLI/Web 接口、UI、测试和文档
+Forbidden scope: 删除当前真实 Agent、清理用户系统废纸篓、修改个人 Runtime/Bridge、推送
+Dependencies: TASK-008、用户确认的 Factory 自管回收站设计
+Expected output: 一键把员工全部数据移入可恢复回收站，并在下次运行时清理超过 7 天的条目
+Acceptance criteria: Bridge/Job 均卸载；所有受管路径移出活动区；Registry 移除；恢复不覆盖；失败回滚；Web/CLI 一致；测试覆盖。
+Started at: 2026-08-03 18:56 +0800
+Updated at: 2026-08-03 19:20 +0800
+```
+
+## TASK-007 详情
+
+```text
+Task ID: TASK-007
+Title: 独立核实已提交基线
+Owner agent: claude-20260803-01
+Status: DONE
+Branch/worktree: master (commit 34a98b8)
+Allowed scope: 只读验证（build/test/lint/e2e），不修改源码
+Forbidden scope: 修改源码、推送
+Dependencies: TASK-001~006
+Expected output: 独立核实首次提交基线的四项检查是否属实
+Acceptance criteria: build/test/lint/e2e 实际运行并记录真实结果
+Started at: 2026-08-03 18:20 +0800
+Updated at: 2026-08-03 18:24 +0800
+```
+
+## TASK-008 详情
+
+```text
+Task ID: TASK-008
+Title: 默认接入 CC Switch 并核查飞书 Bridge
+Owner agent: codex-20260803-01
+Status: DONE
+Branch/worktree: master (34a98b8)
+Allowed scope: Claude Runtime 接入、Bridge 兼容性、Web/CLI 引导、相关测试和研究文档
+Forbidden scope: 读取或输出真实 API Key、修改用户 CC Switch Provider、真实飞书应用或 launchd 状态
+Dependencies: TASK-007、用户新要求、CC Switch 与 lark-coding-agent-bridge 官方资料
+Expected output: Claude 默认安全使用 CC Switch 当前 Provider，明确并修正飞书 Bridge 兼容边界
+Acceptance criteria: 保留员工会话/记忆隔离；不再要求 Claude 官方登录；Provider Secret 不进入 Registry/日志/plist/Git；Bridge 命令和飞书配置与官方实现一致；测试和文档同步。
+Started at: 2026-08-03 18:29 +0800
+Updated at: 2026-08-03 18:47 +0800
+```
 
 ## TASK-001 详情
 

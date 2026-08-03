@@ -7,6 +7,7 @@ import { BridgeAdapter } from './bridge.js';
 import type { FactoryPaths } from './paths.js';
 import type { RegistryStore } from './registry.js';
 import { buildSafeBaseEnvironment } from './runtime.js';
+import { TrashService } from './trash.js';
 
 export type CheckStatus = 'pass' | 'warn' | 'fail';
 export interface DoctorCheck {
@@ -166,6 +167,19 @@ export class DoctorService {
       status: 'pass',
       detail: `AI_EMPLOYEES_HOME=${this.paths.home}; AI_EMPLOYEES_WORKSPACE_ROOT=${this.paths.workspaceRoot}`,
     });
+    const trashEntries = await new TrashService(this.paths, this.registry).list().catch(() => []);
+    const failedTrash = trashEntries.filter((entry) => entry.state === 'failed');
+    add({
+      id: 'trash-health',
+      label: '员工回收站',
+      status: failedTrash.length ? 'fail' : 'pass',
+      detail: failedTrash.length
+        ? `${failedTrash.length} 个事务需要人工检查`
+        : `${trashEntries.length} 个可恢复条目`,
+      ...(failedTrash.length
+        ? { remediation: '检查回收站 manifest 和原路径，修复前不要手工删除数据。' }
+        : {}),
+    });
     if (agentId) await this.agentChecks(agentId, add);
     const summary = { pass: 0, warn: 0, fail: 0 };
     for (const check of checks) summary[check.status] += 1;
@@ -296,8 +310,11 @@ export class DoctorService {
         label: 'Bridge 参数兼容',
         status: capabilities.compatible ? 'pass' : 'fail',
         detail: capabilities.compatible
-          ? '--profile --agent --workspace'
-          : capabilities.missing.join(', '),
+          ? `${capabilities.version}: run/profile create/profile export`
+          : `${capabilities.version}: ${capabilities.missing.join(', ')}`,
+        ...(!capabilities.compatible
+          ? { remediation: '请升级 lark-coding-agent-bridge 后重新运行 doctor。' }
+          : {}),
       });
     }
     const plist = path.join(this.paths.servicesDir, agent.id, 'bridge.plist');

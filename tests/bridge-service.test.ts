@@ -1,3 +1,6 @@
+import fs from 'fs-extra';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BridgeAdapter } from '../src/core/bridge.js';
 import { renderLaunchdPlist } from '../src/services/launchd-service.js';
@@ -39,6 +42,59 @@ describe('BridgeAdapter', () => {
     ]);
     expect(context.env.CLAUDE_CONFIG_DIR).toBe('/tmp/private/runtimes/user-operations/claude');
     expect(context.env.LARK_CHANNEL_HOME).toBe('/tmp/private/bridges/user-operations');
+  });
+
+  it('tightens the official profile to workspace access without touching credentials', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-bridge-profile-'));
+    const scopedAgent = {
+      ...agent,
+      bridge: { ...agent.bridge, home: root },
+    };
+    const configFile = path.join(root, 'config.json');
+    await fs.outputJson(configFile, {
+      schemaVersion: 2,
+      activeProfile: 'user-operations',
+      profiles: {
+        'user-operations': {
+          schemaVersion: 2,
+          agentKind: 'claude',
+          accounts: { app: { id: 'cli_test', secret: 'keep-me', tenant: 'feishu' } },
+          permissions: { defaultAccess: 'full', maxAccess: 'full' },
+          sandbox: { default: 'danger-full-access', max: 'danger-full-access' },
+        },
+      },
+    });
+
+    await new BridgeAdapter().secureProfile(scopedAgent);
+
+    const saved = await fs.readJson(configFile);
+    expect(saved.profiles['user-operations'].permissions).toEqual({
+      defaultAccess: 'workspace',
+      maxAccess: 'workspace',
+    });
+    expect(saved.profiles['user-operations'].sandbox).toBeUndefined();
+    expect(saved.profiles['user-operations'].accounts.app.secret).toBe('keep-me');
+    expect(saved.migrations.permissionDefaultsV1).toContain('user-operations');
+    await fs.remove(root);
+  });
+
+  it('probes run and authorization flags instead of trusting one help page', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-bridge-probe-'));
+    const executable = path.join(root, 'lark-channel-bridge');
+    await fs.outputFile(
+      executable,
+      `#!/bin/sh\ncase "$*" in\n  "--version") echo "0.5.9" ;;\n  "run --help") echo "--profile --agent --workspace" ;;\n  "profile create --help") echo "--agent --workspace --app-id" ;;\n  "profile export --help") echo "--output" ;;\nesac\n`,
+      { mode: 0o755 },
+    );
+
+    const capabilities = await new BridgeAdapter().inspectCapabilities({
+      PATH: `${root}:${process.env.PATH ?? ''}`,
+    });
+
+    expect(capabilities.compatible).toBe(false);
+    expect(capabilities.missing).toContain('profile create:--tenant');
+    expect(capabilities.version).toBe('0.5.9');
+    await fs.remove(root);
   });
 });
 

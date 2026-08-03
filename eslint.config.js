@@ -3,7 +3,7 @@ import parser from '@typescript-eslint/parser';
 
 export default [
   {
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '.worktrees/**'],
+    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '.worktrees/**', '.scratch/**'],
   },
   {
     files: [

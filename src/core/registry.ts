@@ -57,6 +57,17 @@ export class RegistryStore {
     });
   }
 
+  async remove(id: string): Promise<RegistryAgent> {
+    let removed: RegistryAgent | undefined;
+    await this.update((registry) => {
+      removed = registry.agents.find((agent) => agent.id === id);
+      if (!removed) throw new AgentCtlError('NOT_FOUND', `Agent 不存在：${id}`);
+      return { ...registry, agents: registry.agents.filter((agent) => agent.id !== id) };
+    });
+    if (!removed) throw new AgentCtlError('NOT_FOUND', `Agent 不存在：${id}`);
+    return removed;
+  }
+
   private assertUnique(registry: Registry, candidate: RegistryAgent): void {
     if (registry.agents.some((agent) => agent.id === candidate.id)) {
       throw new AgentCtlError('CONFLICT', `Agent 已存在：${candidate.id}`);

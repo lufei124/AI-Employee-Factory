@@ -17,6 +17,10 @@ function context() {
   return { paths, application: new FactoryApplication(paths, registry) };
 }
 
+function runtimeSetupCommand(provider: RuntimeProvider, id: string): string {
+  return provider === 'claude' ? `agentctl runtime sync ${id}` : `agentctl runtime login ${id}`;
+}
+
 async function confirmDanger(message: string, yes: boolean): Promise<void> {
   if (yes) return;
   if (!(await confirm({ message, default: false })))
@@ -120,7 +124,7 @@ export function createProgram(): Command {
       const result = await application.createAgent(createInput);
       console.log(chalk.green(`✓ 已创建 ${createInput.name} (${result.id})`));
       console.log(`Workspace: ${displayPath(result.workspace)}`);
-      console.log(`下一步: agentctl runtime login ${result.id}`);
+      console.log(`下一步: ${runtimeSetupCommand(createInput.runtime, result.id)}`);
       if (createInput.feishu === 'dedicated')
         console.log(`飞书授权: agentctl bridge authorize ${result.id}`);
       console.log(`诊断: agentctl doctor ${result.id}`);
@@ -190,7 +194,17 @@ export function createProgram(): Command {
       }
     });
 
-  const runtime = program.command('runtime').description('运行器登录与状态');
+  const runtime = program.command('runtime').description('运行器 Provider 配置、登录与状态');
+  runtime
+    .command('sync <agent-id>')
+    .description('同步 CC Switch 当前 Claude Provider')
+    .action(async (id: string) => {
+      const { application } = context();
+      const summary = await application.syncRuntime(id);
+      console.log(
+        chalk.green(`✓ 已同步 CC Switch Provider（${summary?.keys.length ?? 0} 项配置）`),
+      );
+    });
   runtime.command('login <agent-id>').action(async (id: string) => runRuntimeAuth(id, 'login'));
   runtime.command('status <agent-id>').action(async (id: string) => runRuntimeAuth(id, 'status'));
 
@@ -216,6 +230,7 @@ export function createProgram(): Command {
 
   registerJobCommands(program);
   registerSkillCommands(program);
+  registerTrashCommands(program);
 
   program
     .command('archive <agent-id>')
@@ -310,10 +325,12 @@ export function createProgram(): Command {
             ? YAML.stringify(result)
             : chalk.green(`✓ 已恢复 ${result.id}：${displayPath(result.workspace)}`),
         );
-        if (!options.dryRun)
+        if (!options.dryRun) {
+          const { registry } = await application.getAgent(result.id);
           console.log(
-            `下一步：agentctl runtime login ${result.id} && agentctl doctor ${result.id}`,
+            `下一步：${runtimeSetupCommand(registry.runtime.provider, result.id)} && agentctl doctor ${result.id}`,
           );
+        }
       },
     );
 
@@ -327,12 +344,102 @@ export function createProgram(): Command {
     const { application } = context();
     process.exitCode = await application.runJobService(id, jobId);
   });
+  program.hook('preAction', async (_root, actionCommand) => {
+    const ancestry: string[] = [];
+    for (let current: Command | null = actionCommand; current; current = current.parent) {
+      ancestry.push(current.name());
+    }
+    if (ancestry.includes('_service') || actionCommand.opts().dryRun === true) return;
+    const { application } = context();
+    if (!(await application.factoryStatus()).initialized) return;
+    await application.purgeExpiredTrash().catch((error: unknown) => {
+      console.warn(
+        chalk.yellow(
+          `警告：回收站过期清理失败：${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
+    });
+  });
   return program;
+}
+
+function registerTrashCommands(program: Command): void {
+  const group = program.command('trash').description('员工回收站管理');
+  group
+    .command('move <agent-id>')
+    .description('将员工全部受管数据移入 7 天回收站')
+    .option('--dry-run')
+    .option('--yes')
+    .action(async (id: string, options: { dryRun?: boolean; yes?: boolean }) => {
+      const { application } = context();
+      if (options.dryRun) {
+        console.log(YAML.stringify(await application.trashAgent(id, { dryRun: true })));
+        return;
+      }
+      await confirmDanger(`将 ${id} 的全部数据移入回收站？7 天内可以恢复。`, options.yes === true);
+      const entry = await application.trashAgent(id);
+      console.log(chalk.green(`✓ ${id} 已移入回收站：${entry.trashId}`));
+    });
+  group
+    .command('list')
+    .description('列出可恢复员工')
+    .action(async () => {
+      const { application } = context();
+      const entries = await application.listTrash();
+      if (!entries.length) return console.log('回收站为空。');
+      for (const entry of entries) {
+        console.log(
+          `${entry.trashId}\t${entry.agentId}\t${entry.state}\t剩余 ${entry.remainingDays} 天`,
+        );
+      }
+    });
+  group
+    .command('restore <trash-id>')
+    .description('恢复回收站员工为 stopped')
+    .option('--dry-run')
+    .option('--yes')
+    .action(async (trashId: string, options: { dryRun?: boolean; yes?: boolean }) => {
+      const { application } = context();
+      if (options.dryRun) {
+        console.log(YAML.stringify(await application.restoreTrash(trashId, { dryRun: true })));
+        return;
+      }
+      await confirmDanger(`恢复回收站条目 ${trashId}？`, options.yes === true);
+      await application.restoreTrash(trashId);
+      console.log(chalk.green(`✓ 已恢复 ${trashId}`));
+    });
+  group
+    .command('purge')
+    .description('永久清理已超过 7 天的条目')
+    .option('--expired', '仅清理过期条目', true)
+    .option('--dry-run')
+    .option('--yes')
+    .action(async (options: { expired: boolean; dryRun?: boolean; yes?: boolean }) => {
+      if (!options.expired) throw new AgentCtlError('VALIDATION_ERROR', 'v1 只支持清理过期条目。');
+      const { application } = context();
+      if (options.dryRun) {
+        console.log(YAML.stringify(await application.purgeExpiredTrash({ dryRun: true })));
+        return;
+      }
+      await confirmDanger('永久清理所有已超过 7 天的回收站条目？', options.yes === true);
+      const result = await application.purgeExpiredTrash();
+      console.log(chalk.green(`✓ 已永久清理 ${result.purged.length} 个条目`));
+    });
 }
 
 async function runRuntimeAuth(id: string, operation: 'login' | 'status'): Promise<void> {
   const { application } = context();
+  const { registry } = await application.getAgent(id);
   process.exitCode = await application.runtimeAuth(id, operation);
+  if (registry.runtime.provider === 'claude' && process.exitCode === 0) {
+    console.log(
+      chalk.green(
+        operation === 'login'
+          ? '✓ Claude 默认使用 CC Switch，当前 Provider 已同步；未执行官方 OAuth 登录。'
+          : '✓ CC Switch 当前 Claude Provider 可用且已同步。',
+      ),
+    );
+  }
 }
 
 function registerJobCommands(program: Command): void {

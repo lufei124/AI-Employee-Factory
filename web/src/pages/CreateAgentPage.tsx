@@ -58,9 +58,15 @@ export function CreateAgentPage() {
         <div className="command-list">
           {[
             {
-              label: '1. 登录运行器',
-              description: '在员工专属 Runtime Home 中登录 Claude/Codex',
-              command: `agentctl runtime login ${created.id}`,
+              label: runtime === 'claude' ? '1. 同步 CC Switch Provider' : '1. 登录 Codex',
+              description:
+                runtime === 'claude'
+                  ? '同步 CC Switch 当前 Claude Provider 到员工隔离环境'
+                  : '在员工专属 CODEX_HOME 中完成 Codex 登录',
+              command:
+                runtime === 'claude'
+                  ? `agentctl runtime sync ${created.id}`
+                  : `agentctl runtime login ${created.id}`,
             },
             {
               label: '2. 授权飞书',

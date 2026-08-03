@@ -97,7 +97,11 @@ export async function renderAgentWorkspace(input: {
   await fs.ensureFile(path.join(workspace, 'logs/.gitkeep'));
   await fs.writeFile(
     path.join(workspace, 'deployment/MIGRATION.md'),
-    `# 迁移 ${config.name}\n\n1. 克隆本 Agent Git 仓库或使用 \`agentctl restore\`。\n2. 在新电脑运行 \`agentctl runtime login ${config.id}\`。\n3. 运行 \`agentctl bridge authorize ${config.id}\`。\n4. 运行 \`agentctl doctor ${config.id}\`。\n\n不要复制个人 ~/.claude、~/.codex 或明文 Secret。\n`,
+    `# 迁移 ${config.name}\n\n1. 克隆本 Agent Git 仓库或使用 \`agentctl restore\`。\n2. 在新电脑运行 \`${
+      config.runtime.provider === 'claude'
+        ? `agentctl runtime sync ${config.id}`
+        : `agentctl runtime login ${config.id}`
+    }\`。\n3. 运行 \`agentctl bridge authorize ${config.id}\`。\n4. 运行 \`agentctl doctor ${config.id}\`。\n\nClaude 只从 CC Switch 当前 Provider 同步必要配置；不要复制个人会话目录、~/.codex 或明文 Secret。\n`,
   );
   await writeExecutable(
     path.join(workspace, 'deployment/start.sh'),

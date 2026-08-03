@@ -16,11 +16,13 @@ import { assertInside, type FactoryPaths } from '../core/paths.js';
 import type { RegistryStore } from '../core/registry.js';
 import { JobStore } from '../core/scheduler.js';
 import { SkillService } from '../core/skills.js';
+import { TrashService, type TrashEntryDto, type TrashPreview } from '../core/trash.js';
 import { ProcessRunner, type LoggedRunOptions } from '../core/process-runner.js';
 import {
   buildRuntimeEnvironment,
   buildSafeBaseEnvironment,
   getRuntimeAdapter,
+  syncCcSwitchClaudeProvider,
 } from '../core/runtime.js';
 import type { AgentConfig } from '../schemas/agent-schema.js';
 import type { JobConfig } from '../schemas/job-schema.js';
@@ -228,9 +230,12 @@ export class FactoryApplication {
     bridgeAuthorize: string;
     chat: string;
   }> {
-    await this.getAgent(id);
+    const { registry } = await this.getAgent(id);
     return {
-      runtimeLogin: `agentctl runtime login ${id}`,
+      runtimeLogin:
+        registry.runtime.provider === 'claude'
+          ? `agentctl runtime sync ${id}`
+          : `agentctl runtime login ${id}`,
       bridgeAuthorize: `agentctl bridge authorize ${id}`,
       chat: `agentctl chat ${id}`,
     };
@@ -246,6 +251,7 @@ export class FactoryApplication {
       throw new AgentCtlError('VALIDATION_ERROR', 'timeout 必须是 1 到 86400 秒。');
     }
     const { registry } = await this.getAgent(id);
+    await this.prepareRuntime(registry);
     return new ProcessRunner(this.paths.logsDir).runLogged(
       id,
       getRuntimeAdapter(registry).run(registry, task, timeoutSeconds * 1000),
@@ -255,6 +261,7 @@ export class FactoryApplication {
 
   async chat(id: string): Promise<number> {
     const { registry } = await this.getAgent(id);
+    await this.prepareRuntime(registry);
     return new ProcessRunner(this.paths.logsDir).runInteractive(
       getRuntimeAdapter(registry).chat(registry),
     );
@@ -262,10 +269,24 @@ export class FactoryApplication {
 
   async runtimeAuth(id: string, operation: 'login' | 'status'): Promise<number> {
     const { registry } = await this.getAgent(id);
+    if (registry.runtime.provider === 'claude') {
+      await this.prepareRuntime(registry);
+      return 0;
+    }
     const adapter = getRuntimeAdapter(registry);
     return new ProcessRunner(this.paths.logsDir).runInteractive(
       operation === 'login' ? adapter.login(registry) : adapter.authStatus(registry),
     );
+  }
+
+  async syncRuntime(id: string) {
+    const { registry } = await this.getAgent(id);
+    if (registry.runtime.provider !== 'claude') {
+      throw new AgentCtlError('VALIDATION_ERROR', `Agent ${id} 使用 Codex，无需同步 CC Switch。`, {
+        remediation: `请运行 agentctl runtime login ${id}。`,
+      });
+    }
+    return this.prepareRuntime(registry);
   }
 
   async bridgeAuthorize(
@@ -287,7 +308,10 @@ export class FactoryApplication {
     const code = await new ProcessRunner(this.paths.logsDir).runInteractive(
       adapter.authorize(registry, options),
     );
-    if (code === 0) await this.markBridgeReady(id);
+    if (code === 0) {
+      await adapter.secureProfile(registry);
+      await this.markBridgeReady(id);
+    }
     return code;
   }
 
@@ -341,7 +365,10 @@ export class FactoryApplication {
 
   async runBridgeService(id: string): Promise<number> {
     const { registry } = await this.getAgent(id);
-    return new ProcessRunner(this.paths.logsDir).runInteractive(new BridgeAdapter().run(registry));
+    await this.prepareRuntime(registry);
+    const adapter = new BridgeAdapter();
+    await adapter.secureProfile(registry);
+    return new ProcessRunner(this.paths.logsDir).runInteractive(adapter.run(registry));
   }
 
   async runJobService(id: string, jobId: string): Promise<number> {
@@ -357,6 +384,10 @@ export class FactoryApplication {
       throw new AgentCtlError('AUTH_REQUIRED', `Agent ${id} 的飞书 Bridge 尚未授权。`, {
         remediation: `请先运行 agentctl bridge authorize ${id}。`,
       });
+    }
+    if (action === 'start' || action === 'restart') {
+      await this.prepareRuntime(registry);
+      await new BridgeAdapter().secureProfile(registry);
     }
     const service = bridgeLaunchdService(registry, this.paths);
     if (action === 'status') {
@@ -405,6 +436,59 @@ export class FactoryApplication {
     }));
   }
 
+  async trashAgent(id: string, options: { dryRun: true }): Promise<TrashPreview>;
+  async trashAgent(id: string, options?: { dryRun?: false }): Promise<TrashEntryDto>;
+  async trashAgent(id: string, options: { dryRun?: boolean } = {}) {
+    const { registry } = await this.getAgent(id);
+    const trash = new TrashService(this.paths, this.registry);
+    if (options.dryRun) return trash.preview(registry);
+    const jobs = await new JobStore(registry.workspace.path).list();
+    for (const job of jobs) {
+      await jobLaunchdService(
+        registry,
+        job,
+        this.paths,
+        process.argv[1] ?? 'agentctl',
+        this.paths.userHome,
+      ).uninstall();
+    }
+    if (registry.bridge.enabled) {
+      await bridgeLaunchdService(
+        registry,
+        this.paths,
+        process.argv[1] ?? 'agentctl',
+        this.paths.userHome,
+      ).uninstall();
+    }
+    return trash.move(registry);
+  }
+
+  async listTrash() {
+    return new TrashService(this.paths, this.registry).list();
+  }
+
+  async restoreTrash(trashId: string, options: { dryRun?: boolean } = {}) {
+    const trash = new TrashService(this.paths, this.registry);
+    if (options.dryRun) {
+      const entry = (await trash.list()).find((item) => item.trashId === trashId);
+      if (!entry) throw new AgentCtlError('NOT_FOUND', `回收站条目不存在：${trashId}`);
+      return entry;
+    }
+    await trash.restore(trashId);
+    return { restored: true, trashId };
+  }
+
+  async purgeExpiredTrash(options: { dryRun?: boolean } = {}) {
+    const trash = new TrashService(this.paths, this.registry);
+    if (options.dryRun) {
+      const expired = (await trash.list()).filter(
+        (entry) => entry.state === 'ready' && new Date(entry.expiresAt).getTime() <= Date.now(),
+      );
+      return { purged: [], wouldPurge: expired.map((entry) => entry.trashId) };
+    }
+    return { ...(await trash.purgeExpired()), wouldPurge: [] as string[] };
+  }
+
   async setJobEnabled(id: string, jobId: string, enabled: boolean): Promise<JobConfig> {
     const { registry } = await this.getAgent(id);
     const store = new JobStore(registry.workspace.path);
@@ -418,7 +502,13 @@ export class FactoryApplication {
   async runJob(id: string, jobId: string, options: LoggedRunOptions = {}) {
     const { registry } = await this.getAgent(id);
     const job = await new JobStore(registry.workspace.path).get(jobId);
+    if (job.execution.type === 'agent') await this.prepareRuntime(registry);
     return new JobRunner(this.paths).run(registry, job, options);
+  }
+
+  private async prepareRuntime(registry: RegistryAgent) {
+    if (registry.runtime.provider !== 'claude') return undefined;
+    return syncCcSwitchClaudeProvider(registry, this.paths.userHome);
   }
 
   async archiveJob(id: string, jobId: string): Promise<void> {

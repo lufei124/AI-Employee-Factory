@@ -5,6 +5,6 @@ export default defineConfig({
     environment: 'node',
     coverage: { reporter: ['text', 'html'] },
     testTimeout: 15_000,
-    exclude: [...configDefaults.exclude, 'e2e/**'],
+    exclude: [...configDefaults.exclude, 'e2e/**', '.scratch/**'],
   },
 });

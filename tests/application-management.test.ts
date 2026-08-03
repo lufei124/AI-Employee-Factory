@@ -66,10 +66,49 @@ describe('FactoryApplication management use cases', () => {
 
     expect((await app.listJobs('user-operations'))[0]?.schedule.time).toBe('10:00');
     expect(await app.terminalGuidance('user-operations')).toEqual({
-      runtimeLogin: 'agentctl runtime login user-operations',
+      runtimeLogin: 'agentctl runtime sync user-operations',
       bridgeAuthorize: 'agentctl bridge authorize user-operations',
       chat: 'agentctl chat user-operations',
     });
+  });
+
+  it('syncs the active CC Switch provider instead of invoking Claude OAuth login', async () => {
+    const { app, paths, root } = await setup();
+    await fs.outputJson(path.join(root, '.claude/settings.json'), {
+      env: {
+        ANTHROPIC_AUTH_TOKEN: 'cc-switch-token',
+        ANTHROPIC_BASE_URL: 'https://provider.example.test',
+      },
+    });
+
+    expect(await app.runtimeAuth('user-operations', 'login')).toBe(0);
+    expect(
+      await fs.readJson(path.join(paths.runtimesDir, 'user-operations/claude/settings.json')),
+    ).toMatchObject({
+      env: {
+        ANTHROPIC_AUTH_TOKEN: 'cc-switch-token',
+        ANTHROPIC_BASE_URL: 'https://provider.example.test',
+      },
+    });
+  });
+
+  it('previews and moves a complete Agent into the recoverable trash', async () => {
+    const { app, paths } = await setup();
+    await fs.outputFile(path.join(paths.logsDir, 'user-operations/run/output.log'), 'test');
+    await fs.outputFile(path.join(paths.servicesDir, 'user-operations/bridge.plist'), 'test');
+    await fs.outputFile(path.join(paths.schedulesDir, 'user-operations/job.plist'), 'test');
+
+    const preview = await app.trashAgent('user-operations', { dryRun: true });
+    expect(preview).toMatchObject({ agentId: 'user-operations' });
+    expect(await app.getAgent('user-operations')).toBeDefined();
+
+    const moved = await app.trashAgent('user-operations');
+
+    expect(moved).toMatchObject({ agentId: 'user-operations', state: 'ready' });
+    await expect(app.getAgent('user-operations')).rejects.toThrow('Agent 不存在');
+    expect((await app.listTrash())[0]).toMatchObject({ trashId: moved.trashId });
+    await app.restoreTrash(moved.trashId);
+    expect((await app.getAgent('user-operations')).registry.status).toBe('stopped');
   });
 
   it('lists installed skills, logs, and generated backups without exposing arbitrary paths', async () => {

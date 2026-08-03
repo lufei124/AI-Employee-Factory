@@ -7,6 +7,7 @@ describe('resolveFactoryPaths', () => {
   it('uses HOME defaults without hard-coded user paths', () => {
     const result = resolveFactoryPaths({ HOME: '/tmp/employee-home' });
 
+    expect(result.userHome).toBe('/tmp/employee-home');
     expect(result.home).toBe('/tmp/employee-home/.ai-employees');
     expect(result.workspaceRoot).toBe('/tmp/employee-home/AI-Employees/agents');
     expect(result.registryFile).toBe('/tmp/employee-home/.ai-employees/registry/agents.yaml');

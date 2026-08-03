@@ -224,8 +224,15 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
     '/api/v1/agents/:id/actions/:action',
     async (request) => {
       const action = z
-        .enum(['start', 'stop', 'restart', 'status', 'archive'])
+        .enum(['start', 'stop', 'restart', 'status', 'archive', 'trash'])
         .parse(request.params.action);
+      if (action === 'trash') {
+        const body = z.object({ confirmId: z.string() }).parse(request.body);
+        if (body.confirmId !== request.params.id) {
+          throw new AgentCtlError('VALIDATION_ERROR', '回收站确认与 Agent ID 不匹配。');
+        }
+        return { data: await options.application.trashAgent(request.params.id) };
+      }
       if (action === 'archive') {
         const body = z.object({ confirmId: z.string() }).parse(request.body);
         if (body.confirmId !== request.params.id) {
@@ -237,6 +244,25 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
       return { data: await options.application.lifecycleAction(request.params.id, action) };
     },
   );
+
+  server.get('/api/v1/trash', async () => ({ data: await options.application.listTrash() }));
+
+  server.post<{ Params: { trashId: string } }>(
+    '/api/v1/trash/:trashId/actions/restore',
+    async (request) => {
+      const body = z.object({ confirmTrashId: z.string() }).parse(request.body);
+      if (body.confirmTrashId !== request.params.trashId) {
+        throw new AgentCtlError('VALIDATION_ERROR', '恢复确认与回收站 ID 不匹配。');
+      }
+      return { data: await options.application.restoreTrash(request.params.trashId) };
+    },
+  );
+
+  server.post('/api/v1/trash/actions/purge-expired', async (request) => {
+    const body = z.object({ confirm: z.literal('purge-expired') }).parse(request.body);
+    void body;
+    return { data: await options.application.purgeExpiredTrash() };
+  });
 
   server.get<{ Params: { id: string; key: string } }>(
     '/api/v1/agents/:id/documents/:key',

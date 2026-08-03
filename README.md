@@ -65,7 +65,7 @@ agentctl web --port 43120    # 指定本机端口
 
 Web 只监听 `127.0.0.1`，每次启动生成一次性 fragment token，交换为 `HttpOnly`/`SameSite=Strict` cookie，修改请求同时检查 Host、Origin 和 CSRF token。关闭 `agentctl web` 后服务和由它启动的未完成子进程会停止。
 
-Runtime 登录、飞书扫码/App 授权和交互聊天保持在隔离的终端入口中。Web 页面会显示状态和可复制命令，不在浏览器中模拟终端。
+CC Switch Provider 同步、Codex 登录、飞书扫码/App 授权和交互聊天保持在隔离的终端入口中。Web 页面会显示状态和可复制命令，不在浏览器中模拟终端。
 
 ## 创建用户运营专员
 
@@ -78,19 +78,21 @@ agentctl create \
   --feishu dedicated
 ```
 
-创建后完成隔离登录：
+Claude 默认使用 CC Switch 当前启用的 Provider。创建后将 Provider 同步到员工隔离环境：
 
 ```bash
-agentctl runtime login user-operations
+agentctl runtime sync user-operations
 agentctl runtime status user-operations
 ```
 
-Claude 登录存入 `~/.ai-employees/runtimes/user-operations/claude`，不会写入个人 `~/.claude`。Codex 员工同理使用专属 `CODEX_HOME`。
+Factory 只读取 CC Switch live `settings.json` 中经过白名单允许的 `ANTHROPIC_*` 与模型配置，并写入 `~/.ai-employees/runtimes/user-operations/claude/settings.json`。它不会复制个人 OAuth、会话、历史、MCP、主题或权限；不会修改 CC Switch 和个人 `~/.claude`。每次 chat、run、Agent Job 与 Bridge 启动前都会重新同步，因此在 CC Switch 切换 Provider 后无需官方 Claude 登录。兼容旧脚本的 `agentctl runtime login <claude-id>` 也只执行同步，不会运行 `claude auth login`。
+
+Codex 员工仍通过 `agentctl runtime login <id>` 登录专属 `CODEX_HOME`。
 
 ## 飞书绑定与生命周期
 
 ```bash
-# QR 创建/授权专属机器人
+# 使用 Bridge 官方 PersonalAgent 注册流程：终端显示二维码后用飞书扫码
 agentctl bridge authorize user-operations
 
 # 或使用已有 App ID；App Secret 由 Bridge 交互式读取，不进入命令行
@@ -103,7 +105,9 @@ agentctl restart user-operations
 agentctl stop user-operations
 ```
 
-Factory 生成自有 launchd plist，运行 Bridge 的前台 `run` 命令，从而强制注入 `CLAUDE_CONFIG_DIR`/`CODEX_HOME` 和 `LARK_CHANNEL_HOME`。plist 不包含 Secret。
+Bridge 使用官方 `@larksuite/channel` WebSocket 长连接，不需要配置 webhook。Factory 生成自有 launchd plist，运行 Bridge 的前台 `run` 命令，从而强制注入 `CLAUDE_CONFIG_DIR`/`CODEX_HOME` 和员工专属 `LARK_CHANNEL_HOME`。plist 不包含 Secret。
+
+授权完成后，Factory 会把 Bridge profile 的 `permissions.defaultAccess` 与 `maxAccess` 收紧为 `workspace`，避免上游默认 `full` 映射为 Claude `bypassPermissions` 或 Codex `danger-full-access`。启动前会再次校验并同步该安全配置。基础即时消息不需要手工编造权限清单；群聊免 @、会议 Agent 等扩展能力应按 Bridge 官方增量授权流程单独开启。
 
 ## 聊天、单次任务和日志
 
@@ -113,6 +117,28 @@ agentctl run user-operations "执行今日用户反馈检查" --timeout 900
 agentctl logs user-operations --lines 200
 agentctl logs user-operations --follow
 ```
+
+## 员工回收站
+
+员工详情中的“移入回收站”会停止并卸载 Bridge 与全部 Job，然后把 Workspace、Runtime、飞书配置、日志、服务和调度文件一起移出活动目录。员工会立即从 Registry 和员工列表消失，原 Agent ID 可以重新用于测试。
+
+数据由 Factory 保留 7 天，可在“备份恢复 → 员工回收站”中一键恢复；恢复后的员工保持 `stopped`，不会自动启动任何服务。超过 7 天的条目会在下次启动 Web 或运行公开 `agentctl` 命令时永久清理，不安装常驻清理服务。
+
+```bash
+# 查看将移动的所有路径，不修改数据
+agentctl trash move user-operations --dry-run
+
+# 移入、查看和恢复
+agentctl trash move user-operations
+agentctl trash list
+agentctl trash restore <trash-id>
+
+# 预览或清理已过期条目
+agentctl trash purge --expired --dry-run
+agentctl trash purge --expired
+```
+
+恢复时如果 Agent ID 或任一原路径已被新员工占用，Factory 会拒绝恢复且不会覆盖数据。回收站是普通文件系统保留机制，不是取证级安全擦除。
 
 不要在 Agent 仓库中直接运行 `claude` 或 `codex`。`deployment/` 内的启动器也只委托给 `agentctl`。单次执行将 stdout、stderr、时间和真实退出码保存到 Agent 专属日志目录。
 
@@ -157,7 +183,7 @@ agentctl skill remove user-operations feedback-analyze
 
 ## 记忆隔离原理
 
-每次 `chat`、`run`、Bridge 和 Job 执行前，Factory 会清理继承的个人 Runtime/Bridge 路径与常见 API/OAuth 变量，然后只注入当前 Agent 的专属路径。正式事实优先级为：
+每次 `chat`、`run`、Bridge 和 Job 执行前，Factory 会清理继承的个人 Runtime/Bridge 路径与常见 API/OAuth 变量，然后只注入当前 Agent 的专属路径。Claude 有一个明确的窄例外：只从 CC Switch 当前配置同步 Provider 白名单字段到员工 Runtime Home。正式事实优先级为：
 
 ```text
 岗位制度和权限 > 正式业务知识 > 已确认决策 > 正式 Skill > 原生记忆 > 当前会话
@@ -174,7 +200,7 @@ agentctl restore ~/.ai-employees/backups/user-operations-<time>.tar.gz --new-id 
 
 默认备份包含 Workspace/Git、Registry 摘要、正式记忆、Job、脱敏 Bridge 配置、manifest 和 SHA-256，排除 `.env`、私钥、Token、Secret、runtime 与日志。
 
-`agentctl backup user-operations --include-runtime` 会交互式读取密码，通过 scrypt + AES-256-GCM 加密。`--new-id` 始终创建全新 runtime/Bridge home，不携带旧员工原生记忆，并清除 Git remotes。恢复后需重新登录和授权。
+`agentctl backup user-operations --include-runtime` 会交互式读取密码，通过 scrypt + AES-256-GCM 加密。`--new-id` 始终创建全新 runtime/Bridge home，不携带旧员工原生记忆，并清除 Git remotes。恢复后 Claude 需重新同步 CC Switch Provider，Codex 需重新登录，飞书需重新授权。
 
 ## 安全与诊断
 

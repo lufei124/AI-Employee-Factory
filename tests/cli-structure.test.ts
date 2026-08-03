@@ -26,6 +26,7 @@ describe('agentctl command surface', () => {
         'job',
         'skill',
         'web',
+        'trash',
       ]),
     );
   });
@@ -36,7 +37,7 @@ describe('agentctl command surface', () => {
       program.commands
         .find((command) => command.name() === group)
         ?.commands.map((command) => command.name());
-    expect(names('runtime')).toEqual(expect.arrayContaining(['login', 'status']));
+    expect(names('runtime')).toEqual(expect.arrayContaining(['sync', 'login', 'status']));
     expect(names('bridge')).toEqual(expect.arrayContaining(['authorize', 'status']));
     expect(names('job')).toEqual(
       expect.arrayContaining([
@@ -50,5 +51,6 @@ describe('agentctl command surface', () => {
       ]),
     );
     expect(names('skill')).toEqual(expect.arrayContaining(['list', 'install', 'remove']));
+    expect(names('trash')).toEqual(expect.arrayContaining(['move', 'list', 'restore', 'purge']));
   });
 });

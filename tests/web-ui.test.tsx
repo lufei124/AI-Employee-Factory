@@ -7,6 +7,7 @@ import { CreateAgentPage } from '../web/src/pages/CreateAgentPage.js';
 import { DashboardPage } from '../web/src/pages/DashboardPage.js';
 import { AgentDetailPage } from '../web/src/pages/AgentDetailPage.js';
 import { OperationsDrawer } from '../web/src/components/OperationsDrawer.js';
+import { BackupsPage } from '../web/src/pages/BackupsPage.js';
 import { api } from '../web/src/api.js';
 
 vi.mock('../web/src/api.js', () => ({
@@ -22,6 +23,10 @@ vi.mock('../web/src/api.js', () => ({
     listSkills: vi.fn(),
     listOperations: vi.fn(),
     operationEvents: vi.fn(),
+    trashAgent: vi.fn(),
+    listTrash: vi.fn(),
+    restoreTrash: vi.fn(),
+    listBackups: vi.fn(),
   },
 }));
 
@@ -86,13 +91,16 @@ describe('Web console core flows', () => {
       feishu: 'dedicated',
     });
     expect(await screen.findByText('员工创建完成')).toBeInTheDocument();
-    expect(screen.getByText('agentctl runtime login content-operator')).toBeInTheDocument();
+    expect(screen.getByText('agentctl runtime sync content-operator')).toBeInTheDocument();
+    expect(
+      screen.getByText('同步 CC Switch 当前 Claude Provider 到员工隔离环境'),
+    ).toBeInTheDocument();
     await user.click(
       screen.getByRole('button', {
-        name: '复制命令 agentctl runtime login content-operator',
+        name: '复制命令 agentctl runtime sync content-operator',
       }),
     );
-    expect(writeText).toHaveBeenCalledWith('agentctl runtime login content-operator');
+    expect(writeText).toHaveBeenCalledWith('agentctl runtime sync content-operator');
     expect(execCommand).toHaveBeenCalledWith('copy');
     expect(await screen.findByText('已复制')).toBeInTheDocument();
   });
@@ -121,7 +129,7 @@ describe('Web console core flows', () => {
       agent: { description: '负责用户运营' },
     } as never);
     vi.mocked(api.terminalGuidance).mockResolvedValue({
-      runtimeLogin: 'agentctl runtime login ops',
+      runtimeLogin: 'agentctl runtime sync ops',
       bridgeAuthorize: 'agentctl bridge authorize ops',
       chat: 'agentctl chat ops',
     });
@@ -131,18 +139,18 @@ describe('Web console core flows', () => {
     expect(await screen.findByText('运营专员')).toBeInTheDocument();
     expect(screen.getByText('Claude · sonnet')).toBeInTheDocument();
     expect(screen.getByText('运行器已锁定')).toBeInTheDocument();
-    expect(screen.getByText('登录 AI 运行器')).toBeInTheDocument();
+    expect(screen.getByText('同步 CC Switch Provider')).toBeInTheDocument();
     expect(
-      screen.getByText('首次使用或登录失效时执行；登录该员工专属的 Claude/Codex 环境。'),
+      screen.getByText('读取 CC Switch 当前 Claude Provider，并安全同步到该员工的隔离环境。'),
     ).toBeInTheDocument();
-    expect(screen.getByText('agentctl runtime login ops')).toBeInTheDocument();
+    expect(screen.getByText('agentctl runtime sync ops')).toBeInTheDocument();
     expect(screen.getByText('授权飞书机器人')).toBeInTheDocument();
     expect(
       screen.getByText('启用飞书后执行；通过扫码或应用授权，让该员工连接独立飞书机器人。'),
     ).toBeInTheDocument();
     expect(screen.getByText('开始终端对话')).toBeInTheDocument();
     expect(
-      screen.getByText('登录完成后执行；在员工 Workspace 中开启与 AI 员工的交互会话。'),
+      screen.getByText('Provider 同步或登录完成后执行；在员工 Workspace 中开启交互会话。'),
     ).toBeInTheDocument();
   });
 
@@ -160,7 +168,7 @@ describe('Web console core flows', () => {
     };
     vi.mocked(api.getAgent).mockResolvedValue(detail as never);
     vi.mocked(api.terminalGuidance).mockResolvedValue({
-      runtimeLogin: 'agentctl runtime login ops',
+      runtimeLogin: 'agentctl runtime sync ops',
       bridgeAuthorize: 'agentctl bridge authorize ops',
       chat: 'agentctl chat ops',
     });
@@ -180,5 +188,63 @@ describe('Web console core flows', () => {
     finishLifecycle({ state: 'running' });
     expect(await screen.findByText('启动成功，当前状态：运行中')).toBeInTheDocument();
     expect(api.getAgent).toHaveBeenCalledTimes(2);
+  });
+
+  it('moves an employee into recoverable trash with one confirmation', async () => {
+    vi.mocked(api.getAgent).mockResolvedValue({
+      registry: {
+        id: 'ops',
+        name: '运营专员',
+        status: 'stopped',
+        runtime: { provider: 'claude', locked: true },
+        runtime_home: { path: '/private/runtimes/ops/claude' },
+        bridge: { enabled: false, authorization: 'pending', home: '/private/bridges/ops' },
+      },
+      agent: { description: '测试员工' },
+    } as never);
+    vi.mocked(api.terminalGuidance).mockResolvedValue({
+      runtimeLogin: 'agentctl runtime sync ops',
+      bridgeAuthorize: 'agentctl bridge authorize ops',
+      chat: 'agentctl chat ops',
+    });
+    vi.mocked(api.trashAgent).mockResolvedValue({
+      trashId: '018f6b77-82d4-7c80-8000-000000000001',
+      agentId: 'ops',
+      state: 'ready',
+    } as never);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const user = userEvent.setup();
+
+    render(<AgentDetailPage agentId="ops" />);
+    await user.click(await screen.findByRole('button', { name: '移入回收站' }));
+
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(api.trashAgent).toHaveBeenCalledWith('ops');
+    expect(window.location.hash).toBe('#/agents');
+  });
+
+  it('lists recoverable employees and restores after confirmation', async () => {
+    vi.mocked(api.listBackups).mockResolvedValue([]);
+    vi.mocked(api.listTrash).mockResolvedValue([
+      {
+        trashId: '018f6b77-82d4-7c80-8000-000000000001',
+        agentId: 'ops',
+        name: '运营专员',
+        deletedAt: '2026-08-03T00:00:00.000Z',
+        expiresAt: '2026-08-10T00:00:00.000Z',
+        remainingDays: 7,
+        state: 'ready',
+      },
+    ]);
+    vi.mocked(api.restoreTrash).mockResolvedValue({ restored: true } as never);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const user = userEvent.setup();
+
+    render(<BackupsPage />);
+    expect(await screen.findByText('员工回收站')).toBeInTheDocument();
+    expect(screen.getByText('剩余 7 天')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '恢复员工' }));
+
+    expect(api.restoreTrash).toHaveBeenCalledWith('018f6b77-82d4-7c80-8000-000000000001');
   });
 });

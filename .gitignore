@@ -21,3 +21,6 @@ pnpm-debug.log*
 .DS_Store
 
 # 注意：.agent/ 必须提交到仓库（多 Agent 协作簿记），不要忽略它。
+
+# Scratch / 研究产物（research-workflow skill）
+.scratch/
