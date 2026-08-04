@@ -221,6 +221,18 @@ agentctl restore ~/.ai-employees/backups/user-operations-<time>.tar.gz --new-id 
 
 `agentctl backup user-operations --include-runtime` 会交互式读取密码，通过 scrypt + AES-256-GCM 加密。`--new-id` 始终创建全新 runtime/Bridge home，不携带旧员工原生记忆，并清除 Git remotes。恢复后 Claude 需重新同步 CC Switch Provider，Codex 需重新登录，飞书需重新授权。
 
+### 换机授权清单（OP5-C）
+
+换机到新机器后，恢复备份（`agentctl restore`）只恢复 Workspace/正式记忆/配置，**不迁移凭据**。各运行时按以下方式重新授权（详见 `.scratch/op5-c-migration.md` 调研）：
+
+| 运行时      | 换机授权方式                                                                                      | 交互次数            |
+| ----------- | ------------------------------------------------------------------------------------------------- | ------------------- |
+| Claude      | 在新机配置 CC Switch Provider（或预置员工 `runtime_home/.cc-switch.env`，0600），spawn 前自动同步 | 0（配置一次性）     |
+| Codex       | 复制旧机 `~/.codex/auth.json`（官方文档确认 `auth.json` 不绑定主机）或重新 `codex login`          | 0 或 1              |
+| 飞书 Bridge | `agentctl bridge authorize <id>` 扫码，或 `--app-id --app-secret --tenant` 用既有应用凭据         | 0~1（扫码须人在场） |
+
+推荐配置下每员工 0 次交互（复制 `auth.json` + App 凭据 + CC Switch/`.cc-switch.env`）；最坏情形每员工 2 次（Codex 重新登录 + 飞书扫码）。边界：Codex 若配置 Keychain 存储（`cli_auth_credentials_store = "keyring"`）则复制法不适用；Feishu 无现成应用时扫码须人在场。
+
 ## 安全与诊断
 
 ```bash

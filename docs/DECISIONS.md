@@ -126,6 +126,18 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 - 边界：本批只确立契约与文档，不实现 `local-sqlite` / `external` 后端，不接入任何调用方，不改变既有 `PruneService` 归档区清理语义（`archives` 清理范围照旧）。archival 后端与既有本地归档区（archive/trash）是不同概念：前者是外部/持久化归档目标，后者是本地可恢复目录。
 - 原因：OP1 Stage E 的目标是把「归档到外部后端」这个未来能力的安全边界先钉死，避免实现时引入 secret 泄露（写原始 transcript/内存）或越权传输（把 runtime_home/bridge 内容带出）。与 D-006（不落盘 Secret）、D-009（frozen/versioned 二分）、D-013（扩展点限定 data-only/adapter-interface）一致——先约束后实现。
 
+## D-015：换机重授权成本（OP5-C 调研裁定）
+
+- 状态：Accepted
+- 日期：2026-08-04
+- 决定：换机重授权可显著降低但不为零，保留「交互授权」为硬边界。调研结论（详见 `.scratch/op5-c-migration.md`）：
+  1. **Codex OAuth token 可迁移**：`~/.codex/auth.json`（0600，含 `id_token`/`access_token`/`refresh_token`/`account_id`）官方文档确认**不绑定主机**，可在换机时复制；但 token 会轮换（文件随时间变化），且若用户配置 Keychain 存储（`cli_auth_credentials_store = "keyring"`）则复制法不适用，须重新登录。
+  2. **飞书非扫码路径存在**：`lark-channel-bridge profile create --app-id --app-secret --tenant` 用既有 Feishu/Lark 应用凭据建 profile（App Secret 进加密 keystore `profiles/<name>/secrets.enc`，0600），无需扫码；但 `--app-secret` 建议交互输入，扫码路径仍须人在场（D-005）。
+  3. **Claude 已非交互**：CC Switch 同步（OP5-B 起带 mtime 缓存 + `.cc-switch.env` 降级）换机 0 次交互，仅需新机配置 CC Switch。
+  4. **不实现 `agentctl migrate` 向导**（`MigrationWizard` 接口保持设计级草图）：OP5-C 原始为「立项评估，非承诺」，当前交付以文档明确换机清单与可降低路径，而非强推自动化。推荐配置下每员工 0 次交互，最坏情形每员工 2 次（Codex 重登 + 飞书扫码）。
+- 边界：本裁定不引入任何代码改动；Factory 不自动复制/注入凭据（守 D-006——复制 `auth.json`/App 凭据属用户在换机时的主动运维行为，不在 Factory 自动传输面）。`agentctl migrate` 仍指 Registry schema v1→v2 迁移（OP3-A 长期，TASK-019），不扩展为换机向导。
+- 原因：C4 评估「10 员工 × 3 次交互授权」过高——实际调研显示 Codex token 可迁移、飞书有 App 凭据路径、Claude 已非交互，推荐配置下可降至 0 次/员工。文档交付比强推向导更符合「非承诺」立项边界，避免为实现而实现。
+
 ## D-001 - 引入多 Agent 协作骨架
 
 - 状态：Accepted
