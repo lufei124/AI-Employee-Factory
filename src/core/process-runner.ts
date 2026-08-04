@@ -12,6 +12,8 @@ export interface LoggedRunResult {
   stdoutFile: string;
   stderrFile: string;
   metadataFile: string;
+  startedAt: string;
+  finishedAt: string;
 }
 
 export interface LoggedRunOptions {
@@ -19,6 +21,9 @@ export interface LoggedRunOptions {
   signal?: AbortSignal;
   onStdout?: (chunk: string) => void;
   onStderr?: (chunk: string) => void;
+  /** OP4-B：trace 关联三件套，写入 metadata.json，缺省则字段省略（向后兼容）。 */
+  operationId?: string;
+  traceId?: string;
 }
 
 export class ProcessRunner {
@@ -80,6 +85,7 @@ export class ProcessRunner {
     const timedOut = result.timedOut;
     const cancelled = result.isCanceled || options.signal?.aborted === true;
     const exitCode = cancelled ? 130 : timedOut ? 124 : (result.exitCode ?? 1);
+    const finishedAt = new Date();
     await fs.writeJson(
       metadataFile,
       {
@@ -88,13 +94,27 @@ export class ProcessRunner {
         executable: path.basename(context.command),
         cwd: context.cwd,
         started_at: startedAt.toISOString(),
-        finished_at: new Date().toISOString(),
+        finished_at: finishedAt.toISOString(),
         exit_code: exitCode,
         timed_out: timedOut,
         cancelled,
+        // OP4-B：trace 关联字段，仅在调用方提供时写入，向后兼容旧 metadata.json。
+        ...(options.operationId ? { operation_id: options.operationId } : {}),
+        ...(options.traceId ? { trace_id: options.traceId } : {}),
+        ...(options.operationId ? { span_id: randomUUID() } : {}),
       },
       { spaces: 2, mode: 0o600 },
     );
-    return { exitCode, timedOut, cancelled, logDir, stdoutFile, stderrFile, metadataFile };
+    return {
+      exitCode,
+      timedOut,
+      cancelled,
+      logDir,
+      stdoutFile,
+      stderrFile,
+      metadataFile,
+      startedAt: startedAt.toISOString(),
+      finishedAt: finishedAt.toISOString(),
+    };
   }
 }

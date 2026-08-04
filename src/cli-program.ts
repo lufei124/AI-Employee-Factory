@@ -1,10 +1,12 @@
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import YAML from 'yaml';
 import chalk from 'chalk';
 import { Command } from 'commander';
 import { confirm, input, password, select } from '@inquirer/prompts';
 import type { CreateAgentInput } from './core/create-agent.js';
 import { AgentCtlError } from './core/errors.js';
+import { OperationStore } from './core/operation-store.js';
 import { resolveFactoryPaths, displayPath } from './core/paths.js';
 import { RegistryStore } from './core/registry.js';
 import type { RuntimeProvider } from './schemas/agent-schema.js';
@@ -25,6 +27,15 @@ async function confirmDanger(message: string, yes: boolean): Promise<void> {
   if (yes) return;
   if (!(await confirm({ message, default: false })))
     throw new AgentCtlError('OPERATION_FAILED', '操作已取消。');
+}
+
+// OP4-B：CLI 发起的 run/job 记录摘要到 operations.jsonl（best-effort，失败不影响操作结果）。
+// web 路径由 OperationManager 记录；此函数仅覆盖 CLI 主路径，使 agentctl operations query 可查 CLI 发起操作。
+async function recordOperation(
+  logsDir: string,
+  input: Parameters<OperationStore['record']>[0],
+): Promise<void> {
+  await new OperationStore(logsDir).record(input).catch(() => undefined);
 }
 
 async function createInputFromOptions(options: Record<string, unknown>): Promise<CreateAgentInput> {
@@ -174,8 +185,22 @@ export function createProgram(): Command {
     .description('执行单次 Agent 任务')
     .option('--timeout <seconds>', '超时秒数', '900')
     .action(async (id: string, task: string, options: { timeout: string }) => {
-      const { application } = context();
-      const result = await application.runAgent(id, task, Number(options.timeout));
+      const { paths, application } = context();
+      const operationId = randomUUID();
+      const traceId = randomUUID();
+      const result = await application.runAgent(id, task, Number(options.timeout), {
+        operationId,
+        traceId,
+      });
+      await recordOperation(paths.logsDir, {
+        operation_id: operationId,
+        agent_id: id,
+        kind: 'run',
+        started_at: result.startedAt,
+        finished_at: result.finishedAt,
+        exit_code: result.exitCode,
+        trace_id: traceId,
+      });
       process.exitCode = result.exitCode;
     });
 
@@ -479,11 +504,23 @@ function registerJobCommands(program: Command): void {
     console.log(chalk.green(`✓ ${jobs.length} 个任务配置有效`));
   });
   group.command('run <agent-id> <job-id>').action(async (id: string, jobId: string) => {
-    const { application } = context();
+    const { paths, application } = context();
     const job = (await application.listJobs(id)).find((item) => item.id === jobId);
     if (!job) throw new AgentCtlError('NOT_FOUND', `定时任务不存在：${jobId}`);
     if (!job.enabled) console.log(chalk.yellow('注意：正在手工运行已禁用任务。'));
-    process.exitCode = (await application.runJob(id, jobId)).exitCode;
+    const operationId = randomUUID();
+    const traceId = randomUUID();
+    const result = await application.runJob(id, jobId, { operationId, traceId });
+    await recordOperation(paths.logsDir, {
+      operation_id: operationId,
+      agent_id: id,
+      kind: 'job',
+      started_at: result.startedAt!,
+      finished_at: result.finishedAt!,
+      exit_code: result.exitCode,
+      trace_id: traceId,
+    });
+    process.exitCode = result.exitCode;
   });
   for (const verb of ['enable', 'disable'] as const) {
     group.command(`${verb} <agent-id> <job-id>`).action(async (id: string, jobId: string) => {

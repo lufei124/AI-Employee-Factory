@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { AgentCtlError } from '../core/errors.js';
 import type { OperationStore } from '../core/operation-store.js';
+import { defaultObservabilitySink, type ObservabilitySink } from '../core/observability.js';
 
 export type OperationState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
@@ -23,6 +24,7 @@ export interface OperationDto {
   finishedAt?: string;
   exitCode?: number;
   error?: ApiError;
+  traceId?: string;
 }
 
 export interface OperationEvent {
@@ -37,6 +39,8 @@ export interface OperationEvent {
 export interface OperationTaskContext {
   signal: AbortSignal;
   emit(event: Omit<OperationEvent, 'seq' | 'timestamp'>): void;
+  operationId: string;
+  traceId: string;
 }
 
 export type OperationTask = (
@@ -76,26 +80,31 @@ export class OperationManager {
   private readonly maxOperations: number;
   private readonly maxEventsPerOperation: number;
   private readonly store: OperationStore | undefined;
+  private readonly sink: ObservabilitySink;
 
   constructor(
     options: {
       maxOperations?: number;
       maxEventsPerOperation?: number;
       store?: OperationStore;
+      sink?: ObservabilitySink;
     } = {},
   ) {
     this.maxOperations = options.maxOperations ?? 200;
     this.maxEventsPerOperation = options.maxEventsPerOperation ?? 1000;
     this.store = options.store;
+    this.sink = options.sink ?? defaultObservabilitySink;
   }
 
   start(type: string, agentId: string | undefined, task: OperationTask): OperationDto {
     const id = randomUUID();
+    const traceId = randomUUID();
     const dto: OperationDto = {
       id,
       type,
       state: 'queued',
       progress: 0,
+      traceId,
       ...(agentId ? { agentId } : {}),
     };
     const internal: InternalOperation = {
@@ -149,54 +158,66 @@ export class OperationManager {
   }
 
   private async execute(operation: InternalOperation, task: OperationTask): Promise<void> {
-    if (operation.controller.signal.aborted) {
-      await this.finishCancelled(operation);
-      return;
-    }
-    operation.dto.state = 'running';
-    operation.dto.startedAt = new Date().toISOString();
-    this.emit(operation, { kind: 'state', message: 'running' });
+    const span = this.sink.spanStart('operation', {
+      operation_id: operation.dto.id,
+      trace_id: operation.dto.traceId ?? '',
+      kind: operation.dto.type,
+      ...(operation.dto.agentId ? { agent_id: operation.dto.agentId } : {}),
+    });
     try {
-      const result = await task({
-        signal: operation.controller.signal,
-        emit: (event) => {
-          if (event.kind === 'progress' && event.progress !== undefined) {
-            operation.dto.progress = Math.max(0, Math.min(100, event.progress));
-          }
-          this.emit(operation, event);
-        },
-      });
       if (operation.controller.signal.aborted) {
         await this.finishCancelled(operation);
         return;
       }
-      const exitCode = result?.exitCode ?? 0;
-      operation.dto.exitCode = exitCode;
-      operation.dto.finishedAt = new Date().toISOString();
-      if (exitCode === 0) {
-        operation.dto.state = 'succeeded';
-        operation.dto.progress = 100;
-      } else {
+      operation.dto.state = 'running';
+      operation.dto.startedAt = new Date().toISOString();
+      this.emit(operation, { kind: 'state', message: 'running' });
+      try {
+        const result = await task({
+          signal: operation.controller.signal,
+          emit: (event) => {
+            if (event.kind === 'progress' && event.progress !== undefined) {
+              operation.dto.progress = Math.max(0, Math.min(100, event.progress));
+            }
+            this.emit(operation, event);
+          },
+          operationId: operation.dto.id,
+          traceId: operation.dto.traceId ?? '',
+        });
+        if (operation.controller.signal.aborted) {
+          await this.finishCancelled(operation);
+          return;
+        }
+        const exitCode = result?.exitCode ?? 0;
+        operation.dto.exitCode = exitCode;
+        operation.dto.finishedAt = new Date().toISOString();
+        if (exitCode === 0) {
+          operation.dto.state = 'succeeded';
+          operation.dto.progress = 100;
+        } else {
+          operation.dto.state = 'failed';
+          operation.dto.error = {
+            code: 'OPERATION_FAILED',
+            message: `操作退出码：${exitCode}`,
+            exitCode,
+          };
+        }
+        this.emit(operation, { kind: 'state', message: operation.dto.state });
+      } catch (error) {
+        if (operation.controller.signal.aborted) {
+          await this.finishCancelled(operation);
+          return;
+        }
         operation.dto.state = 'failed';
-        operation.dto.error = {
-          code: 'OPERATION_FAILED',
-          message: `操作退出码：${exitCode}`,
-          exitCode,
-        };
+        operation.dto.error = toApiError(error);
+        operation.dto.exitCode = operation.dto.error.exitCode;
+        operation.dto.finishedAt = new Date().toISOString();
+        this.emit(operation, { kind: 'state', message: 'failed' });
       }
-      this.emit(operation, { kind: 'state', message: operation.dto.state });
-    } catch (error) {
-      if (operation.controller.signal.aborted) {
-        await this.finishCancelled(operation);
-        return;
-      }
-      operation.dto.state = 'failed';
-      operation.dto.error = toApiError(error);
-      operation.dto.exitCode = operation.dto.error.exitCode;
-      operation.dto.finishedAt = new Date().toISOString();
-      this.emit(operation, { kind: 'state', message: 'failed' });
+      await this.persist(operation);
+    } finally {
+      span.end();
     }
-    await this.persist(operation);
   }
 
   private async finishCancelled(operation: InternalOperation): Promise<void> {
@@ -221,6 +242,7 @@ export class OperationManager {
         finished_at: dto.finishedAt,
         exit_code: dto.exitCode ?? 0,
         ...(dto.error ? { error_message: dto.error.message } : {}),
+        ...(dto.traceId ? { trace_id: dto.traceId } : {}),
       });
     } catch {
       // 持久化是 best-effort，不影响操作结果。

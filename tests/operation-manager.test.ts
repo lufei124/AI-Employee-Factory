@@ -4,7 +4,21 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { AgentCtlError } from '../src/core/errors.js';
 import { OperationStore } from '../src/core/operation-store.js';
+import type { ObservabilitySink, Span, SpanAttrs } from '../src/core/observability.js';
 import { OperationManager } from '../src/web/operation-manager.js';
+
+class RecordingSink implements ObservabilitySink {
+  readonly spans: { name: string; attrs: SpanAttrs; ended: boolean }[] = [];
+  spanStart(name: string, attrs: SpanAttrs): Span {
+    const record = { name, attrs, ended: false };
+    this.spans.push(record);
+    return {
+      end: () => {
+        record.ended = true;
+      },
+    };
+  }
+}
 
 describe('OperationManager', () => {
   it('records progress and a successful terminal state without storing task inputs', async () => {
@@ -135,5 +149,42 @@ describe('OperationManager', () => {
     const operation = manager.start('doctor', undefined, async () => ({ exitCode: 0 }));
     await manager.wait(operation.id);
     expect(manager.get(operation.id).state).toBe('succeeded');
+  });
+
+  it('generates traceId, threads operationId/traceId to task context, and persists trace_id (OP4-B)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-opmgr-trace-'));
+    try {
+      const store = new OperationStore(path.join(root, 'logs'));
+      const manager = new OperationManager({ store });
+      let captured!: { operationId: string; traceId: string };
+      const operation = manager.start('run', 'ops', async (ctx) => {
+        captured = { operationId: ctx.operationId, traceId: ctx.traceId };
+        return { exitCode: 0 };
+      });
+      expect(operation.traceId).toEqual(expect.any(String));
+      await manager.wait(operation.id);
+      expect(captured.operationId).toBe(operation.id);
+      expect(captured.traceId).toBe(operation.traceId);
+      const [summary] = await store.query({ limit: 1 });
+      expect(summary?.trace_id).toBe(operation.traceId);
+    } finally {
+      await fs.remove(root);
+    }
+  });
+
+  it('wraps execution in an injected ObservabilitySink span (OP4-B)', async () => {
+    const sink = new RecordingSink();
+    const manager = new OperationManager({ sink });
+    const operation = manager.start('doctor', 'ops', async () => ({ exitCode: 0 }));
+    await manager.wait(operation.id);
+    expect(sink.spans).toHaveLength(1);
+    expect(sink.spans[0]!.name).toBe('operation');
+    expect(sink.spans[0]!.attrs).toMatchObject({
+      operation_id: operation.id,
+      kind: 'doctor',
+      trace_id: operation.traceId,
+      agent_id: 'ops',
+    });
+    expect(sink.spans[0]!.ended).toBe(true);
   });
 });

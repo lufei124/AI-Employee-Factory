@@ -4,22 +4,42 @@ Coordinator: codex-20260803-01
 
 > 新任务 ID 分配：读取本看板取最大编号 N，先 `mkdir .agent/task-ids/TASK-(N+1)` 原子占位（已存在则编号 +1 重试），占位成功后再写入本看板任务行。占位目录永不删除，作为已用编号记录。撞号时后到者不得覆盖先到者的看板行。
 
-| Task ID  | 标题                                            | Owner agent        | Status | Branch/worktree                    | Allowed scope                                                      | Dependencies                      | 更新时间               |
-| -------- | ----------------------------------------------- | ------------------ | ------ | ---------------------------------- | ------------------------------------------------------------------ | --------------------------------- | ---------------------- |
-| TASK-001 | 实现 AI Employee Factory v1                     | codex-20260803-01  | DONE   | current workspace (new repository) | 全仓库                                                             | 用户批准的 v1 实施计划            | 2026-08-03 15:10 +0800 |
-| TASK-002 | 实现本地 Web 管理控制台                         | codex-20260803-01  | DONE   | current workspace (no HEAD)        | 全仓库                                                             | TASK-001、用户批准的 Web 实施计划 | 2026-08-03 16:38 +0800 |
-| TASK-003 | 优化操作中心与 Agent ID 交互                    | codex-20260803-01  | DONE   | current workspace (no HEAD)        | Web UI 与相关测试                                                  | TASK-002、用户 UI 反馈            | 2026-08-03 17:54 +0800 |
-| TASK-004 | 修复创建完成页命令复制                          | codex-20260803-01  | DONE   | current workspace (no HEAD)        | Web UI 与相关测试                                                  | TASK-003、用户 UI 反馈            | 2026-08-03 18:03 +0800 |
-| TASK-005 | 补充终端命令用途说明                            | codex-20260803-01  | DONE   | current workspace (no HEAD)        | Web UI 与相关测试                                                  | TASK-004、用户 UI 反馈            | 2026-08-03 18:10 +0800 |
-| TASK-006 | 修复生命周期反馈与 Skills 崩溃                  | codex-20260803-01  | DONE   | current workspace (no HEAD)        | 生命周期、Skills 与测试                                            | TASK-005、用户 UI 反馈            | 2026-08-03 18:19 +0800 |
-| TASK-007 | 独立核实已提交基线                              | claude-20260803-01 | DONE   | master (34a98b8)                   | 只读验证                                                           | TASK-001~006                      | 2026-08-03 18:24 +0800 |
-| TASK-008 | 默认接入 CC Switch 并核查飞书 Bridge            | codex-20260803-01  | DONE   | master (34a98b8)                   | Runtime、Bridge、Web、文档与测试                                   | TASK-007、用户新要求              | 2026-08-03 18:47 +0800 |
-| TASK-009 | 实现员工回收站与 7 天延迟清理                   | codex-20260803-01  | DONE   | master (34a98b8)                   | 应用层、存储、CLI、Web、测试                                       | TASK-008、用户确认的回收站设计    | 2026-08-03 19:20 +0800 |
-| TASK-010 | 实施记忆系统优化 OP0+Phase1(OP2)                | claude-20260803-01 | DONE   | master (cb9723b)                   | 隔离与同步强化核心模块、锁、文档与测试                             | TASK-009、用户批准的研究优化方案  | 2026-08-04 11:11 +0800 |
-| TASK-011 | 备份密钥治理 OP2-E + R5 env 清洗                | claude-20260803-01 | DONE   | master (7ef0f16)                   | backup/trash/runtime/config/doctor/CLI 与测试                      | TASK-010、用户批准的 B+R5 范围    | 2026-08-04 12:35 +0800 |
-| TASK-012 | OP3-B 前向兼容基础 + OP3-C adapter 治理         | claude-20260803-01 | DONE   | master (c2a2b71)                   | schemas/agents/backup/runtime/adapters 与测试                      | TASK-011、用户批准的 OP3-B+C 范围 | 2026-08-04 12:46 +0800 |
-| TASK-013 | OP4-A 可观测性 OperationStore + query + R12/R10 | claude-20260803-01 | DONE   | master (8b17712)                   | operation-store/operation-manager/server/config/launchd/CLI 与测试 | TASK-012、用户批准的 OP4-A 范围   | 2026-08-04 13:20 +0800 |
-| TASK-014 | OP4-D prune 分类 + 保留上限 + doctor 磁盘检查   | claude-20260803-01 | DONE   | master (TASK-014 commit)           | prune/factory-application/cli-program/doctor 与测试                | TASK-013、用户批准的 OP4-D 范围   | 2026-08-04 14:14 +0800 |
+| Task ID  | 标题                                            | Owner agent        | Status | Branch/worktree                    | Allowed scope                                                                            | Dependencies                      | 更新时间               |
+| -------- | ----------------------------------------------- | ------------------ | ------ | ---------------------------------- | ---------------------------------------------------------------------------------------- | --------------------------------- | ---------------------- |
+| TASK-001 | 实现 AI Employee Factory v1                     | codex-20260803-01  | DONE   | current workspace (new repository) | 全仓库                                                                                   | 用户批准的 v1 实施计划            | 2026-08-03 15:10 +0800 |
+| TASK-002 | 实现本地 Web 管理控制台                         | codex-20260803-01  | DONE   | current workspace (no HEAD)        | 全仓库                                                                                   | TASK-001、用户批准的 Web 实施计划 | 2026-08-03 16:38 +0800 |
+| TASK-003 | 优化操作中心与 Agent ID 交互                    | codex-20260803-01  | DONE   | current workspace (no HEAD)        | Web UI 与相关测试                                                                        | TASK-002、用户 UI 反馈            | 2026-08-03 17:54 +0800 |
+| TASK-004 | 修复创建完成页命令复制                          | codex-20260803-01  | DONE   | current workspace (no HEAD)        | Web UI 与相关测试                                                                        | TASK-003、用户 UI 反馈            | 2026-08-03 18:03 +0800 |
+| TASK-005 | 补充终端命令用途说明                            | codex-20260803-01  | DONE   | current workspace (no HEAD)        | Web UI 与相关测试                                                                        | TASK-004、用户 UI 反馈            | 2026-08-03 18:10 +0800 |
+| TASK-006 | 修复生命周期反馈与 Skills 崩溃                  | codex-20260803-01  | DONE   | current workspace (no HEAD)        | 生命周期、Skills 与测试                                                                  | TASK-005、用户 UI 反馈            | 2026-08-03 18:19 +0800 |
+| TASK-007 | 独立核实已提交基线                              | claude-20260803-01 | DONE   | master (34a98b8)                   | 只读验证                                                                                 | TASK-001~006                      | 2026-08-03 18:24 +0800 |
+| TASK-008 | 默认接入 CC Switch 并核查飞书 Bridge            | codex-20260803-01  | DONE   | master (34a98b8)                   | Runtime、Bridge、Web、文档与测试                                                         | TASK-007、用户新要求              | 2026-08-03 18:47 +0800 |
+| TASK-009 | 实现员工回收站与 7 天延迟清理                   | codex-20260803-01  | DONE   | master (34a98b8)                   | 应用层、存储、CLI、Web、测试                                                             | TASK-008、用户确认的回收站设计    | 2026-08-03 19:20 +0800 |
+| TASK-010 | 实施记忆系统优化 OP0+Phase1(OP2)                | claude-20260803-01 | DONE   | master (cb9723b)                   | 隔离与同步强化核心模块、锁、文档与测试                                                   | TASK-009、用户批准的研究优化方案  | 2026-08-04 11:11 +0800 |
+| TASK-011 | 备份密钥治理 OP2-E + R5 env 清洗                | claude-20260803-01 | DONE   | master (7ef0f16)                   | backup/trash/runtime/config/doctor/CLI 与测试                                            | TASK-010、用户批准的 B+R5 范围    | 2026-08-04 12:35 +0800 |
+| TASK-012 | OP3-B 前向兼容基础 + OP3-C adapter 治理         | claude-20260803-01 | DONE   | master (c2a2b71)                   | schemas/agents/backup/runtime/adapters 与测试                                            | TASK-011、用户批准的 OP3-B+C 范围 | 2026-08-04 12:46 +0800 |
+| TASK-013 | OP4-A 可观测性 OperationStore + query + R12/R10 | claude-20260803-01 | DONE   | master (8b17712)                   | operation-store/operation-manager/server/config/launchd/CLI 与测试                       | TASK-012、用户批准的 OP4-A 范围   | 2026-08-04 13:20 +0800 |
+| TASK-014 | OP4-D prune 分类 + 保留上限 + doctor 磁盘检查   | claude-20260803-01 | DONE   | master (76ab134)                   | prune/factory-application/cli-program/doctor 与测试                                      | TASK-013、用户批准的 OP4-D 范围   | 2026-08-04 14:14 +0800 |
+| TASK-015 | OP4-B trace 关联 + ObservabilitySink 抽象       | claude-20260803-01 | DONE   | master (TASK-015 commit)           | observability/process-runner/operation-store/operation-manager/server/cli-program 与测试 | TASK-013、用户批准的 OP4-B 范围   | 2026-08-04 15:45 +0800 |
+
+## TASK-015 详情
+
+```text
+Task ID: TASK-015
+Title: OP4-B trace 关联 + ObservabilitySink 抽象
+Owner agent: claude-20260803-01
+Status: DONE
+Branch/worktree: master (TASK-015 commit)
+Allowed scope: OP4-B(observability.ts ObservabilitySink+Noop+default 填补 O-6、process-runner.ts LoggedRunOptions/Result 增 trace/operation/span 字段+metadata.json 富化、operation-store.ts OperationSummary/RecordInput 增 trace_id、operation-manager.ts dto traceId+task context+sink span+persist trace_id、server.ts run/job 透传、cli-program.ts run/job 记录 operations.jsonl) 与相关测试及 .agent 簿记
+Forbidden scope: Stage C OTel GenAI span(gated on CLI 结构化输出)、TRACE_ID env 注入子进程+CLI 回显、chat/runJobService/runBridgeService trace 记录、backup/restore/doctor CLI jsonl 记录、OTel 导出器/OTLP、OP1/OP3-A/OP5、推送
+Dependencies: TASK-013（OperationStore 持久化就绪）、用户确认的 OP4-B 范围（.scratch/plan.md）
+Expected output: metadata.json 增 operation_id/trace_id/span_id；operations.jsonl 摘要增 trace_id；agentctl run/job 记录到 operations.jsonl；ObservabilitySink 抽象 no-op；web/CLI trace 关联闭合；全部带回归测试且 verify/e2e 通过
+Acceptance criteria: metadata.json 传 traceId/operationId 时含三字段，未传省略向后兼容；LoggedRunResult 含 startedAt/finishedAt；OperationStore record/query 带 trace_id；OperationManager dto 含 traceId、task context 收到 operationId/traceId、persist 写 trace_id、sink spanStart/span.end 可注入断言默认 noop；CLI run/job 记录 operations.jsonl 含 trace_id 且与 metadata.json 一致；build/test/lint/e2e 实跑通过；任务完成即 commit（不 push）。
+Started at: 2026-08-04 14:30 +0800
+Updated at: 2026-08-04 15:45 +0800
+Completed at: 2026-08-04 15:45 +0800
+Outcome: OP4-B 全部实现并测试通过：src/core/observability.ts ObservabilitySink/Span/NoopObservabilitySink/defaultObservabilitySink 抽象（no-op 填补 O-6）；process-runner.ts LoggedRunOptions 增 operationId/traceId、LoggedRunResult 增 startedAt/finishedAt，metadata.json 传参时富化 operation_id/trace_id/span_id（未传省略向后兼容，trace 字段经 LoggedRunOptions 而非 ExecutionContext 避免触动所有 adapter）；operation-store.ts OperationSummary/OperationRecordInput 增 trace_id，record/query 透传；operation-manager.ts 构造注入 sink(默认 noop)，start 生成 traceId 入 dto，execute 以 sink.spanStart('operation',attrs)+finally span.end() 包裹、task context 携带 operationId/traceId，persist 写 trace_id；server.ts run/job handler 透传 operationId/traceId 至 application.runJob/runAgent；cli-program.ts run/job 命令生成 operationId/traceId、经 recordOperation 包装写入 operations.jsonl（CLI 路径闭环，无 web 双写）。新增 tests/observability.test.ts(+2)、process-runner.test.ts(+3)、operation-store +1、operation-manager +2(含 RecordingSink 注入断言)；共 132 单测 + e2e 全过。未 push。
+```
 
 ## TASK-014 详情
 

@@ -333,15 +333,21 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
         await options.application.archiveJob(request.params.id, request.params.jobId);
         return { data: { archived: true } };
       }
-      const operation = operations.start('job', request.params.id, async ({ signal, emit }) => {
-        const result = await options.application.runJob(request.params.id, request.params.jobId, {
-          mirror: false,
-          signal,
-          onStdout: (message) => emit({ kind: 'output', stream: 'stdout', message }),
-          onStderr: (message) => emit({ kind: 'output', stream: 'stderr', message }),
-        });
-        return { exitCode: result.exitCode };
-      });
+      const operation = operations.start(
+        'job',
+        request.params.id,
+        async ({ signal, emit, operationId, traceId }) => {
+          const result = await options.application.runJob(request.params.id, request.params.jobId, {
+            mirror: false,
+            signal,
+            operationId,
+            traceId,
+            onStdout: (message) => emit({ kind: 'output', stream: 'stdout', message }),
+            onStderr: (message) => emit({ kind: 'output', stream: 'stderr', message }),
+          });
+          return { exitCode: result.exitCode };
+        },
+      );
       reply.code(202);
       return { data: operation };
     },
@@ -586,20 +592,26 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
         timeoutSeconds: z.number().int().min(1).max(86_400).default(900),
       })
       .parse(request.body);
-    const operation = operations.start('run', request.params.id, async ({ signal, emit }) => {
-      const result = await options.application.runAgent(
-        request.params.id,
-        body.task,
-        body.timeoutSeconds,
-        {
-          mirror: false,
-          signal,
-          onStdout: (message) => emit({ kind: 'output', stream: 'stdout', message }),
-          onStderr: (message) => emit({ kind: 'output', stream: 'stderr', message }),
-        },
-      );
-      return { exitCode: result.exitCode };
-    });
+    const operation = operations.start(
+      'run',
+      request.params.id,
+      async ({ signal, emit, operationId, traceId }) => {
+        const result = await options.application.runAgent(
+          request.params.id,
+          body.task,
+          body.timeoutSeconds,
+          {
+            mirror: false,
+            signal,
+            operationId,
+            traceId,
+            onStdout: (message) => emit({ kind: 'output', stream: 'stdout', message }),
+            onStderr: (message) => emit({ kind: 'output', stream: 'stderr', message }),
+          },
+        );
+        return { exitCode: result.exitCode };
+      },
+    );
     reply.code(202);
     return { data: operation };
   });

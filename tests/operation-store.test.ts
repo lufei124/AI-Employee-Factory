@@ -107,4 +107,19 @@ describe('OperationStore (OP4-A)', () => {
     const { store } = await setup();
     expect(await store.query()).toEqual([]);
   });
+
+  it('persists trace_id and returns it via query (OP4-B)', async () => {
+    const { store } = await setup();
+    await store.record({
+      operation_id: 'op-t',
+      agent_id: 'ops',
+      kind: 'run',
+      started_at: '2026-08-04T10:00:00.000Z',
+      finished_at: '2026-08-04T10:01:00.000Z',
+      exit_code: 0,
+      trace_id: 'trace-xyz',
+    });
+    const [summary] = await store.query({ agentId: 'ops' });
+    expect(summary?.trace_id).toBe('trace-xyz');
+  });
 });

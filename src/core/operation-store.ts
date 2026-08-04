@@ -14,6 +14,7 @@ export interface OperationSummary {
   finished_at: string;
   exit_code: number;
   error_summary?: string;
+  trace_id?: string;
 }
 
 export interface OperationFilter {
@@ -34,6 +35,7 @@ export interface OperationRecordInput {
   finished_at: string;
   exit_code: number;
   error_message?: string;
+  trace_id?: string;
 }
 
 export class OperationStore {
@@ -53,6 +55,7 @@ export class OperationStore {
       finished_at: input.finished_at,
       exit_code: input.exit_code,
       ...(input.error_message ? { error_summary: redactSecrets(input.error_message) } : {}),
+      ...(input.trace_id ? { trace_id: input.trace_id } : {}),
     };
     // appendFile 的 mode 仅在创建时生效；随后 chmod 收紧，防止外部以宽松权限创建。
     await fs.appendFile(this.file, `${JSON.stringify(summary)}\n`, { mode: 0o600 });
