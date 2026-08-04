@@ -58,4 +58,34 @@ describe('ProcessRunner (OP4-B trace enrichment)', () => {
       new Date(result.startedAt).getTime(),
     );
   });
+
+  it('parses structured usage into metadata.json and result when enabled (OP4-C)', async () => {
+    const { runner } = await setup();
+    const claudeCtx: ExecutionContext = {
+      operation: 'run',
+      command: process.execPath,
+      args: [
+        '-e',
+        'console.log(JSON.stringify({ usage: { input_tokens: 10, output_tokens: 2 }, total_cost_usd: 0.01 }))',
+      ],
+      cwd: process.cwd(),
+      env: { PATH: process.env.PATH ?? '' },
+    };
+    const result = await runner.runLogged('agent-1', claudeCtx, {
+      mirror: false,
+      provider: 'claude',
+      structured: true,
+    });
+    expect(result.usage).toEqual({ inputTokens: 10, outputTokens: 2, totalCostUsd: 0.01 });
+    const meta = await fs.readJson(result.metadataFile);
+    expect(meta.usage).toEqual({ inputTokens: 10, outputTokens: 2, totalCostUsd: 0.01 });
+  });
+
+  it('omits usage when structured not enabled (backward compatible)', async () => {
+    const { runner } = await setup();
+    const result = await runner.runLogged('agent-1', context(), { mirror: false });
+    expect(result.usage).toBeUndefined();
+    const meta = await fs.readJson(result.metadataFile);
+    expect(meta).not.toHaveProperty('usage');
+  });
 });

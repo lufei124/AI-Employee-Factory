@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execa } from 'execa';
 import type { ExecutionContext } from '../runtimes/runtime-adapter.js';
+import { parseStructuredUsage, type RunUsage, type StructuredOutputProvider } from './usage.js';
 
 export interface LoggedRunResult {
   exitCode: number;
@@ -14,6 +15,8 @@ export interface LoggedRunResult {
   metadataFile: string;
   startedAt: string;
   finishedAt: string;
+  /** OP4-C 前置：structured 解析出的用量（best-effort，失败/未启用则省略）。 */
+  usage?: RunUsage;
 }
 
 export interface LoggedRunOptions {
@@ -24,6 +27,9 @@ export interface LoggedRunOptions {
   /** OP4-B：trace 关联三件套，写入 metadata.json，缺省则字段省略（向后兼容）。 */
   operationId?: string;
   traceId?: string;
+  /** OP4-C 前置：provider + structured 同时启用时，run 结束后解析 stdout 抽取 usage。 */
+  provider?: StructuredOutputProvider;
+  structured?: boolean;
 }
 
 export class ProcessRunner {
@@ -86,6 +92,12 @@ export class ProcessRunner {
     const cancelled = result.isCanceled || options.signal?.aborted === true;
     const exitCode = cancelled ? 130 : timedOut ? 124 : (result.exitCode ?? 1);
     const finishedAt = new Date();
+    // OP4-C 前置：structured 启用时读取 stdout 文件做 best-effort 用量解析（纯函数，失败返回 undefined）。
+    let usage: RunUsage | undefined;
+    if (options.structured && options.provider) {
+      const stdoutContent = await fs.readFile(stdoutFile, 'utf8').catch(() => '');
+      usage = parseStructuredUsage(options.provider, stdoutContent);
+    }
     await fs.writeJson(
       metadataFile,
       {
@@ -102,6 +114,8 @@ export class ProcessRunner {
         ...(options.operationId ? { operation_id: options.operationId } : {}),
         ...(options.traceId ? { trace_id: options.traceId } : {}),
         ...(options.operationId ? { span_id: randomUUID() } : {}),
+        // OP4-C 前置：用量字段，仅 structured 解析成功时写入。
+        ...(usage ? { usage } : {}),
       },
       { spaces: 2, mode: 0o600 },
     );
@@ -115,6 +129,7 @@ export class ProcessRunner {
       metadataFile,
       startedAt: startedAt.toISOString(),
       finishedAt: finishedAt.toISOString(),
+      ...(usage ? { usage } : {}),
     };
   }
 }

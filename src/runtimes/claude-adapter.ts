@@ -19,9 +19,11 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapter {
     runtime: AgentConfig['runtime'],
     task: string,
     timeoutMs?: number,
+    structured?: boolean,
   ): ExecutionContext {
     const args = ['-p', task];
     if (runtime.model) args.push('--model', runtime.model);
+    if (structured) args.push('--output-format', 'json');
     return this.context(agent, 'run', args, timeoutMs);
   }
 

@@ -255,6 +255,10 @@ describe('runtime adapters', () => {
       args: ['-p', '检查; rm -rf /'],
       cwd: '/tmp/agents/employee',
     });
+    // OP4-C 前置：structured=true 追加 --output-format json。
+    expect(
+      adapter.run(agent('claude'), runtimeBlock('claude'), '任务', undefined, true),
+    ).toMatchObject({ command: 'claude', args: ['-p', '任务', '--output-format', 'json'] });
   });
 
   it('builds Codex commands with the workspace and no shell string', () => {
@@ -266,6 +270,13 @@ describe('runtime adapters', () => {
     expect(adapter.run(agent('codex'), runtimeBlock('codex'), '分析任务')).toMatchObject({
       command: 'codex',
       args: ['exec', '-C', '/tmp/agents/employee', '分析任务'],
+    });
+    // OP4-C 前置：structured=true 追加 --json。
+    expect(
+      adapter.run(agent('codex'), runtimeBlock('codex'), '分析任务', undefined, true),
+    ).toMatchObject({
+      command: 'codex',
+      args: ['exec', '--json', '-C', '/tmp/agents/employee', '分析任务'],
     });
   });
 });

@@ -22,6 +22,9 @@ export interface RuntimeAdapter {
     runtime: AgentConfig['runtime'],
     task: string,
     timeoutMs?: number,
+    // OP4-C 前置：true 时追加结构化输出 flag（claude --output-format json / codex --json），
+    // 供 process-runner 解析 usage。默认 false 保持既有文本行为。
+    structured?: boolean,
   ): ExecutionContext;
   login(agent: RegistryAgent): ExecutionContext;
   authStatus(agent: RegistryAgent): ExecutionContext;

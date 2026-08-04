@@ -21,8 +21,11 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
     runtime: AgentConfig['runtime'],
     task: string,
     timeoutMs?: number,
+    structured?: boolean,
   ): ExecutionContext {
-    const args = ['exec', '-C', agent.workspace.path];
+    const args = ['exec'];
+    if (structured) args.push('--json');
+    args.push('-C', agent.workspace.path);
     if (runtime.model) args.push('-m', runtime.model);
     args.push(task);
     return this.context(agent, 'run', args, timeoutMs);

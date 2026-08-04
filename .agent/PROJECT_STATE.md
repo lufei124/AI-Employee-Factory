@@ -1,9 +1,9 @@
 # 项目状态
 
-最后更新：2026-08-04 19:42 +0800
+最后更新：2026-08-04 19:50 +0800
 更新者：claude-20260803-01
-当前版本/分支：master（工作区含 TASK-020 阶段1 OP2-F 未提交改动）
-当前阶段：TASK-020 记忆系统剩余批次合并（阶段1 OP2-F 扩展面隔离已实现，待 commit）
+当前版本/分支：master（工作区含 TASK-020 阶段2 CLI 结构化输出未提交改动）
+当前阶段：TASK-020 记忆系统剩余批次合并（阶段1 OP2-F 已提交；阶段2 CLI 结构化输出已实现，待 commit）
 
 ## 已完成
 
@@ -38,9 +38,11 @@
 
 - 完成 TASK-020 阶段1（OP2-F 扩展面能力隔离 R23）：src/core/extensions.ts(新增) ExtensionKind='data-only'|'adapter-interface'|'subprocess'+ExtensionSandbox/ExtensionManifest/Extension 契约类型（设计级，v1 不固化加载器）；src/core/backup.ts 把模块级 shouldCopy/excludedNames/excludedExtensions 收敛为 BackupFilter 接口+defaultBackupFilter() 纯函数零 I/O，BackupService 构造注入 filter?:BackupFilter（默认 defaultBackupFilter()），全部 shouldCopy 调用改 this.filter.shouldCopy；src/core/paths.ts 增 PathLayout 数据契约接口（home/workspaceRoot/managedDirs）+resolvePathLayout 派生（所有受管目录均位于 home 树内，assertInside 保证，纯数据不 hold fs）；src/schemas/agent-schema.ts 增 portableMemorySchema+PortableMemorySchema 类型（memory 块权威类型导出，agentConfigSchema.memory 复用，schema 内容与旧 memory 块同构零行为变更）。docs/DECISIONS.md 增 D-013 ADR（扩展点限定为 data-only/adapter-interface，禁止同进程 JS 模块直接持有 fs/execa）。新增 tests/paths.test.ts resolvePathLayout 断言所有 managedDirs 经 assertInside 位于 home 内、tests/backup-restore.test.ts 注入 BackupFilter 断言隔离生效（shouldCopy:()=>true 时 .env 被备份）。共 180 单测 + e2e 全过，npm run verify 实跑通过。
 
+- 完成 TASK-020 阶段2（CLI 结构化输出，A2 门控通过）：调研写入 .scratch/cli-structured-output.md——Claude 完全可达（`claude -p --output-format json` 单对象含 usage input/output/cache tokens、modelUsage per-model canonicalModel+costUSD、total_cost_usd、result，本机 2.1.221 实测）；Codex 仅 token 可达（`codex exec --json` JSONL 事件流仅 turn.completed 携带 usage 含 cached_input_tokens，事件 schema 无 model/cost，源码核查 openai/codex main codex-rs/exec）。src/core/usage.ts(新增) RunUsage 类型+parseClaudeUsage（主模型取 modelUsage inputTokens 最大者）/parseCodexUsage（累加 turn.completed usage）/parseStructuredUsage 纯函数零 I/O；runtime-adapter.ts run 增 structured?:boolean 参，claude 追加 --output-format json、codex 追加 --json；process-runner.ts LoggedRunOptions 增 provider/structured、LoggedRunResult 增 usage，runLogged 结束后读 stdout 文件 best-effort 解析写入 metadata.json 与 result（exactOptionalPropertyTypes 下条件展开）。新增 tests/usage.test.ts(+8)、process-runner +2、runtime +2；共 188 单测 + e2e 全过，npm run verify 实跑通过。
+
 ## 进行中
 
-- TASK-020 记忆系统剩余批次合并：阶段1（OP2-F）已实现待 commit；阶段2-12（CLI 结构化输出 / OP4-C / OP1 Stage B-E / OP5 A-E）按顺序依赖后续实施。
+- TASK-020 记忆系统剩余批次合并：阶段1（OP2-F）、阶段2（CLI 结构化输出）已实现待 commit；阶段3-12（OP4-C / OP1 Stage B-E / OP5 A-E）按顺序依赖后续实施。
 
 ## 待审查
 
