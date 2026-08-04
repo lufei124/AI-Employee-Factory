@@ -1,6 +1,7 @@
 import fs from 'fs-extra';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execa } from 'execa';
 import { AgentCtlError } from './errors.js';
 import { atomicWriteFile } from './atomic.js';
 import { ClaudeRuntimeAdapter } from '../runtimes/claude-adapter.js';
@@ -114,6 +115,60 @@ export function createSyncCache(): SyncCache {
   };
 }
 
+// OP5-D：以 sqlite3 CLI 只读查询 CC Switch 的 SQLite 数据库（~/.cc-switch/cc-switch.db），
+// 读取指定 Provider 的 settings_config。CC Switch 在 macOS/Linux 上依赖系统自带 sqlite3。
+// 独立函数便于测试注入；查询失败返回 null（调用方回退到 live 语义）。
+export type SqliteExecutor = (dbPath: string, sql: string) => Promise<string | null>;
+
+const defaultSqliteExecutor: SqliteExecutor = async (dbPath, sql) => {
+  // -readonly：绝不写 CC Switch 数据库（防御性）。sqlite3 打开不存在的文件以退出码 1 失败。
+  const result = await execa('sqlite3', ['-readonly', '-json', dbPath, sql], {
+    shell: false,
+    reject: false,
+  });
+  return result.exitCode === 0 ? (result.stdout ?? '') : null;
+};
+
+async function ccSwitchProviderSettingsConfig(
+  userHome: string,
+  providerName: string,
+  sqliteExecutor: SqliteExecutor = defaultSqliteExecutor,
+): Promise<Record<string, unknown> | null> {
+  const dbPath = path.join(userHome, '.cc-switch', 'cc-switch.db');
+  // sqlite3 CLI 不支持 ? 位置占位符，用单引号转义构造 SQL 字符串字面量（'' 为转义引号）。
+  const escaped = providerName.replaceAll("'", "''");
+  const sql = `SELECT settings_config FROM providers WHERE app_type='claude' AND name='${escaped}' LIMIT 1;`;
+  const out = await sqliteExecutor(dbPath, sql);
+  if (!out) return null;
+  try {
+    const rows = JSON.parse(out) as Array<{ settings_config?: unknown }>;
+    const raw = rows[0]?.settings_config;
+    if (typeof raw !== 'string') return null;
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function ccSwitchProviderNames(
+  userHome: string,
+  sqliteExecutor: SqliteExecutor = defaultSqliteExecutor,
+): Promise<string[]> {
+  const dbPath = path.join(userHome, '.cc-switch', 'cc-switch.db');
+  const sql = "SELECT name FROM providers WHERE app_type='claude' ORDER BY name;";
+  const out = await sqliteExecutor(dbPath, sql);
+  if (!out) return [];
+  try {
+    const rows = JSON.parse(out) as Array<{ name?: unknown }>;
+    return rows.map((row) => row.name).filter((name): name is string => typeof name === 'string');
+  } catch {
+    return [];
+  }
+}
+
 export interface CcSwitchSyncSummary {
   source: string;
   destination: string;
@@ -151,13 +206,61 @@ export async function syncCcSwitchClaudeProvider(
   runtimesDir: string,
   sanitizeNonWhitelist = false,
   cache?: SyncCache,
+  providerName?: string,
+  sqliteExecutor?: SqliteExecutor,
 ): Promise<CcSwitchSyncSummary> {
   if (runtime.provider !== 'claude') {
     throw new AgentCtlError('VALIDATION_ERROR', `Agent ${agent.id} 不是 Claude Runtime。`);
   }
   const { variables: ccSwitchClaudeProviderVariables, routedFields } = loadAllowlist();
-  const source = await ccSwitchClaudeSettingsFile(path.resolve(userHome));
   const destination = path.join(agent.runtime_home.path, 'settings.json');
+  // OP5-D：providerName 指定 CC Switch 中具体 Provider（Registry 本机绑定），
+  // 从 SQLite 数据库读取其 settings_config（含 env），而非当前 live settings.json。
+  if (providerName && providerName.trim()) {
+    const name = providerName.trim();
+    const providerConfig = await ccSwitchProviderSettingsConfig(
+      path.resolve(userHome),
+      name,
+      sqliteExecutor,
+    );
+    if (!providerConfig) {
+      // 列出可用 Provider 帮助用户修正名称；读取失败（sqlite3 缺失/数据库缺失）时列表为空。
+      const available = await ccSwitchProviderNames(path.resolve(userHome), sqliteExecutor);
+      const suffix = available.length ? `；可用：${available.join('、')}` : '';
+      throw new AgentCtlError('NOT_FOUND', `未在 CC Switch 中找到 Provider：${name}`, {
+        remediation: `请使用已启用的 Claude Provider${suffix}。`,
+      });
+    }
+    const env = providerConfig.env;
+    const providerEnv = Object.fromEntries(
+      Object.entries(env && typeof env === 'object' && !Array.isArray(env) ? env : {}).filter(
+        ([key, value]) => ccSwitchClaudeProviderVariables.has(key) && typeof value === 'string',
+      ),
+    ) as Record<string, string>;
+    const keys = Object.keys(providerEnv).sort();
+    if (!keys.length) {
+      throw new AgentCtlError(
+        'AUTH_REQUIRED',
+        `CC Switch Provider「${name}」未提供任何白名单 Claude Provider 配置。`,
+        { remediation: '请在 CC Switch 中为该 Provider 填写 API 配置后重试。' },
+      );
+    }
+    const result = await applyProviderEnv(
+      agent,
+      destination,
+      providerEnv,
+      sanitizeNonWhitelist,
+      routedFields,
+    );
+    // Provider 源是数据库（mtime 语义不适用），保持既有缓存行为（isStale 恒真则重写）。
+    cache?.markSynced(-1);
+    return {
+      source: path.join(userHome, '.cc-switch', 'cc-switch.db'),
+      destination,
+      ...result,
+    };
+  }
+  const source = await ccSwitchClaudeSettingsFile(path.resolve(userHome));
   if (path.resolve(source) === path.resolve(destination)) {
     throw new AgentCtlError('CONFLICT', 'CC Switch 配置目录不能直接复用员工 Runtime Home。');
   }
@@ -220,6 +323,27 @@ export async function syncCcSwitchClaudeProvider(
       remediation: '请在 CC Switch 中启用一个 API Provider，而不是执行 Claude 官方登录。',
     });
   }
+  const result = await applyProviderEnv(
+    agent,
+    destination,
+    providerEnv,
+    sanitizeNonWhitelist,
+    routedFields,
+  );
+  cache?.markSynced(sourceMtime);
+  return { source, destination, ...result };
+}
+
+// OP5-D：把 Provider env 合并写入员工 runtime settings.json 的公共尾部。
+// 保留员工本地非白名单设置（sanitize 时清空），记录流量路由字段变更（仅字段名，守 D-006）。
+async function applyProviderEnv(
+  agent: RegistryAgent,
+  destination: string,
+  providerEnv: Record<string, string>,
+  sanitizeNonWhitelist: boolean,
+  routedFields: Set<string>,
+): Promise<Pick<CcSwitchSyncSummary, 'keys' | 'routedFieldsChanged'>> {
+  const { variables: ccSwitchClaudeProviderVariables } = loadAllowlist();
   let isolated: Record<string, unknown> = {};
   if (await fs.pathExists(destination)) {
     try {
@@ -252,8 +376,8 @@ export async function syncCcSwitchClaudeProvider(
     `${JSON.stringify({ ...isolated, env: { ...existingEnv, ...providerEnv } }, null, 2)}\n`,
     0o600,
   );
-  cache?.markSynced(sourceMtime);
-  return { source, destination, keys, routedFieldsChanged };
+  const keys = Object.keys(providerEnv).sort();
+  return { keys, routedFieldsChanged };
 }
 
 // OP5-B：从 .cc-switch.env（0600，用户预置）降级读取 Provider 配置。格式为 KEY=VALUE 行，

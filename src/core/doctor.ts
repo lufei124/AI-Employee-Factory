@@ -273,6 +273,27 @@ export class DoctorService {
           : { id: 'config-drift', label: '配置漂移', status: 'pass', detail: '一致' },
       );
     }
+    // OP5-D：Registry 本机绑定的 CC Switch Provider 检查。绑定即非 live 语义（短期 warn，长期将按
+    // provider 不匹配 fail）。仅 claude runtime 有意义；codex runtime 的绑定为无效状态（warn）。
+    if (portableConfig && portableConfig.runtime.provider === 'claude') {
+      const bound = agent.credential_provider;
+      add(
+        bound
+          ? {
+              id: 'credential-provider',
+              label: 'CC Switch Provider 绑定',
+              status: 'warn',
+              detail: `绑定 ${bound}（非当前 live，短期语义）`,
+              remediation: `如不再需要该绑定，运行 agentctl runtime sync ${agent.id} --provider live 清除。`,
+            }
+          : {
+              id: 'credential-provider',
+              label: 'CC Switch Provider 绑定',
+              status: 'pass',
+              detail: '未绑定（跟随当前 live Provider）',
+            },
+      );
+    }
     // OP1 Stage A：memory.enforced 运行时强制一致性（W1 收敛）。4 态：undefined(旧)/false warn、true+无效 fail、true+有效 pass。
     if (portableConfig) {
       const enforced = portableConfig.memory.enforced;

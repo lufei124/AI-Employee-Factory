@@ -164,6 +164,50 @@ describe('DoctorService', () => {
     }
   });
 
+  it('warns on a bound CC Switch Provider and passes when unbound (OP5-D)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-doctor-credential-provider-'));
+    roots.push(root);
+    const paths = resolveFactoryPaths({
+      HOME: root,
+      AI_EMPLOYEES_HOME: path.join(root, 'private'),
+      AI_EMPLOYEES_WORKSPACE_ROOT: path.join(root, 'agents'),
+    });
+    await initializeFactory(paths);
+    const registry = new RegistryStore(paths.registryFile);
+    await new CreateAgentService(paths, registry).create({
+      id: 'user-operations',
+      name: '用户运营专员',
+      runtime: 'claude',
+      preset: 'user-operations',
+      feishu: 'dedicated',
+    });
+    await registry.updateAgent('user-operations', (current) => ({
+      ...current,
+      credential_provider: 'Kimi',
+    }));
+
+    const originalHome = process.env.HOME;
+    process.env.HOME = root;
+    try {
+      const report = await new DoctorService(paths, registry).run('user-operations');
+      const check = report.checks.find((item) => item.id === 'credential-provider');
+      expect(check?.status).toBe('warn');
+      expect(check?.detail).toContain('Kimi');
+      expect(check?.remediation).toContain('--provider live');
+
+      // 清除绑定后 pass（跟随当前 live Provider）
+      await registry.updateAgent('user-operations', (current) => ({
+        ...current,
+        credential_provider: undefined,
+      }));
+      const report2 = await new DoctorService(paths, registry).run('user-operations');
+      expect(report2.checks.find((item) => item.id === 'credential-provider')?.status).toBe('pass');
+    } finally {
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+    }
+  });
+
   it('reports memory-enforcement states (OP1 Stage A)', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-doctor-mem-'));
     roots.push(root);

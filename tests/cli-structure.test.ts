@@ -51,6 +51,11 @@ describe('agentctl command surface', () => {
         .find((command) => command.name() === group)
         ?.commands.map((command) => command.name());
     expect(names('runtime')).toEqual(expect.arrayContaining(['sync', 'login', 'status']));
+    // OP5-D：runtime sync 支持 --provider <name>（绑定 CC Switch 具体 Provider，live 清除绑定）。
+    const syncCmd = program.commands
+      .find((command) => command.name() === 'runtime')
+      ?.commands.find((command) => command.name() === 'sync');
+    expect(syncCmd?.options.map((option) => option.flags).join(' ')).toContain('--provider');
     expect(names('bridge')).toEqual(expect.arrayContaining(['authorize', 'status']));
     expect(names('job')).toEqual(
       expect.arrayContaining([

@@ -112,6 +112,24 @@ describe('RegistryStore', () => {
     expect((await store.read()).agents[0]?.config_hash).toBe('abc123');
   });
 
+  it('round-trips an optional credential_provider binding via updateAgent (OP5-D)', async () => {
+    const root = await tempRoot();
+    const store = new RegistryStore(path.join(root, 'registry', 'agents.yaml'));
+    await store.initialize();
+    await store.add(agent(root));
+    await store.updateAgent('user-operations', (current) => ({
+      ...current,
+      credential_provider: 'Kimi',
+    }));
+    expect((await store.read()).agents[0]?.credential_provider).toBe('Kimi');
+    // 清除绑定回退 live
+    await store.updateAgent('user-operations', (current) => ({
+      ...current,
+      credential_provider: undefined,
+    }));
+    expect((await store.read()).agents[0]?.credential_provider).toBeUndefined();
+  });
+
   it('allows status changes via updateAgent and preserves config_hash (OP3-A single writable source)', async () => {
     const root = await tempRoot();
     const store = new RegistryStore(path.join(root, 'registry', 'agents.yaml'));

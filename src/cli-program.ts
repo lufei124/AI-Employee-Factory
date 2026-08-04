@@ -222,10 +222,18 @@ export function createProgram(): Command {
   const runtime = program.command('runtime').description('运行器 Provider 配置、登录与状态');
   runtime
     .command('sync <agent-id>')
-    .description('同步 CC Switch 当前 Claude Provider')
-    .action(async (id: string) => {
+    .description('同步 CC Switch 当前 Claude Provider（可用 --provider 指定具体 Provider）')
+    .option(
+      '--provider <name>',
+      '绑定并同步 CC Switch 中指定的 Provider（live 清除绑定回退当前 Provider）',
+    )
+    .action(async (id: string, options: { provider?: string }) => {
       const { application } = context();
-      const summary = await application.syncRuntime(id);
+      // exactOptionalPropertyTypes：仅在有显式值时传入 provider，undefined 缺省（live 语义）。
+      const summary = await application.syncRuntime(
+        id,
+        options.provider === undefined ? {} : { provider: options.provider },
+      );
       console.log(
         chalk.green(`✓ 已同步 CC Switch Provider（${summary?.keys.length ?? 0} 项配置）`),
       );

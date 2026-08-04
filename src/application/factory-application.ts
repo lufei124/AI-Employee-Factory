@@ -426,12 +426,25 @@ export class FactoryApplication {
     );
   }
 
-  async syncRuntime(id: string) {
+  async syncRuntime(id: string, options: { provider?: string } = {}) {
     const { registry, agent } = await this.getAgent(id);
     if (agent.runtime.provider !== 'claude') {
       throw new AgentCtlError('VALIDATION_ERROR', `Agent ${id} 使用 Codex，无需同步 CC Switch。`, {
         remediation: `请运行 agentctl runtime login ${id}。`,
       });
+    }
+    // OP5-D：`--provider <name>` 显式把本机绑定的 CC Switch Provider 写入 Registry（不进便携文件
+    // agent.yaml，属 Registry 本机绑定侧），再按该 Provider 同步；`--provider live` 清除绑定回退 live。
+    // 显式指定后，后续每次 spawn 都按该 Provider 同步，而非当前 live Provider（短期语义，doctor 告警）。
+    if (options.provider) {
+      await this.registry.updateAgent(id, (current) => ({
+        ...current,
+        credential_provider:
+          options.provider === 'live' ? undefined : (options.provider ?? undefined),
+        updated_at: new Date().toISOString(),
+      }));
+      const updated = await this.getAgent(id);
+      return this.prepareRuntime(updated.registry, updated.agent);
     }
     return this.prepareRuntime(registry, agent);
   }
@@ -711,6 +724,7 @@ export class FactoryApplication {
     this.assertMemoryEnforced(agent);
     if (agent.runtime.provider !== 'claude') return undefined;
     const config = await readConfig(this.paths);
+    // OP5-D：Registry 本机绑定的 Provider 名（不进便携文件），指定时按该 Provider 同步；缺省 live。
     const summary = await syncCcSwitchClaudeProvider(
       registry,
       agent.runtime,
@@ -718,6 +732,7 @@ export class FactoryApplication {
       this.paths.runtimesDir,
       config.sync.sanitize_non_whitelist,
       this.ccSwitchSyncCache,
+      registry.credential_provider,
     );
     if (summary.routedFieldsChanged.length > 0) {
       console.warn(

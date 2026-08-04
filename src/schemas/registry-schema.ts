@@ -26,6 +26,10 @@ export const registryAgentSchema = z.object({
   updated_at: z.string().datetime(),
   // OP3-A：agent.yaml runtime 块的 sha256（派生缓存指纹）。缺失视为漂移，doctor 报 fail，agentctl repair 补齐。
   config_hash: z.string().optional(),
+  // OP5-D：本机绑定的 CC Switch Provider 名（不进便携文件 agent.yaml，属 Registry 本机侧）。
+  // 设置后 spawn 前按该 Provider 的 settings_config 同步白名单字段，而非当前 live Provider。
+  // 缺失时保持 live 语义（向后兼容）。仅 claude runtime 有实际作用；codex runtime 无意义。
+  credential_provider: z.string().min(1).optional(),
 });
 
 export const registrySchema = z.object({

@@ -138,6 +138,15 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 - 边界：本裁定不引入任何代码改动；Factory 不自动复制/注入凭据（守 D-006——复制 `auth.json`/App 凭据属用户在换机时的主动运维行为，不在 Factory 自动传输面）。`agentctl migrate` 仍指 Registry schema v1→v2 迁移（OP3-A 长期，TASK-019），不扩展为换机向导。
 - 原因：C4 评估「10 员工 × 3 次交互授权」过高——实际调研显示 Codex token 可迁移、飞书有 App 凭据路径、Claude 已非交互，推荐配置下可降至 0 次/员工。文档交付比强推向导更符合「非承诺」立项边界，避免为实现而实现。
 
+## D-016：OP5-D per-agent Provider 绑定（Registry 本机侧，不进便携文件）
+
+- 状态：Accepted
+- 日期：2026-08-04
+- 决定：为 Claude 员工新增「绑定 CC Switch 中具体 Provider（而非当前 live）」的能力。`registryAgentSchema` 增 `credential_provider?: string`（Registry 本机绑定侧）；`syncCcSwitchClaudeProvider` 增 `providerName` 参数，指定时从 `~/.cc-switch/cc-switch.db`（SQLite）读取该 Provider 的 `settings_config`（白名单过滤，复用 OP5-B），否则沿用 live `settings.json`。`agentctl runtime sync <id> --provider <name>` 写绑定并同步，`--provider live` 清除绑定回退 live；spawn 前 `prepareRuntime` 把 `registry.credential_provider` 透传给同步。doctor 增 `credential-provider` 检查：有绑定 → warn（短期语义，长期将按 provider 不匹配 fail），无绑定 → pass。
+- 读库机制：CI/运行时基线 Node 20.19 无 `node:sqlite`（Node 22.5+），不引入原生依赖；改用 `sqlite3` CLI 只读查询（`-readonly -json`，macOS/ubuntu CI 均自带）。sqlite3 打开不存在的文件失败（退出码 1）→ 报 NOT_FOUND 并列出可用 Provider；不存在的 Provider → NOT_FOUND。名称经单引号转义（`''`）嵌入 SQL，避免注入。sqlite3 缺失/读取失败时回退为 NOT_FOUND（比静默绑定错误 Provider 更安全）。
+- 边界（本批短期语义）：`credential_provider` **不进便携文件** `agent.yaml`——属 Registry 本机绑定侧（守 D-006 与 OP3-A「agent.yaml 为 runtime 唯一真相」的便携面），换机不迁移该绑定；`--provider live` 显式清除。不实现「自动读取 live」外的任何多 Provider 指纹校验（研究提案 C5 明确不采用 `pinned_provider` 指纹方案）。doctor 短期为 warn（非 fail），长期语义（provider 不匹配 fail）留待后续批次。
+- 原因：让不同员工可绑定不同 CC Switch Provider（如 A 员工用 DeepSeek、B 员工用 Kimi），独立于当前 live Provider 切换，且不复制凭据到便携文件、不改任何既有 live 同步语义（缺省 providerName 时零行为变更）。CI 无 sqlite3 时的 NOT_FOUND 回退符合「显式绑定不可达则失败」的最小惊讶原则，避免静默同步到错误 Provider。
+
 ## D-001 - 引入多 Agent 协作骨架
 
 - 状态：Accepted

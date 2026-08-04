@@ -34,6 +34,7 @@
 | `src/services/factory-services.ts`, `src/services/systemd-service.ts`, `src/services/service-adapter.ts`, `src/core/doctor.ts`, `tests/service-adapter.test.ts`, `docs/ASSUMPTIONS.md`, `docs/ARCHITECTURE.md` | TASK-020 | claude-20260803-01 | master | 阶段8 OP5-A ServiceAdapterFactory + systemd 桩 | 2026-08-04 20:35 +0800 | 2026-08-04 20:39 +0800 | RELEASED |
 | `presets/cc-switch-allowlist.json`, `src/core/runtime.ts`, `src/application/factory-application.ts`, `src/core/doctor.ts`, `tests/runtime.test.ts`, `tests/doctor.test.ts` | TASK-020 | claude-20260803-01 | master | 阶段9 OP5-B CC Switch 降级 + mtime 缓存 + 白名单外置 | 2026-08-04 20:41 +0800 | 2026-08-04 20:44 +0800 | RELEASED |
 | `.scratch/op5-c-migration.md`, `docs/DECISIONS.md`, `README.md` | TASK-020 | claude-20260803-01 | master | 阶段10 OP5-C 换机重授权成本（调研+文档） | 2026-08-04 20:47 +0800 | 2026-08-04 20:50 +0800 | RELEASED |
+| `src/schemas/registry-schema.ts`, `src/core/runtime.ts`, `src/application/factory-application.ts`, `src/cli-program.ts`, `src/core/doctor.ts`, `tests/runtime.test.ts`, `tests/registry.test.ts`, `tests/doctor.test.ts`, `tests/cli-structure.test.ts`, `docs/DECISIONS.md`, `README.md` | TASK-020 | claude-20260803-01 | master | 阶段11 OP5-D per-agent Provider 绑定（Registry 本机侧）+ sqlite3 CLI 读库 | 2026-08-04 21:00 +0800 | 2026-08-04 21:20 +0800 | RELEASED |
 合法状态：`ACTIVE`、`RELEASED`、`STALE`、`TAKEOVER_PENDING`。
 
 ## 心跳与陈旧判定

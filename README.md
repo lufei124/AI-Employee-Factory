@@ -87,6 +87,15 @@ agentctl runtime status user-operations
 
 Factory 只读取 CC Switch live `settings.json` 中经过白名单允许的 `ANTHROPIC_*` 与模型配置，并写入 `~/.ai-employees/runtimes/user-operations/claude/settings.json`。白名单外置在 `presets/cc-switch-allowlist.json`，随 Claude Code 版本更新而不改代码。它不会复制个人 OAuth、会话、历史、MCP、主题或权限；不会修改 CC Switch 和个人 `~/.claude`。每次 chat、run、Agent Job 与 Bridge 启动前都会同步（带 mtime 缓存：源未变则跳过重写），因此在 CC Switch 切换 Provider 后无需官方 Claude 登录；若本机没有 CC Switch 配置，也可在员工 `runtime_home/.cc-switch.env`（0600）预置白名单字段作为降级来源。兼容旧脚本的 `agentctl runtime login <claude-id>` 也只执行同步，不会运行 `claude auth login`。
 
+默认同步「当前 live Provider」；如需让某员工绑定 CC Switch 中的**具体 Provider**（而非 live），用 `--provider` 指定一次，之后每次 spawn 都按该 Provider 同步：
+
+```bash
+agentctl runtime sync user-operations --provider Kimi     # 绑定 Kimi 并同步
+agentctl runtime sync user-operations --provider live     # 清除绑定，回退当前 live Provider
+```
+
+绑定只写在本机 Registry（`credential_provider`，不进便携文件 `agent.yaml`，换机不迁移）；doctor 对绑定状态给出短期 warn（长期将按 provider 不匹配 fail）。读取具体 Provider 配置依赖系统自带 `sqlite3` 只读查询 CC Switch 数据库（macOS/Linux 预装；缺失时该绑定报 NOT_FOUND，不会静默同步到别的 Provider）。
+
 Codex 员工仍通过 `agentctl runtime login <id>` 登录专属 `CODEX_HOME`。
 
 ## 飞书绑定与生命周期
@@ -230,6 +239,8 @@ agentctl restore ~/.ai-employees/backups/user-operations-<time>.tar.gz --new-id 
 | Claude      | 在新机配置 CC Switch Provider（或预置员工 `runtime_home/.cc-switch.env`，0600），spawn 前自动同步 | 0（配置一次性）     |
 | Codex       | 复制旧机 `~/.codex/auth.json`（官方文档确认 `auth.json` 不绑定主机）或重新 `codex login`          | 0 或 1              |
 | 飞书 Bridge | `agentctl bridge authorize <id>` 扫码，或 `--app-id --app-secret --tenant` 用既有应用凭据         | 0~1（扫码须人在场） |
+
+> 注：per-agent Provider 绑定（`--provider <name>`）只写本机 Registry，换机后在新机重新 `runtime sync --provider <name>` 即可恢复。
 
 推荐配置下每员工 0 次交互（复制 `auth.json` + App 凭据 + CC Switch/`.cc-switch.env`）；最坏情形每员工 2 次（Codex 重新登录 + 飞书扫码）。边界：Codex 若配置 Keychain 存储（`cli_auth_credentials_store = "keyring"`）则复制法不适用；Feishu 无现成应用时扫码须人在场。
 

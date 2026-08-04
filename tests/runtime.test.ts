@@ -400,6 +400,187 @@ describe('runtime environment isolation', () => {
     expect(allowed.variables.has('OPENAI_API_KEY')).toBe(false);
     expect(allowed.routedFields.has('ANTHROPIC_BASE_URL')).toBe(true);
   });
+
+  it('syncs a specific CC Switch Provider by name when providerName is set (OP5-D)', async () => {
+    const runtime = (await import('../src/core/runtime.js')) as Record<string, unknown>;
+    const sync = runtime.syncCcSwitchClaudeProvider as (
+      agent: RegistryAgent,
+      runtime: AgentConfig['runtime'],
+      home: string,
+      runtimesDir: string,
+      sanitize?: boolean,
+      cache?: unknown,
+      providerName?: string,
+      sqliteExecutor?: (dbPath: string, sql: string) => Promise<string | null>,
+    ) => Promise<{ source: string; keys: string[]; routedFieldsChanged: string[] }>;
+    expect(sync).toBeTypeOf('function');
+    if (typeof sync !== 'function') return;
+
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-cc-switch-provider-'));
+    try {
+      const claudeAgent = {
+        ...agent('claude'),
+        runtime_home: { path: path.join(root, 'private/runtime') },
+      };
+      await fs.outputJson(path.join(claudeAgent.runtime_home.path, 'settings.json'), {
+        env: { EMPLOYEE_LOCAL_SETTING: 'keep-me', ANTHROPIC_AUTH_TOKEN: 'old-secret' },
+      });
+      // 模拟 sqlite3 CLI 的 -json 输出：两行 Provider，ProviderA 为当前 live（含非白名单字段），
+      // ProviderB 为 per-agent 绑定目标。
+      const fakeDb = async (dbPath: string, sql: string) => {
+        expect(dbPath).toBe(path.join(root, '.cc-switch', 'cc-switch.db'));
+        expect(sql).toContain("app_type='claude'");
+        if (sql.includes('SELECT name')) {
+          return JSON.stringify([{ name: 'ProviderA' }, { name: 'ProviderB' }]);
+        }
+        return JSON.stringify([
+          {
+            name: 'ProviderB',
+            settings_config: JSON.stringify({
+              env: {
+                ANTHROPIC_AUTH_TOKEN: 'provider-b-secret',
+                ANTHROPIC_BASE_URL: 'https://provider-b.example.test',
+                OPENAI_API_KEY: 'must-not-copy',
+              },
+            }),
+          },
+        ]);
+      };
+
+      const summary = await sync(
+        claudeAgent,
+        runtimeBlock('claude'),
+        root,
+        path.join(root, 'runtimes'),
+        false,
+        undefined,
+        'ProviderB',
+        fakeDb,
+      );
+      const isolated = await fs.readJson(path.join(claudeAgent.runtime_home.path, 'settings.json'));
+      // 按 ProviderB 同步：白名单字段来自 ProviderB，员工本地非白名单设置保留。
+      expect(isolated.env).toMatchObject({
+        ANTHROPIC_AUTH_TOKEN: 'provider-b-secret',
+        ANTHROPIC_BASE_URL: 'https://provider-b.example.test',
+        EMPLOYEE_LOCAL_SETTING: 'keep-me',
+      });
+      expect(isolated.env).not.toHaveProperty('OPENAI_API_KEY');
+      expect(summary.source).toBe(path.join(root, '.cc-switch', 'cc-switch.db'));
+      expect(summary.keys).toEqual(['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']);
+      // R24：BASE_URL 由无变有 -> 流量路由字段变更被标记；摘要只含字段名，不含值。
+      expect(summary.routedFieldsChanged).toEqual(['ANTHROPIC_BASE_URL']);
+      expect(JSON.stringify(summary)).not.toContain('provider-b-secret');
+      expect(JSON.stringify(summary)).not.toContain('provider-b.example.test');
+      expect(
+        (await fs.stat(path.join(claudeAgent.runtime_home.path, 'settings.json'))).mode & 0o777,
+      ).toBe(0o600);
+    } finally {
+      await fs.remove(root);
+    }
+  });
+
+  it('throws NOT_FOUND when the named CC Switch Provider is absent (OP5-D)', async () => {
+    const runtime = (await import('../src/core/runtime.js')) as Record<string, unknown>;
+    const sync = runtime.syncCcSwitchClaudeProvider as (
+      agent: RegistryAgent,
+      runtime: AgentConfig['runtime'],
+      home: string,
+      runtimesDir: string,
+      sanitize?: boolean,
+      cache?: unknown,
+      providerName?: string,
+      sqliteExecutor?: (dbPath: string, sql: string) => Promise<string | null>,
+    ) => Promise<unknown>;
+    expect(sync).toBeTypeOf('function');
+    if (typeof sync !== 'function') return;
+
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-cc-switch-provider-miss-'));
+    try {
+      const claudeAgent = {
+        ...agent('claude'),
+        runtime_home: { path: path.join(root, 'private/runtime') },
+      };
+      const fakeDb = async () => null; // sqlite3 不可用或数据库缺失
+      await expect(
+        sync(
+          claudeAgent,
+          runtimeBlock('claude'),
+          root,
+          path.join(root, 'runtimes'),
+          false,
+          undefined,
+          'MissingProvider',
+          fakeDb,
+        ),
+      ).rejects.toThrow('MissingProvider');
+    } finally {
+      await fs.remove(root);
+    }
+  });
+
+  it('reads a real CC Switch DB via the sqlite3 CLI for a named Provider (OP5-D e2e)', async () => {
+    // 若系统无 sqlite3 二进制（如精简镜像），跳过：CI ubuntu / macOS 均自带 sqlite3。
+    const sqliteAvailable = await import('execa').then(async ({ execa }) => {
+      const probe = await execa('sqlite3', ['--version'], { shell: false, reject: false });
+      return probe.exitCode === 0;
+    });
+    if (!sqliteAvailable) return;
+    const runtime = (await import('../src/core/runtime.js')) as Record<string, unknown>;
+    const sync = runtime.syncCcSwitchClaudeProvider as (
+      agent: RegistryAgent,
+      runtime: AgentConfig['runtime'],
+      home: string,
+      runtimesDir: string,
+      sanitize?: boolean,
+      cache?: unknown,
+      providerName?: string,
+    ) => Promise<{ keys: string[] }>;
+    expect(sync).toBeTypeOf('function');
+    if (typeof sync !== 'function') return;
+
+    const { execa } = await import('execa');
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-cc-switch-provider-db-'));
+    try {
+      const claudeAgent = {
+        ...agent('claude'),
+        runtime_home: { path: path.join(root, 'private/runtime') },
+      };
+      // 用 sqlite3 CLI 建真实 CC Switch 形状的数据库（providers 表含 app_type/name/settings_config）。
+      const dbFile = path.join(root, '.cc-switch', 'cc-switch.db');
+      await fs.ensureDir(path.dirname(dbFile));
+      const create = await execa(
+        'sqlite3',
+        [
+          dbFile,
+          'CREATE TABLE providers (id TEXT, app_type TEXT, name TEXT, settings_config TEXT, is_current INTEGER);' +
+            ' INSERT INTO providers VALUES (\'1\',\'claude\',\'Relay A\',\'{"env":{"ANTHROPIC_AUTH_TOKEN":"token-a","ANTHROPIC_MODEL":"m-a"}}\',1);' +
+            ' INSERT INTO providers VALUES (\'2\',\'claude\',\'Relay B\',\'{"env":{"ANTHROPIC_AUTH_TOKEN":"token-b","ANTHROPIC_BASE_URL":"https://b.test"}}\',0);',
+        ],
+        { shell: false, reject: false },
+      );
+      expect(create.exitCode).toBe(0);
+
+      // 默认 executor（sqlite3 CLI）：绑定 Relay B（非 live），而非当前 live Relay A。
+      const summary = await sync(
+        claudeAgent,
+        runtimeBlock('claude'),
+        root,
+        path.join(root, 'runtimes'),
+        false,
+        undefined,
+        'Relay B',
+      );
+      expect(summary.keys).toEqual(['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']);
+      const isolated = await fs.readJson(path.join(claudeAgent.runtime_home.path, 'settings.json'));
+      expect(isolated.env).toMatchObject({
+        ANTHROPIC_AUTH_TOKEN: 'token-b',
+        ANTHROPIC_BASE_URL: 'https://b.test',
+      });
+      expect(isolated.env).not.toHaveProperty('ANTHROPIC_MODEL');
+    } finally {
+      await fs.remove(root);
+    }
+  });
 });
 
 describe('runtime adapters', () => {
