@@ -114,6 +114,18 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 - 边界：本批只确立契约与默认实现，不实现加载器、不新增任何可执行扩展；`assertInside`/`assertInsideReal` 不变量语义不变；`RuntimeAdapter`/`ServiceAdapter` 等已固化扩展点保持接口形态（`buildExecEnv` 委托 adapter 属 OP3-C 已落地）。
 - 原因：红队 R23 指出扩展点若以同进程 JS 模块加载并直接持有 `fs`/`execa`，会在扩展机制建立的瞬间引入「插件可触碰宿主文件系统/进程」的权限面。把扩展点约化为纯数据或受限 adapter 接口，从根因消除该面，而非事后加校验。与 D-009（frozen/versioned 二分）一致：data-only 契约不放松安全默认。
 
+## D-014：OP1 Stage E archival 后端写入前置约束（frozen 不变量，先于任何后端实现）
+
+- 状态：Accepted
+- 日期：2026-08-04
+- 决定：把 archival 后端的写入约束写成 **frozen 不变量**，在任何后端实现之前先确立契约。`src/core/archival.ts`（新增）仅定义 `ArchivalBackend` 接口（`kind: 'local-sqlite' | 'external' | 'none'`，默认 `none`），不实现任何后端。未来新增后端的 **写入硬约束**（frozen，实现不得放宽）：
+  1. **Secret 过滤**：写入前必须经核心 secret 正则（`SECRET_PATTERN`）过滤，禁止原始 Secret 落盘。
+  2. **per-entry 显式授权**：必须经用户显式 per-entry 授权，不得隐式归档用户未确认的内容。
+  3. **范围隔离**：不得传输 `runtime_home` / `bridge` 内容；仅工作区可迁移身份知识（`knowledge/`、identity 文档）可归档。
+  4. **威胁模型评审**：网络面 / 多租户威胁模型须经安全评审（external 后端尤其如此）。
+- 边界：本批只确立契约与文档，不实现 `local-sqlite` / `external` 后端，不接入任何调用方，不改变既有 `PruneService` 归档区清理语义（`archives` 清理范围照旧）。archival 后端与既有本地归档区（archive/trash）是不同概念：前者是外部/持久化归档目标，后者是本地可恢复目录。
+- 原因：OP1 Stage E 的目标是把「归档到外部后端」这个未来能力的安全边界先钉死，避免实现时引入 secret 泄露（写原始 transcript/内存）或越权传输（把 runtime_home/bridge 内容带出）。与 D-006（不落盘 Secret）、D-009（frozen/versioned 二分）、D-013（扩展点限定 data-only/adapter-interface）一致——先约束后实现。
+
 ## D-001 - 引入多 Agent 协作骨架
 
 - 状态：Accepted
