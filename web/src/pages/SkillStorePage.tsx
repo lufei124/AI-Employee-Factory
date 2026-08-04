@@ -135,6 +135,31 @@ export function SkillStorePage() {
     setInstallScope('project');
   };
 
+  // 一键安装：直接装到当前预选员工或第一个员工，作用域 project，跳过弹窗。
+  const quickInstall = async (skill: StoreSkill) => {
+    const target = preselectAgent || agents[0]?.id || '';
+    if (!target) {
+      openInstall(skill); // 无默认员工时退回选择弹窗
+      return;
+    }
+    setInstalling(true);
+    setError('');
+    try {
+      const result = await api.installSkillFromStore({
+        repoName: expanded ?? '',
+        skillPath: skill.path,
+        agentId: target,
+        scope: 'project',
+      });
+      const targetName = agents.find((agent) => agent.id === target)?.name ?? target;
+      setFeedback(`已一键安装 ${result.name}@${result.version} 到 ${targetName}（project）。`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setInstalling(false);
+    }
+  };
+
   const confirmInstall = async () => {
     if (!install) return;
     setInstalling(true);
@@ -309,10 +334,20 @@ export function SkillStorePage() {
                       v{skill.version} · {skill.path}
                     </span>
                   </div>
-                  <button className="button secondary" onClick={() => openInstall(skill)}>
-                    <Plus size={14} />
-                    安装
-                  </button>
+                  <div className="store-skill-actions">
+                    <button
+                      className="button primary"
+                      onClick={() => void quickInstall(skill)}
+                      disabled={installing}
+                      title={`装到 ${preselectAgent || agents[0]?.name || '…'}（project 作用域）`}
+                    >
+                      <Plus size={14} />
+                      一键安装
+                    </button>
+                    <button className="button ghost" onClick={() => openInstall(skill)}>
+                      选择目标
+                    </button>
+                  </div>
                 </article>
               ))}
             </div>

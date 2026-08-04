@@ -305,7 +305,7 @@ describe('Web console core flows', () => {
     expect(await screen.findByText('superpowers')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '浏览技能' }));
     expect(await screen.findByText('says hi')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '安装' }));
+    await user.click(screen.getByRole('button', { name: '选择目标' }));
     await user.click(screen.getByRole('button', { name: '确认安装' }));
 
     expect(api.installSkillFromStore).toHaveBeenCalledWith({
@@ -350,5 +350,59 @@ describe('Web console core flows', () => {
     );
 
     expect(await screen.findByText('1 个技能')).toBeInTheDocument();
+  });
+
+  it('one-click installs a store skill to the first agent with project scope', async () => {
+    vi.mocked(api.listSkillStoreRepositories).mockResolvedValue([
+      {
+        name: 'superpowers',
+        url: 'https://github.com/obra/superpowers',
+        description: '社区技能',
+        cached: true,
+      },
+    ]);
+    vi.mocked(api.dashboard).mockResolvedValue({
+      total: 1,
+      running: 0,
+      pendingAuthorization: 0,
+      archived: 0,
+      agents: [{ id: 'ops', name: '运营专员', status: 'stopped', archived: false }],
+    } as never);
+    vi.mocked(api.listSkillStoreSkills).mockResolvedValue([
+      {
+        name: 'hello',
+        description: 'says hi',
+        version: '1.0.0',
+        path: 'skills/hello',
+        repository: 'superpowers',
+      },
+    ]);
+    vi.mocked(api.installSkillFromStore).mockResolvedValue({
+      name: 'hello',
+      version: '1.0.0',
+      source: '/cache/superpowers/skills/hello',
+      installed_at: '2026-08-04T00:00:00.000Z',
+      digest: 'ab',
+      scope: 'project',
+    } as never);
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter initialEntries={['/skill-store']}>
+        <SkillStorePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('superpowers')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '浏览技能' }));
+    await user.click(await screen.findByRole('button', { name: '一键安装' }));
+
+    expect(api.installSkillFromStore).toHaveBeenCalledWith({
+      repoName: 'superpowers',
+      skillPath: 'skills/hello',
+      agentId: 'ops',
+      scope: 'project',
+    });
+    expect(await screen.findByText(/已一键安装 hello@1.0.0/)).toBeInTheDocument();
   });
 });
