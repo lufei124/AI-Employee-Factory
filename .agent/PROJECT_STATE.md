@@ -46,9 +46,11 @@
 
 - 完成 TASK-020 阶段5（OP1 Stage C chat transcript 持久化，为 Stage D 铺路）：src/core/transcript.ts(新增) TranscriptSummary（agent_id/operation/started_at/finished_at/exit_code/topics/decisions/lessons/tail）+TranscriptSink 接口+FileTranscriptSink.persist（ensureDir+append+0600+chmod）+summarizeTranscript 纯函数（TOPIC_LINE_PATTERN/DECISION_PATTERN/LESSON_PATTERN 抽取，tail/decisions/lessons 经 redactSecrets 脱敏）；src/core/process-runner.ts LoggedRunOptions 增 transcript?:boolean 与 transcriptSummary? 覆盖、LoggedRunResult 增 transcriptFile?，runLogged 在 transcript 启用时收集 stdout 行，元数据写完后 best-effort persist 摘要到 logs/<id>/runs/<slug>/transcript.jsonl（0600，失败不阻断）；src/schemas/agent-schema.ts portableMemorySchema 增 transcript_persist:z.boolean().optional()（opt-in，缺省不落盘，D-006 对齐）；src/application/factory-application.ts runAgent/runJob 在 agent.memory.transcript_persist===true 时透传 transcript:true，chat 保持 runInteractive 不落盘。新增 tests/transcript.test.ts(+6)。npm run verify 实跑（build+lint+prettier 全绿；207 测试中 206 过，唯一失败为工作区另一 Agent 未提交 skills.ts 改动——Skill remove 改彻底卸载——所致，非本阶段引入）。未 push。
 
+- 完成 TASK-020 阶段6（OP1 Stage D ExperienceExtractor，严格 gate on Stage C）：src/core/experience.ts(新增) MemoryAsset（targetScope:'knowledge'/relPath/content/authorityLayer）+ExperienceExtractor 接口+DefaultExperienceExtractor（从 TranscriptSummary 的 decisions/lessons 收敛为一条 lessons/<date>-<agentId>.md 经验文档，frontmatter title/summary/keywords/authority_layer/updated_at，零 I/O 纯函数）+sanitizeSlug；src/schemas/agent-schema.ts portableMemorySchema 增 experience_extraction:z.boolean().optional()（opt-in，硬约束：仅当 transcript_persist=true 即 Stage C 落地才生效）；src/application/factory-application.ts 增公开 extractExperience(id,transcriptFile)+私有 maybeExtractExperience（守卫 experience_extraction/transcript_persist/transcriptFile 三重，写回复用 knowledgeWrite 的 assertInside+realpath+symlink 硬约束，读最后一行 transcript 解析 summary 并强制覆盖 agent_id），runAgent/runJob 在 transcript 落盘后 best-effort 调用（失败不阻断）；顺带修复另一 Agent commit 30dc9d8 引入的 src/cli-program.ts prettier 超长行（纯换行 wrap，恢复 repo 级 prettier gate，零行为变更）。新增 tests/experience.test.ts(+5)。npm run verify 实跑（build+216 单测全绿+lint --max-warnings=0+prettier 全绿）。未 push。
+
 ## 进行中
 
-- TASK-020 记忆系统剩余批次合并：阶段1（OP2-F）、阶段2（CLI 结构化输出）、阶段3（OP4-C）、阶段4（OP1 Stage B knowledge/ 索引 + recall）、阶段5（OP1 Stage C chat transcript 持久化）已提交；阶段6-12（OP1 Stage D-E / OP5 A-E）按顺序依赖后续实施。
+- TASK-020 记忆系统剩余批次合并：阶段1（OP2-F）、阶段2（CLI 结构化输出）、阶段3（OP4-C）、阶段4（OP1 Stage B knowledge/ 索引 + recall）、阶段5（OP1 Stage C chat transcript 持久化）、阶段6（OP1 Stage D ExperienceExtractor）已提交；阶段7-12（OP1 Stage E / OP5 A-E）按顺序依赖后续实施。
 
 ## 待审查
 
