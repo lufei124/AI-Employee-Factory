@@ -33,48 +33,74 @@ async function setup() {
   return { root, paths, registry, application: new FactoryApplication(paths, registry) };
 }
 
-describe('FactoryApplication.repairAgent (OP3-A)', () => {
-  it('rebuilds Registry runtime block and config_hash from agent.yaml truth', async () => {
+describe('FactoryApplication.repairAgent (OP3-A HARD)', () => {
+  it('rebuilds Registry config_hash from agent.yaml truth after a model drift', async () => {
     const { registry, application } = await setup();
     const agent = (await registry.read()).agents[0];
     if (!agent) throw new Error('missing agent');
-    // 模拟漂移：手工改 agent.yaml 的 model 为 opus，Registry 仍缓存 sonnet。
+    // 模拟漂移：手工改 agent.yaml 的 model 为 opus。
     const agentYaml = path.join(agent.workspace.path, 'agent.yaml');
     const doc = YAML.parse(await fs.readFile(agentYaml, 'utf8')) as { runtime: { model?: string } };
     doc.runtime.model = 'opus';
     await fs.writeFile(agentYaml, YAML.stringify(doc));
 
     const result = await application.repairAgent(agent.id);
-    expect(result.resynced.model).toBe(true);
-    expect(result.resynced.hash).toBe(true);
-
+    expect(result).toEqual({ id: agent.id, config_hash: computeConfigHash(doc.runtime) });
     const updated = (await registry.read()).agents[0];
     if (!updated) throw new Error('missing updated agent');
-    expect(updated.runtime.model).toBe('opus');
+    expect(updated.config_hash).toBe(computeConfigHash(doc.runtime));
+    // 修复后 loadPortableConfig 不再抛 HARD CONFLICT
     const portable = await loadPortableConfig(updated);
-    expect(updated.config_hash).toBe(computeConfigHash(portable.runtime));
+    expect(portable.runtime.model).toBe('opus');
   });
 
-  it('reports no change when agent.yaml already matches Registry cache', async () => {
+  it('is idempotent when agent.yaml already matches Registry config_hash', async () => {
     const { registry, application } = await setup();
     const agent = (await registry.read()).agents[0];
     if (!agent) throw new Error('missing agent');
+    const before = agent.config_hash;
     const result = await application.repairAgent(agent.id);
-    expect(result.resynced.model).toBe(false);
-    expect(result.resynced.hash).toBe(false);
+    const updated = (await registry.read()).agents[0];
+    expect(result.config_hash).toBe(before);
+    expect(updated?.config_hash).toBe(before);
+    // 幂等：重复 repair 不改变 config_hash
+    await application.repairAgent(agent.id);
+    expect((await registry.read()).agents[0]?.config_hash).toBe(before);
   });
 
-  it('refuses when agent.yaml provider drifts from Registry (immutable)', async () => {
+  it('repairs provider drift as the escape hatch (agent.yaml is sole source)', async () => {
     const { registry, application } = await setup();
     const agent = (await registry.read()).agents[0];
     if (!agent) throw new Error('missing agent');
-    // provider 是不可变字段；agent.yaml 改 provider 后 loadPortableConfig 拒绝。
+    // provider 漂移：agent.yaml 改 provider 后，loadPortableConfig 会 HARD 拒绝，
+    // 但 repairAgent 绕过它直接按 agent.yaml 重建 config_hash。
     const agentYaml = path.join(agent.workspace.path, 'agent.yaml');
     const doc = YAML.parse(await fs.readFile(agentYaml, 'utf8')) as {
       runtime: { provider: string };
     };
     doc.runtime.provider = 'codex';
     await fs.writeFile(agentYaml, YAML.stringify(doc));
-    await expect(application.repairAgent(agent.id)).rejects.toThrow('不一致');
+
+    const result = await application.repairAgent(agent.id);
+    expect(result.config_hash).toBe(computeConfigHash(doc.runtime));
+    const updated = (await registry.read()).agents[0];
+    expect(updated?.config_hash).toBe(computeConfigHash(doc.runtime));
+  });
+
+  it('loadPortableConfig throws HARD CONFLICT when config_hash drifts (I-5)', async () => {
+    const { registry, application } = await setup();
+    const agent = (await registry.read()).agents[0];
+    if (!agent) throw new Error('missing agent');
+    const agentYaml = path.join(agent.workspace.path, 'agent.yaml');
+    const doc = YAML.parse(await fs.readFile(agentYaml, 'utf8')) as { runtime: { model?: string } };
+    doc.runtime.model = 'opus';
+    await fs.writeFile(agentYaml, YAML.stringify(doc));
+    // HARD：漂移后 loadPortableConfig 抛 CONFLICT，阻断运行
+    await expect(loadPortableConfig(agent)).rejects.toThrow('不一致');
+    // 但 repairAgent 可绕过并修复
+    await application.repairAgent(agent.id);
+    const updated = (await registry.read()).agents[0];
+    if (!updated) throw new Error('missing updated agent');
+    await expect(loadPortableConfig(updated)).resolves.toBeDefined();
   });
 });

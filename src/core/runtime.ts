@@ -5,7 +5,7 @@ import { atomicWriteFile } from './atomic.js';
 import { ClaudeRuntimeAdapter } from '../runtimes/claude-adapter.js';
 import { CodexRuntimeAdapter } from '../runtimes/codex-adapter.js';
 import type { RuntimeAdapter } from '../runtimes/runtime-adapter.js';
-import type { RuntimeProvider } from '../schemas/agent-schema.js';
+import type { AgentConfig, RuntimeProvider } from '../schemas/agent-schema.js';
 import type { RegistryAgent } from '../schemas/registry-schema.js';
 
 const safeInheritedVariables = new Set([
@@ -87,11 +87,12 @@ async function ccSwitchClaudeSettingsFile(userHome: string): Promise<string> {
 
 export async function syncCcSwitchClaudeProvider(
   agent: RegistryAgent,
+  runtime: AgentConfig['runtime'],
   userHome: string,
   runtimesDir: string,
   sanitizeNonWhitelist = false,
 ): Promise<CcSwitchSyncSummary> {
-  if (agent.runtime.provider !== 'claude') {
+  if (runtime.provider !== 'claude') {
     throw new AgentCtlError('VALIDATION_ERROR', `Agent ${agent.id} 不是 Claude Runtime。`);
   }
   const source = await ccSwitchClaudeSettingsFile(path.resolve(userHome));
@@ -193,10 +194,11 @@ export function buildSafeBaseEnvironment(
 
 export function buildRuntimeEnvironment(
   agent: RegistryAgent,
+  runtime: AgentConfig['runtime'],
   source: NodeJS.ProcessEnv = process.env,
 ): Record<string, string> {
   // OP3-C：委托给 adapter.buildEnv，消除 provider if/else 与静默回退。
-  return getRuntimeAdapter(agent).buildEnv(agent, source);
+  return getRuntimeAdapter(runtime).buildEnv(agent, source);
 }
 
 // OP3-C：工厂对象。Record<RuntimeProvider, _> 类型注解对对象字面量做穷尽性检查--
@@ -207,14 +209,13 @@ const runtimeAdapterFactories: Record<RuntimeProvider, () => RuntimeAdapter> = {
   codex: () => new CodexRuntimeAdapter(),
 };
 
-export function getRuntimeAdapter(agent: RegistryAgent): RuntimeAdapter {
-  if (!agent.runtime.locked)
-    throw new AgentCtlError('CONFLICT', `Agent ${agent.id} 的运行器未锁定。`);
-  const factory = runtimeAdapterFactories[agent.runtime.provider];
+export function getRuntimeAdapter(runtime: AgentConfig['runtime']): RuntimeAdapter {
+  if (!runtime.locked) throw new AgentCtlError('CONFLICT', `运行器未锁定。`);
+  const factory = runtimeAdapterFactories[runtime.provider];
   if (!factory)
     throw new AgentCtlError(
       'DEPENDENCY_MISSING',
-      `未注册的 Runtime Provider：${agent.runtime.provider}`,
+      `未注册的 Runtime Provider：${runtime.provider}`,
       {
         remediation: '请检查 agent.yaml 的 runtime.provider，仅支持 claude / codex。',
       },

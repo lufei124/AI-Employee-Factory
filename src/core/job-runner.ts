@@ -4,6 +4,7 @@ import { assertInsideReal, type FactoryPaths } from './paths.js';
 import { FileLock } from './locks.js';
 import { ProcessRunner, type LoggedRunOptions, type LoggedRunResult } from './process-runner.js';
 import { buildRuntimeEnvironment, getRuntimeAdapter } from './runtime.js';
+import type { AgentConfig } from '../schemas/agent-schema.js';
 import type { JobConfig } from '../schemas/job-schema.js';
 import type { RegistryAgent } from '../schemas/registry-schema.js';
 import type { ExecutionContext } from '../runtimes/runtime-adapter.js';
@@ -18,6 +19,7 @@ export class JobRunner {
 
   async run(
     agent: RegistryAgent,
+    runtime: AgentConfig['runtime'],
     job: JobConfig,
     options: LoggedRunOptions = {},
   ): Promise<JobRunResult> {
@@ -25,12 +27,16 @@ export class JobRunner {
     return lock.withLock({ purpose: `job:${agent.id}:${job.id}` }, async () => {
       const runner = new ProcessRunner(this.paths.logsDir);
       if (job.execution.type === 'script') {
-        return runner.runLogged(agent.id, await this.scriptContext(agent, job.execution), options);
+        return runner.runLogged(
+          agent.id,
+          await this.scriptContext(agent, runtime, job.execution),
+          options,
+        );
       }
       if (job.execution.precheck) {
         const result = await runner.runLogged(
           agent.id,
-          await this.scriptContext(agent, {
+          await this.scriptContext(agent, runtime, {
             ...job.execution.precheck,
             timeout_seconds: job.execution.timeout_seconds,
           }),
@@ -43,8 +49,9 @@ export class JobRunner {
       const promptPath = path.resolve(agent.workspace.path, job.execution.prompt_file);
       await assertInsideReal(agent.workspace.path, promptPath, '任务 Prompt 文件');
       const prompt = await fs.readFile(promptPath, 'utf8');
-      const context = getRuntimeAdapter(agent).run(
+      const context = getRuntimeAdapter(runtime).run(
         agent,
+        runtime,
         prompt,
         job.execution.timeout_seconds * 1000,
       );
@@ -55,6 +62,7 @@ export class JobRunner {
 
   private async scriptContext(
     agent: RegistryAgent,
+    runtime: AgentConfig['runtime'],
     execution: {
       script_file: string;
       interpreter: 'node' | 'bash' | 'direct';
@@ -76,7 +84,7 @@ export class JobRunner {
       command,
       args,
       cwd: agent.workspace.path,
-      env: buildRuntimeEnvironment(agent),
+      env: buildRuntimeEnvironment(agent, runtime),
       timeoutMs: execution.timeout_seconds * 1000,
     };
   }

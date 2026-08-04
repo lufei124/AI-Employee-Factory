@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { FactoryPaths } from '../core/paths.js';
 import { buildRuntimeEnvironment } from '../core/runtime.js';
+import type { AgentConfig } from '../schemas/agent-schema.js';
 import type { RegistryAgent } from '../schemas/registry-schema.js';
 import type { JobConfig } from '../schemas/job-schema.js';
 import { LaunchdServiceAdapter, type LaunchdPlistInput } from './launchd-service.js';
@@ -13,6 +14,7 @@ function executable(cliFile: string): { program: string; prefix: string[] } {
 
 export function bridgeLaunchdService(
   agent: RegistryAgent,
+  runtime: AgentConfig['runtime'],
   paths: FactoryPaths,
   cliFile = process.argv[1] ?? 'agentctl',
   home = process.env.HOME ?? '',
@@ -20,7 +22,7 @@ export function bridgeLaunchdService(
   const exec = executable(path.resolve(cliFile));
   const logDir = path.join(paths.logsDir, agent.id);
   const env = {
-    ...buildRuntimeEnvironment(agent),
+    ...buildRuntimeEnvironment(agent, runtime),
     LARK_CHANNEL_HOME: agent.bridge.home,
     LARK_CHANNEL_PROFILE: agent.bridge.profile ?? agent.id,
     AI_EMPLOYEES_HOME: paths.home,
@@ -43,6 +45,7 @@ export function bridgeLaunchdService(
 
 export function jobLaunchdService(
   agent: RegistryAgent,
+  runtime: AgentConfig['runtime'],
   job: JobConfig,
   paths: FactoryPaths,
   cliFile = process.argv[1] ?? 'agentctl',
@@ -55,7 +58,7 @@ export function jobLaunchdService(
     program: exec.program,
     args: [...exec.prefix, '_service', 'job', agent.id, job.id],
     env: {
-      ...buildRuntimeEnvironment(agent),
+      ...buildRuntimeEnvironment(agent, runtime),
       AI_EMPLOYEES_HOME: paths.home,
       AI_EMPLOYEES_WORKSPACE_ROOT: paths.workspaceRoot,
     },

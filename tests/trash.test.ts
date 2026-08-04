@@ -16,7 +16,6 @@ function testAgent(root: string): RegistryAgent {
     name: '测试员工',
     status: 'stopped',
     archived: false,
-    runtime: { provider: 'claude', locked: true },
     workspace: { path: path.join(root, 'agents/test-employee'), git_repository: true },
     runtime_home: { path: path.join(root, 'private/runtimes/test-employee/claude') },
     bridge: {

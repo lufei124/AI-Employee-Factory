@@ -65,7 +65,7 @@ function OverviewTab({
   reload: () => Promise<void>;
 }) {
   const registry = detail.registry;
-  const provider = registry.runtime.provider === 'claude' ? 'Claude' : 'Codex';
+  const provider = detail.agent.runtime.provider === 'claude' ? 'Claude' : 'Codex';
   const [error, setError] = useState('');
   const [pendingAction, setPendingAction] = useState<'start' | 'stop' | 'restart'>();
   const [feedback, setFeedback] = useState('');
@@ -74,9 +74,9 @@ function OverviewTab({
   const [operation, setOperation] = useState<OperationDto>();
   const terminalGuidance = [
     {
-      label: registry.runtime.provider === 'claude' ? '同步 CC Switch Provider' : '登录 Codex',
+      label: detail.agent.runtime.provider === 'claude' ? '同步 CC Switch Provider' : '登录 Codex',
       description:
-        registry.runtime.provider === 'claude'
+        detail.agent.runtime.provider === 'claude'
           ? '读取 CC Switch 当前 Claude Provider，并安全同步到该员工的隔离环境。'
           : '首次使用或登录失效时执行；登录该员工专属的 Codex 环境。',
       command: guidance.runtimeLogin,
@@ -193,7 +193,7 @@ function OverviewTab({
               <span>
                 Runtime
                 <strong>
-                  {provider} · {registry.runtime.model ?? 'CLI 默认模型'}
+                  {provider} · {detail.agent.runtime.model ?? 'CLI 默认模型'}
                 </strong>
               </span>
             </div>

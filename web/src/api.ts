@@ -8,7 +8,7 @@ export interface DashboardData {
     name: string;
     status: string;
     archived: boolean;
-    runtime: 'claude' | 'codex';
+    runtime: 'claude' | 'codex' | 'unknown';
     bridgeEnabled: boolean;
     bridgeAuthorization: string;
     updatedAt: string;
@@ -89,7 +89,6 @@ export interface AgentDetail {
     name: string;
     status: 'stopped' | 'running' | 'error' | 'archived';
     archived: boolean;
-    runtime: { provider: 'claude' | 'codex'; locked: true; model?: string };
     runtime_home: { path: string };
     bridge: {
       enabled: boolean;
@@ -97,7 +96,10 @@ export interface AgentDetail {
       home: string;
     };
   };
-  agent: { description: string };
+  agent: {
+    description: string;
+    runtime: { provider: 'claude' | 'codex'; locked: true; model?: string };
+  };
 }
 
 export type SkillScope = 'project' | 'user';

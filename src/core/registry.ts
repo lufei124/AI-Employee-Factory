@@ -5,7 +5,22 @@ import YAML from 'yaml';
 import { atomicWriteFile } from './atomic.js';
 import { AgentCtlError } from './errors.js';
 import { FileLock } from './locks.js';
-import { registrySchema, type Registry, type RegistryAgent } from '../schemas/registry-schema.js';
+import {
+  REGISTRY_VERSION,
+  registrySchema,
+  registrySchemaV1,
+  type Registry,
+  type RegistryAgent,
+  type RegistryV1,
+} from '../schemas/registry-schema.js';
+
+// OP3-A 长期：v1（含 runtime 块）在内存中规范化为 v2（丢弃 runtime，保留 config_hash 与其余字段），不丢数据。
+function normalizeRegistryV1(v1: RegistryV1): Registry {
+  return registrySchema.parse({
+    version: REGISTRY_VERSION,
+    agents: v1.agents.map(({ runtime: _runtime, ...rest }) => rest),
+  });
+}
 
 export class RegistryStore {
   constructor(
@@ -18,7 +33,11 @@ export class RegistryStore {
       await this.read();
       return;
     }
-    await atomicWriteFile(this.file, YAML.stringify({ version: 1, agents: [] }), 0o600);
+    await atomicWriteFile(
+      this.file,
+      YAML.stringify({ version: REGISTRY_VERSION, agents: [] }),
+      0o600,
+    );
   }
 
   async read(): Promise<Registry> {
@@ -28,13 +47,36 @@ export class RegistryStore {
       });
     }
     try {
-      return registrySchema.parse(YAML.parse(await fs.readFile(this.file, 'utf8')));
+      const raw = YAML.parse(await fs.readFile(this.file, 'utf8'));
+      if (raw && typeof raw === 'object' && raw.version === 1) {
+        return normalizeRegistryV1(registrySchemaV1.parse(raw));
+      }
+      return registrySchema.parse(raw);
     } catch (error) {
       throw new AgentCtlError('VALIDATION_ERROR', `Registry 格式无效：${this.file}`, {
         remediation: '请从 registry/backups 恢复最近备份，然后运行 agentctl doctor。',
         cause: error,
       });
     }
+  }
+
+  // SOFT 迁移：仅当磁盘仍为 v1 时重写为 v2（清理残留），v2 无操作。
+  async migrate(options: { dryRun?: boolean } = {}): Promise<{ migrated: boolean }> {
+    if (!this.locksDir) {
+      await this.read();
+      return { migrated: false };
+    }
+    let migrated = false;
+    const lock = new FileLock(path.join(this.locksDir, 'registry.lock'));
+    await this.serialize(lock, async () => {
+      const raw = YAML.parse(await fs.readFile(this.file, 'utf8'));
+      if (raw && typeof raw === 'object' && raw.version === 1) {
+        const norm = normalizeRegistryV1(registrySchemaV1.parse(raw));
+        migrated = true;
+        if (!options.dryRun) await atomicWriteFile(this.file, YAML.stringify(norm), 0o600);
+      }
+    });
+    return { migrated };
   }
 
   async add(agent: RegistryAgent): Promise<void> {
@@ -52,44 +94,22 @@ export class RegistryStore {
       const current = registry.agents[index];
       if (!current) throw new AgentCtlError('NOT_FOUND', `Agent 不存在：${id}`);
       const next = registrySchema.shape.agents.element.parse(update(current));
-      if (next.runtime.provider !== current.runtime.provider || next.runtime.locked !== true) {
-        throw new AgentCtlError('CONFLICT', `Agent ${id} 的运行器已锁定，禁止普通修改。`);
-      }
-      // OP3-A：model 经 agent.yaml 为唯一可写真相，updateAgent 拒绝直改。
-      // model 同步须经 resyncRuntime（agentctl repair），从 agent.yaml 派生。
-      if (next.runtime.model !== current.runtime.model) {
-        throw new AgentCtlError(
-          'CONFLICT',
-          `Agent ${id} 的 model 修改须经 agent.yaml + agentctl repair，Registry 不直接可写。`,
-        );
-      }
       const others = registry.agents.filter((_, agentIndex) => agentIndex !== index);
       this.assertUnique({ ...registry, agents: others }, next);
       return { ...registry, agents: registry.agents.map((item, i) => (i === index ? next : item)) };
     });
   }
 
-  // OP3-A：repair 的受信重建路径--以 agent.yaml 的 runtime 块为唯一真相刷新 Registry 缓存。
-  // 允许 model 变更（从 agent.yaml 派生），但 provider/locked 不变量仍强制（违则 CONFLICT，不覆盖）。
-  async resyncRuntime(
-    id: string,
-    runtime: RegistryAgent['runtime'],
-    configHash: string,
-  ): Promise<void> {
+  // OP3-A 长期：repair 的受信重建路径--以 agent.yaml 的 runtime 块为唯一真相刷新 config_hash。
+  // Registry 不再持有 runtime 块，无 provider/locked/model 可重建，仅刷新指纹。
+  async refreshConfigHash(id: string, configHash: string): Promise<void> {
     await this.update((registry) => {
       const index = registry.agents.findIndex((agent) => agent.id === id);
       if (index < 0) throw new AgentCtlError('NOT_FOUND', `Agent 不存在：${id}`);
       const current = registry.agents[index];
       if (!current) throw new AgentCtlError('NOT_FOUND', `Agent 不存在：${id}`);
-      if (runtime.provider !== current.runtime.provider || runtime.locked !== true) {
-        throw new AgentCtlError(
-          'CONFLICT',
-          `Agent ${id} 的 provider/locked 不变量不允许经 repair 改变。`,
-        );
-      }
       const next = registrySchema.shape.agents.element.parse({
         ...current,
-        runtime,
         config_hash: configHash,
         updated_at: new Date().toISOString(),
       });

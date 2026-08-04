@@ -4,14 +4,16 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BridgeAdapter } from '../src/core/bridge.js';
 import { renderLaunchdPlist } from '../src/services/launchd-service.js';
+import type { AgentConfig } from '../src/schemas/agent-schema.js';
 import type { RegistryAgent } from '../src/schemas/registry-schema.js';
+
+const runtime: AgentConfig['runtime'] = { provider: 'claude', locked: true, model: 'sonnet' };
 
 const agent: RegistryAgent = {
   id: 'user-operations',
   name: '用户运营专员',
   status: 'stopped',
   archived: false,
-  runtime: { provider: 'claude', locked: true, model: 'sonnet' },
   workspace: { path: '/tmp/agents/user-operations', git_repository: true },
   runtime_home: { path: '/tmp/private/runtimes/user-operations/claude' },
   bridge: {
@@ -28,7 +30,7 @@ const agent: RegistryAgent = {
 
 describe('BridgeAdapter', () => {
   it('builds an isolated bridge run context', () => {
-    const context = new BridgeAdapter().run(agent);
+    const context = new BridgeAdapter().run(agent, runtime);
 
     expect(context.command).toBe('lark-channel-bridge');
     expect(context.args).toEqual([
@@ -65,7 +67,7 @@ describe('BridgeAdapter', () => {
       },
     });
 
-    await new BridgeAdapter().secureProfile(scopedAgent);
+    await new BridgeAdapter().secureProfile(scopedAgent, runtime);
 
     const saved = await fs.readJson(configFile);
     expect(saved.profiles['user-operations'].permissions).toEqual({

@@ -1,4 +1,5 @@
 import { buildSafeBaseEnvironment } from '../core/runtime.js';
+import type { AgentConfig } from '../schemas/agent-schema.js';
 import type { RegistryAgent } from '../schemas/registry-schema.js';
 import type { ExecutionContext, RuntimeAdapter } from './runtime-adapter.js';
 
@@ -9,13 +10,18 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapter {
     return { ...buildSafeBaseEnvironment(source), CLAUDE_CONFIG_DIR: agent.runtime_home.path };
   }
 
-  chat(agent: RegistryAgent): ExecutionContext {
-    return this.context(agent, 'chat', agent.runtime.model ? ['--model', agent.runtime.model] : []);
+  chat(agent: RegistryAgent, runtime: AgentConfig['runtime']): ExecutionContext {
+    return this.context(agent, 'chat', runtime.model ? ['--model', runtime.model] : []);
   }
 
-  run(agent: RegistryAgent, task: string, timeoutMs?: number): ExecutionContext {
+  run(
+    agent: RegistryAgent,
+    runtime: AgentConfig['runtime'],
+    task: string,
+    timeoutMs?: number,
+  ): ExecutionContext {
     const args = ['-p', task];
-    if (agent.runtime.model) args.push('--model', agent.runtime.model);
+    if (runtime.model) args.push('--model', runtime.model);
     return this.context(agent, 'run', args, timeoutMs);
   }
 

@@ -86,6 +86,8 @@ export class FileLock {
       try {
         return JSON.parse(await fs.readFile(this.path, 'utf8')) as LockData;
       } catch (error) {
+        // 重读期间文件被移除（锁持有者在此窗口内 release）= 无锁，属正常，非损坏。
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
         // R17：重读仍失败 = 持久损坏，不得静默视为「无锁」被抢占，须拒绝并提示 doctor 检查。
         throw new AgentCtlError('VALIDATION_ERROR', `锁文件损坏：${this.path}`, {
           remediation: '请运行 agentctl doctor 检查锁目录，或手动清理损坏的锁文件后重试。',

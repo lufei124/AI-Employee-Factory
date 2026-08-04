@@ -4,6 +4,7 @@ import path from 'node:path';
 import { atomicWriteFile } from './atomic.js';
 import { AgentCtlError } from './errors.js';
 import { buildRuntimeEnvironment } from './runtime.js';
+import type { AgentConfig } from '../schemas/agent-schema.js';
 import type { RegistryAgent } from '../schemas/registry-schema.js';
 
 export interface BridgeExecutionContext {
@@ -22,14 +23,14 @@ export interface BridgeCapabilities {
 }
 
 export class BridgeAdapter {
-  run(agent: RegistryAgent): BridgeExecutionContext {
+  run(agent: RegistryAgent, runtime: AgentConfig['runtime']): BridgeExecutionContext {
     this.assertEnabled(agent);
-    return this.context(agent, [
+    return this.context(agent, runtime, [
       'run',
       '--profile',
       agent.bridge.profile as string,
       '--agent',
-      agent.runtime.provider,
+      runtime.provider,
       '--workspace',
       agent.workspace.path,
     ]);
@@ -37,6 +38,7 @@ export class BridgeAdapter {
 
   authorize(
     agent: RegistryAgent,
+    runtime: AgentConfig['runtime'],
     options: { appId?: string; tenant?: 'feishu' | 'lark' } = {},
   ): BridgeExecutionContext {
     this.assertEnabled(agent);
@@ -45,18 +47,18 @@ export class BridgeAdapter {
       'create',
       agent.bridge.profile as string,
       '--agent',
-      agent.runtime.provider,
+      runtime.provider,
       '--workspace',
       agent.workspace.path,
     ];
     if (options.appId) args.push('--app-id', options.appId);
     if (options.tenant) args.push('--tenant', options.tenant);
-    return this.context(agent, args);
+    return this.context(agent, runtime, args);
   }
 
-  status(agent: RegistryAgent): BridgeExecutionContext {
+  status(agent: RegistryAgent, runtime: AgentConfig['runtime']): BridgeExecutionContext {
     this.assertEnabled(agent);
-    return this.context(agent, ['profile', 'export', agent.bridge.profile as string]);
+    return this.context(agent, runtime, ['profile', 'export', agent.bridge.profile as string]);
   }
 
   async inspectCapabilities(env?: Record<string, string>): Promise<BridgeCapabilities> {
@@ -105,7 +107,7 @@ export class BridgeAdapter {
     }
   }
 
-  async secureProfile(agent: RegistryAgent): Promise<void> {
+  async secureProfile(agent: RegistryAgent, runtime: AgentConfig['runtime']): Promise<void> {
     this.assertEnabled(agent);
     const profileName = agent.bridge.profile as string;
     const configFile = path.join(agent.bridge.home, 'config.json');
@@ -129,7 +131,7 @@ export class BridgeAdapter {
       throw new AgentCtlError('AUTH_REQUIRED', `Bridge Profile 不存在：${profileName}`);
     }
     const profileRecord = { ...(profile as Record<string, unknown>) };
-    if (profileRecord.agentKind !== agent.runtime.provider) {
+    if (profileRecord.agentKind !== runtime.provider) {
       throw new AgentCtlError('CONFLICT', 'Bridge Profile 的 Runtime 与员工配置不一致。');
     }
     profileRecord.permissions = { defaultAccess: 'workspace', maxAccess: 'workspace' };
@@ -159,14 +161,18 @@ export class BridgeAdapter {
     );
   }
 
-  private context(agent: RegistryAgent, args: string[]): BridgeExecutionContext {
+  private context(
+    agent: RegistryAgent,
+    runtime: AgentConfig['runtime'],
+    args: string[],
+  ): BridgeExecutionContext {
     return {
       operation: 'bridge',
       command: 'lark-channel-bridge',
       args,
       cwd: agent.workspace.path,
       env: {
-        ...buildRuntimeEnvironment(agent),
+        ...buildRuntimeEnvironment(agent, runtime),
         LARK_CHANNEL_HOME: agent.bridge.home,
         LARK_CHANNEL_PROFILE: agent.bridge.profile as string,
       },

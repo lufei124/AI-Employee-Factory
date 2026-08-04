@@ -225,14 +225,13 @@ export class CreateAgentService {
       name: input.name,
       status: 'stopped',
       archived: false,
-      runtime,
       workspace: { path: workspace, git_repository: true },
       runtime_home: { path: runtimeHome },
       bridge,
       permissions: { level: 'workspace', production_write: 'approval_required' },
       created_at: now,
       updated_at: now,
-      // OP3-A：新建即记 config_hash，与 agent.yaml runtime 块对齐（doctor 据此检漂移）。
+      // OP3-A 长期：Registry 不再持有 runtime 块，仅存 config_hash（agent.yaml runtime 块指纹）。
       config_hash: computeConfigHash(runtime),
     };
   }

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { buildRuntimeEnvironment, getRuntimeAdapter } from '../src/core/runtime.js';
 import { ClaudeRuntimeAdapter } from '../src/runtimes/claude-adapter.js';
 import { CodexRuntimeAdapter } from '../src/runtimes/codex-adapter.js';
+import type { AgentConfig } from '../src/schemas/agent-schema.js';
 import type { RegistryAgent } from '../src/schemas/registry-schema.js';
 
 function agent(provider: 'claude' | 'codex'): RegistryAgent {
@@ -13,7 +14,6 @@ function agent(provider: 'claude' | 'codex'): RegistryAgent {
     name: '员工',
     status: 'stopped',
     archived: false,
-    runtime: { provider, locked: true },
     workspace: { path: '/tmp/agents/employee', git_repository: true },
     runtime_home: { path: `/tmp/private/runtimes/employee/${provider}` },
     bridge: {
@@ -28,9 +28,13 @@ function agent(provider: 'claude' | 'codex'): RegistryAgent {
   };
 }
 
+function runtimeBlock(provider: 'claude' | 'codex'): AgentConfig['runtime'] {
+  return { provider, locked: true };
+}
+
 describe('runtime environment isolation', () => {
   it('removes inherited personal configuration and credential variables', () => {
-    const env = buildRuntimeEnvironment(agent('claude'), {
+    const env = buildRuntimeEnvironment(agent('claude'), runtimeBlock('claude'), {
       HOME: '/Users/person',
       PATH: '/bin',
       CLAUDE_CONFIG_DIR: '/Users/person/.claude',
@@ -52,15 +56,13 @@ describe('runtime environment isolation', () => {
   });
 
   it('throws DEPENDENCY_MISSING for an unknown provider instead of falling back to Codex (OP3-C)', () => {
-    const rogue: RegistryAgent = {
-      ...agent('claude'),
-      runtime: { provider: 'unknown' as 'claude', locked: true },
-    };
-    expect(() => getRuntimeAdapter(rogue)).toThrow(/未注册的 Runtime Provider/);
+    expect(() => getRuntimeAdapter({ provider: 'unknown' as 'claude', locked: true })).toThrow(
+      /未注册的 Runtime Provider/,
+    );
   });
 
   it('builds CODEX_HOME for the codex provider via adapter.buildEnv delegation (OP3-C)', () => {
-    const env = buildRuntimeEnvironment(agent('codex'), {
+    const env = buildRuntimeEnvironment(agent('codex'), runtimeBlock('codex'), {
       HOME: '/Users/person',
       PATH: '/bin',
     });
@@ -95,7 +97,12 @@ describe('runtime environment isolation', () => {
         env: { EMPLOYEE_LOCAL_SETTING: 'keep-me', ANTHROPIC_AUTH_TOKEN: 'old-secret' },
       });
 
-      const summary = (await sync(claudeAgent, root, path.join(root, 'runtimes'))) as {
+      const summary = (await sync(
+        claudeAgent,
+        runtimeBlock('claude'),
+        root,
+        path.join(root, 'runtimes'),
+      )) as {
         keys: string[];
         routedFieldsChanged: string[];
       };
@@ -133,6 +140,7 @@ describe('runtime environment isolation', () => {
     const runtime = (await import('../src/core/runtime.js')) as Record<string, unknown>;
     const sync = runtime.syncCcSwitchClaudeProvider as (
       agent: RegistryAgent,
+      runtime: AgentConfig['runtime'],
       home: string,
       runtimesDir: string,
       sanitize?: boolean,
@@ -153,7 +161,7 @@ describe('runtime environment isolation', () => {
         env: { EMPLOYEE_LOCAL_SETTING: 'drop-me', ANTHROPIC_AUTH_TOKEN: 'old-secret' },
       });
 
-      await sync(claudeAgent, root, path.join(root, 'runtimes'), true);
+      await sync(claudeAgent, runtimeBlock('claude'), root, path.join(root, 'runtimes'), true);
       const isolated = await fs.readJson(path.join(claudeAgent.runtime_home.path, 'settings.json'));
 
       // 白名单 provider 字段保留，非白名单残留被移除
@@ -168,6 +176,7 @@ describe('runtime environment isolation', () => {
     const runtime = (await import('../src/core/runtime.js')) as Record<string, unknown>;
     const sync = runtime.syncCcSwitchClaudeProvider as (
       agent: RegistryAgent,
+      runtime: AgentConfig['runtime'],
       home: string,
       runtimesDir: string,
     ) => Promise<unknown>;
@@ -189,7 +198,9 @@ describe('runtime environment isolation', () => {
         runtime_home: { path: path.join(runtimesDir, 'victim', 'claude') },
       };
 
-      await expect(sync(claudeAgent, root, runtimesDir)).rejects.toThrow('员工 Runtime Home');
+      await expect(sync(claudeAgent, runtimeBlock('claude'), root, runtimesDir)).rejects.toThrow(
+        '员工 Runtime Home',
+      );
     } finally {
       await fs.remove(root);
     }
@@ -199,6 +210,7 @@ describe('runtime environment isolation', () => {
     const runtime = (await import('../src/core/runtime.js')) as Record<string, unknown>;
     const sync = runtime.syncCcSwitchClaudeProvider as (
       agent: RegistryAgent,
+      runtime: AgentConfig['runtime'],
       home: string,
       runtimesDir: string,
     ) => Promise<{ routedFieldsChanged: string[] }>;
@@ -218,7 +230,12 @@ describe('runtime environment isolation', () => {
         env: {},
       });
 
-      const summary = await sync(claudeAgent, root, path.join(root, 'runtimes'));
+      const summary = await sync(
+        claudeAgent,
+        runtimeBlock('claude'),
+        root,
+        path.join(root, 'runtimes'),
+      );
       expect(summary.routedFieldsChanged).toEqual([]);
     } finally {
       await fs.remove(root);
@@ -229,8 +246,11 @@ describe('runtime environment isolation', () => {
 describe('runtime adapters', () => {
   it('builds Claude chat and run commands as argument arrays', () => {
     const adapter = new ClaudeRuntimeAdapter();
-    expect(adapter.chat(agent('claude'))).toMatchObject({ command: 'claude', args: [] });
-    expect(adapter.run(agent('claude'), '检查; rm -rf /')).toMatchObject({
+    expect(adapter.chat(agent('claude'), runtimeBlock('claude'))).toMatchObject({
+      command: 'claude',
+      args: [],
+    });
+    expect(adapter.run(agent('claude'), runtimeBlock('claude'), '检查; rm -rf /')).toMatchObject({
       command: 'claude',
       args: ['-p', '检查; rm -rf /'],
       cwd: '/tmp/agents/employee',
@@ -239,11 +259,11 @@ describe('runtime adapters', () => {
 
   it('builds Codex commands with the workspace and no shell string', () => {
     const adapter = new CodexRuntimeAdapter();
-    expect(adapter.chat(agent('codex'))).toMatchObject({
+    expect(adapter.chat(agent('codex'), runtimeBlock('codex'))).toMatchObject({
       command: 'codex',
       args: ['-C', '/tmp/agents/employee'],
     });
-    expect(adapter.run(agent('codex'), '分析任务')).toMatchObject({
+    expect(adapter.run(agent('codex'), runtimeBlock('codex'), '分析任务')).toMatchObject({
       command: 'codex',
       args: ['exec', '-C', '/tmp/agents/employee', '分析任务'],
     });

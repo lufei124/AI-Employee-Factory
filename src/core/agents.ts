@@ -36,36 +36,47 @@ export async function getRegisteredAgent(
 }
 
 // OP3-B：版本化只读 reader。按 schema_version 显式分派；v1=identity（直接 parse），
-// 不原地 mutate。未知版本拒绝并提示未来 migrate（migrate 命令留待后续批次）。
+// 不原地 mutate。未知版本拒绝并提示 migrate。
 function readAgentConfig(raw: unknown, version: number): AgentConfig {
   if (version === 1) return agentConfigSchema.parse(raw);
   throw new AgentCtlError(
     'VALIDATION_ERROR',
     `不支持的 agent.yaml schema_version：${version}（当前支持 v${CURRENT_AGENT_CONFIG_SCHEMA_VERSION}）。`,
     {
-      remediation: '请升级 agentctl 后运行 agentctl migrate（尚未实现），或使用匹配版本的工具。',
+      remediation: '请升级 agentctl 后运行 agentctl migrate，或使用匹配版本的工具。',
     },
   );
+}
+
+// 原样读取 agent.yaml（不做任何 Registry 一致性校验）。供 repair 逃生口与 list N+1 回退使用。
+export async function readAgentConfigFile(file: string): Promise<AgentConfig> {
+  const raw = YAML.parse(await fs.readFile(file, 'utf8'));
+  const declared =
+    typeof raw === 'object' && raw !== null && 'schema_version' in raw
+      ? Number((raw as { schema_version: unknown }).schema_version)
+      : 1;
+  return readAgentConfig(raw, Number.isFinite(declared) ? declared : 1);
 }
 
 export async function loadPortableConfig(agent: RegistryAgent): Promise<AgentConfig> {
   const file = path.join(agent.workspace.path, 'agent.yaml');
   if (!(await fs.pathExists(file)))
     throw new AgentCtlError('NOT_FOUND', `Agent 配置不存在：${file}`);
-  const raw = YAML.parse(await fs.readFile(file, 'utf8'));
-  const declared =
-    typeof raw === 'object' && raw !== null && 'schema_version' in raw
-      ? Number((raw as { schema_version: unknown }).schema_version)
-      : 1;
-  const config = readAgentConfig(raw, Number.isFinite(declared) ? declared : 1);
+  const config = await readAgentConfigFile(file);
+  // OP3-A 长期：HARD 一致性校验。Registry 不再持有 runtime 块，以 config_hash 为唯一指纹；
+  // 漂移（含 model/provider/locked 变更）抛 CONFLICT 阻断运行，agentctl repair 为逃生口。
   if (
     config.id !== agent.id ||
-    config.runtime.provider !== agent.runtime.provider ||
-    config.runtime.locked !== true
+    !agent.config_hash ||
+    computeConfigHash(config.runtime) !== agent.config_hash
   ) {
-    throw new AgentCtlError('CONFLICT', `Agent ${agent.id} 的 Registry 与 agent.yaml 不一致。`, {
-      remediation: `请运行 agentctl doctor ${agent.id} 检查，不要直接修改已锁定的 runtime。`,
-    });
+    throw new AgentCtlError(
+      'CONFLICT',
+      `Agent ${agent.id} 的 Registry 与 agent.yaml 不一致（config_hash 漂移）。`,
+      {
+        remediation: `请运行 agentctl repair ${agent.id} 以 agent.yaml 重建 Registry 缓存。`,
+      },
+    );
   }
   return config;
 }

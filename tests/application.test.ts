@@ -55,6 +55,23 @@ describe('FactoryApplication', () => {
     });
   });
 
+  it('reads provider via agent.yaml (N+1) and falls back to unknown when missing (OP3-A)', async () => {
+    const { app, paths } = setup();
+    await app.initialize();
+    await app.createAgent({
+      id: 'user-operations',
+      name: '用户运营专员',
+      runtime: 'claude',
+      preset: 'user-operations',
+      feishu: 'disabled',
+    });
+    // 正常：agent.yaml 存在，provider 来自单一真相源
+    expect((await app.listAgents())[0]?.runtime).toBe('claude');
+    // 删除 agent.yaml：list 容错降级为 unknown，不抛错
+    await fs.remove(path.join(paths.workspaceRoot, 'user-operations', 'agent.yaml'));
+    expect((await app.listAgents())[0]?.runtime).toBe('unknown');
+  });
+
   it('reads and atomically updates only declared identity documents', async () => {
     const { app, paths } = setup();
     await app.initialize();

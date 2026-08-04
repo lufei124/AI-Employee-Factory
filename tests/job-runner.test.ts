@@ -25,7 +25,6 @@ describe('JobRunner', () => {
       name: '员工',
       status: 'stopped',
       archived: false,
-      runtime: { provider: 'claude', locked: true },
       workspace: { path: workspace, git_repository: true },
       runtime_home: { path: path.join(root, 'private/runtimes/employee/claude') },
       bridge: {
@@ -41,6 +40,7 @@ describe('JobRunner', () => {
 
     const result = await new JobRunner(paths).run(
       agent,
+      { provider: 'claude', locked: true },
       {
         schema_version: 1,
         id: 'check',
@@ -81,7 +81,6 @@ describe('JobRunner', () => {
       name: '员工',
       status: 'stopped',
       archived: false,
-      runtime: { provider: 'claude', locked: true },
       workspace: { path: workspace, git_repository: true },
       runtime_home: { path: runtimeHome },
       bridge: {
@@ -97,6 +96,7 @@ describe('JobRunner', () => {
 
     const result = await new JobRunner(paths).run(
       agent,
+      { provider: 'claude', locked: true },
       {
         schema_version: 1,
         id: 'env',
@@ -136,7 +136,6 @@ describe('JobRunner', () => {
       name: '员工',
       status: 'stopped',
       archived: false,
-      runtime: { provider: 'claude', locked: true },
       workspace: { path: workspace, git_repository: true },
       runtime_home: { path: path.join(root, 'private/runtimes/employee/claude') },
       bridge: {
@@ -153,6 +152,7 @@ describe('JobRunner', () => {
     await expect(
       new JobRunner(paths).run(
         agent,
+        { provider: 'claude', locked: true },
         {
           schema_version: 1,
           id: 'escaped',

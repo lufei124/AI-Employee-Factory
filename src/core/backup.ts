@@ -13,7 +13,7 @@ import YAML from 'yaml';
 import * as tar from 'tar';
 import { execa } from 'execa';
 import { AgentCtlError } from './errors.js';
-import { computeConfigHash, getRegisteredAgent } from './agents.js';
+import { computeConfigHash, getRegisteredAgent, readAgentConfigFile } from './agents.js';
 import { assertInside, type FactoryPaths } from './paths.js';
 import type { RegistryStore } from './registry.js';
 import { FACTORY_VERSION } from './version.js';
@@ -142,11 +142,19 @@ export class BackupService {
           dereference: false,
         });
       await this.rejectSecretsInStage(stage);
+      // OP3-A 长期：Registry 不再持有 runtime 块，provider 从暂存的 agent.yaml（唯一真相源）读取。
+      const stagedConfig = await readAgentConfigFile(
+        path.join(stage, 'workspace', 'agent.yaml'),
+      ).catch(() => null);
       const files = await collectFiles(stage);
       const manifest: BackupManifest = backupManifestSchema.parse({
         schema_version: 1,
         created_at: new Date().toISOString(),
-        agent: { id: agent.id, name: agent.name, runtime: agent.runtime.provider },
+        agent: {
+          id: agent.id,
+          name: agent.name,
+          runtime: stagedConfig?.runtime.provider ?? 'unknown',
+        },
         include_runtime: options.includeRuntime === true,
         files,
         environment: { node: process.version, platform: process.platform, arch: process.arch },
@@ -202,6 +210,10 @@ export class BackupService {
       const original = registryAgentSchema.parse(
         YAML.parse(await fs.readFile(path.join(extract, 'registry-agent.yaml'), 'utf8')),
       );
+      // OP3-A 长期：Registry 不再持有 runtime 块，provider 从备份的 agent.yaml（唯一真相源）读取。
+      const restoredConfig = agentConfigSchema.parse(
+        YAML.parse(await fs.readFile(path.join(extract, 'workspace', 'agent.yaml'), 'utf8')),
+      );
       const id = options.newId ? agentIdSchema.parse(options.newId) : original.id;
       const name = options.newName ?? original.name;
       const workspace = assertInside(
@@ -211,7 +223,7 @@ export class BackupService {
       );
       const runtimeHome = assertInside(
         this.paths.runtimesDir,
-        path.join(this.paths.runtimesDir, id, original.runtime.provider),
+        path.join(this.paths.runtimesDir, id, restoredConfig.runtime.provider),
         '恢复 Runtime Home',
       );
       const bridgeHome = assertInside(
@@ -260,20 +272,12 @@ export class BackupService {
         created.push(logHome);
         if (options.newId) await this.removeGitRemotes(workspace);
         const now = new Date().toISOString();
-        const runtime = original.runtime.model
-          ? {
-              provider: original.runtime.provider,
-              locked: true as const,
-              model: original.runtime.model,
-            }
-          : { provider: original.runtime.provider, locked: true as const };
         await this.registry.add({
           ...original,
           id,
           name,
           status: 'stopped',
           archived: false,
-          runtime,
           workspace: { path: workspace, git_repository: true },
           runtime_home: { path: runtimeHome },
           bridge: original.bridge.enabled
@@ -287,8 +291,8 @@ export class BackupService {
             : { enabled: false, home: bridgeHome, mode: 'disabled', authorization: 'pending' },
           created_at: now,
           updated_at: now,
-          // OP3-A：恢复即记 config_hash，与恢复出的 agent.yaml runtime 块对齐。
-          config_hash: computeConfigHash(runtime),
+          // OP3-A 长期：Registry 不再持有 runtime 块，仅存 config_hash（恢复出的 agent.yaml runtime 块指纹）。
+          config_hash: computeConfigHash(updated.runtime),
         });
         return { id, workspace };
       } catch (error) {

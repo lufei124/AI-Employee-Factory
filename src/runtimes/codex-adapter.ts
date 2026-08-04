@@ -1,4 +1,5 @@
 import { buildSafeBaseEnvironment } from '../core/runtime.js';
+import type { AgentConfig } from '../schemas/agent-schema.js';
 import type { RegistryAgent } from '../schemas/registry-schema.js';
 import type { ExecutionContext, RuntimeAdapter } from './runtime-adapter.js';
 
@@ -9,15 +10,20 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
     return { ...buildSafeBaseEnvironment(source), CODEX_HOME: agent.runtime_home.path };
   }
 
-  chat(agent: RegistryAgent): ExecutionContext {
+  chat(agent: RegistryAgent, runtime: AgentConfig['runtime']): ExecutionContext {
     const args = ['-C', agent.workspace.path];
-    if (agent.runtime.model) args.push('-m', agent.runtime.model);
+    if (runtime.model) args.push('-m', runtime.model);
     return this.context(agent, 'chat', args);
   }
 
-  run(agent: RegistryAgent, task: string, timeoutMs?: number): ExecutionContext {
+  run(
+    agent: RegistryAgent,
+    runtime: AgentConfig['runtime'],
+    task: string,
+    timeoutMs?: number,
+  ): ExecutionContext {
     const args = ['exec', '-C', agent.workspace.path];
-    if (agent.runtime.model) args.push('-m', agent.runtime.model);
+    if (runtime.model) args.push('-m', runtime.model);
     args.push(task);
     return this.context(agent, 'run', args, timeoutMs);
   }

@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { createProgram } from '../src/cli-program.js';
 
 describe('agentctl command surface', () => {
+  it('registers the migrate command with a --dry-run option (OP3-A)', () => {
+    const program = createProgram();
+    const migrate = program.commands.find((command) => command.name() === 'migrate');
+    expect(migrate).toBeDefined();
+    expect(migrate?.options.map((option) => option.flags).join(' ')).toContain('--dry-run');
+  });
+
   it('registers all v1 top-level commands', () => {
     const commands = createProgram().commands.map((command) => command.name());
     expect(commands).toEqual(
@@ -22,6 +29,7 @@ describe('agentctl command surface', () => {
         'restore',
         'archive',
         'repair',
+        'migrate',
         'runtime',
         'bridge',
         'job',

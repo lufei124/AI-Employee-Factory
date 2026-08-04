@@ -275,17 +275,32 @@ export function createProgram(): Command {
 
   program
     .command('repair <agent-id>')
-    .description('以 agent.yaml 重建 Registry 缓存（runtime 块 + config_hash），修复配置漂移')
+    .description('以 agent.yaml 重建 Registry config_hash，修复配置漂移')
     .action(async (id: string) => {
       const { application } = context();
       const result = await application.repairAgent(id);
-      const parts: string[] = [];
-      if (result.resynced.model) parts.push('model 已从 agent.yaml 同步');
-      if (result.resynced.hash) parts.push('config_hash 已刷新');
+      console.log(chalk.green(`✓ ${result.id} 已修复（config_hash 已刷新）`));
+    });
+
+  program
+    .command('migrate')
+    .description('将 Registry 从 v1（含 runtime 块）升级为 v2（移除 runtime 块），SOFT 迁移')
+    .option('--dry-run', '仅预览，不写盘')
+    .action(async (options: { dryRun?: boolean }) => {
+      const { application } = context();
+      const result = await application.migrate(options.dryRun ? { dryRun: true } : {});
+      if (options.dryRun) {
+        console.log(
+          result.migrated
+            ? 'Registry 为 v1，可安全迁移至 v2（移除 runtime 块，config_hash 保留）。'
+            : 'Registry 已是 v2，无需迁移。',
+        );
+        return;
+      }
       console.log(
-        chalk.green(
-          `✓ ${result.id} 已修复${parts.length ? `（${parts.join('；')}）` : '（已是最新，无变更）'}`,
-        ),
+        result.migrated
+          ? chalk.green('✓ Registry 已迁移至 v2（移除 runtime 块）。')
+          : 'Registry 已是 v2，无需迁移。',
       );
     });
 
@@ -368,9 +383,9 @@ export function createProgram(): Command {
             : chalk.green(`✓ 已恢复 ${result.id}：${displayPath(result.workspace)}`),
         );
         if (!options.dryRun) {
-          const { registry } = await application.getAgent(result.id);
+          const { agent } = await application.getAgent(result.id);
           console.log(
-            `下一步：${runtimeSetupCommand(registry.runtime.provider, result.id)} && agentctl doctor ${result.id}`,
+            `下一步：${runtimeSetupCommand(agent.runtime.provider, result.id)} && agentctl doctor ${result.id}`,
           );
         }
       },
@@ -489,9 +504,9 @@ function registerTrashCommands(program: Command): void {
 
 async function runRuntimeAuth(id: string, operation: 'login' | 'status'): Promise<void> {
   const { application } = context();
-  const { registry } = await application.getAgent(id);
+  const { agent } = await application.getAgent(id);
   process.exitCode = await application.runtimeAuth(id, operation);
-  if (registry.runtime.provider === 'claude' && process.exitCode === 0) {
+  if (agent.runtime.provider === 'claude' && process.exitCode === 0) {
     console.log(
       chalk.green(
         operation === 'login'

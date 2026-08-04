@@ -88,6 +88,17 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 - documentFile 偏离裁定：框架提及「documentFile 路径强制校验」，经核实 documentFile 已强制身份文档路径不变量（assertInside + realpath + 拒符号链接），即身份文档层（authority 'agent'）的写入约束已就位；在 documentFile 再叠 memory 校验会令误配 agent 无法修复自身身份文档（损害可恢复性）。故 Stage A 的 memory 强制只在 prepareRuntime（pre-run 硬门），documentFile 维持既有路径校验。
 - 原因：红队 W1 指出 `authority_order` 硬编码（create-agent.ts）但无任何代码运行时强制，`knowledge/` 5 子目录为空骨架--认知记忆层「声明型、不强制、随 schema 演进被误删」（maintainability-review §2.5）。设计原则「先让既有声明型字段成为运行时强制项，再谈新增检索层」（A1）：本决策先把 authority_order 从声明升级为运行时强制 + 派生注入，避免新增检索层（Stage B）重蹈「声明不强制」覆辙。enforced 三态保证向后兼容（旧 agent.yaml 不硬砖）+ 可降级（false 逃生口）。
 
+## D-012：OP3-A 长期——Registry 移除 runtime 块 + config_hash 硬校验 + SOFT 版本化迁移
+
+- 状态：Accepted
+- 日期：2026-08-04
+- 决定：把 D-010 的中期收敛推进到长期目标——**从 Registry 彻底移除 `runtime` 块**（provider/locked/model），使 `agent.yaml` 成为 runtime 的**唯一**来源；同时启用 D-010 推迟的 **I-5 model 收紧**（model 一致性纳入强制校验）；并新增破坏性 `agentctl migrate` 命令处理 schema v1→v2 升级。删除 registry runtime 块是安全的：其中所有数据（provider/locked/model）都存在于 agent.yaml，它纯粹是派生缓存。
+  - **I-5 = HARD 硬校验**：`loadPortableConfig` 校验 `config.id === agent.id` 且 `computeConfigHash(config.runtime) === agent.config_hash`；任一不符（含 config_hash 缺失）抛 `CONFLICT` 阻断运行，remediation 指向 `agentctl repair`。`repairAgent` 是逃生口——绕过 `loadPortableConfig` 直接 `readAgentConfigFile` 读 agent.yaml 原样，重算 config_hash 并 `registry.refreshConfigHash` 修复。
+  - **Registry migrate = SOFT 版本化读取**：`read()` 对 v1 文件在内存中规范化为 v2（丢弃 runtime 块、保留 config_hash 与其余字段，零数据丢失），命令照常可用；`agentctl migrate --dry-run` 预览、`agentctl migrate` 重写磁盘为 v2 清理残留。未知版本抛 `VALIDATION_ERROR`。
+  - **list()/dashboard() provider = N+1 读 agent.yaml**：逐个读每个 agent.yaml 取实时 provider（单一真相源，派生缓存永不漂移）；缺失/无效 yaml 容错显示 `unknown`。
+- 边界：`migrate` 为破坏性命令（改磁盘格式），但 SOFT 语义保证 v1 文件不迁移也能继续运行（内存规范化），故不强制用户立即迁移；旧 v1 备份的 `registry-agent.yaml` 在 restore 时用 `registryAgentSchema`（v2）解析，provider 从恢复的 agent.yaml 读取。
+- 原因：D-010 是中期收敛（registry runtime 块仍为派生缓存、`loadPortableConfig` 未启用 I-5、`migrate` 未实现、adapter 仍读缓存）；长期目标要求单一真相源不再有派生缓存副本，消除双真相源残余与「缓存永漂移」问题。HARD 校验把「静默漂移」变「硬砖」，但 D-010 已就绪的 repair 逃生口保证可恢复；SOFT 迁移避免破坏性升级强行打断 v1 用户。
+
 状态使用 Accepted、Superseded、Proposed。日期来自已验证的实现或提交；无法证明的动机不写成事实。
 
 ## D-001 - 引入多 Agent 协作骨架

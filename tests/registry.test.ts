@@ -1,6 +1,7 @@
 import fs from 'fs-extra';
 import os from 'node:os';
 import path from 'node:path';
+import YAML from 'yaml';
 import { afterEach, describe, expect, it } from 'vitest';
 import { computeConfigHash } from '../src/core/agents.js';
 import { RegistryStore } from '../src/core/registry.js';
@@ -20,7 +21,6 @@ function agent(root: string, id = 'user-operations'): RegistryAgent {
     name: '用户运营专员',
     status: 'stopped',
     archived: false,
-    runtime: { provider: 'claude', locked: true, model: 'sonnet' },
     workspace: { path: path.join(root, 'workspaces', id), git_repository: true },
     runtime_home: { path: path.join(root, 'private', 'runtimes', id, 'claude') },
     bridge: {
@@ -112,45 +112,96 @@ describe('RegistryStore', () => {
     expect((await store.read()).agents[0]?.config_hash).toBe('abc123');
   });
 
-  it('rejects model changes via updateAgent but allows status changes (OP3-A single writable source)', async () => {
+  it('allows status changes via updateAgent and preserves config_hash (OP3-A single writable source)', async () => {
     const root = await tempRoot();
     const store = new RegistryStore(path.join(root, 'registry', 'agents.yaml'));
     await store.initialize();
-    await store.add(agent(root));
-    await expect(
-      store.updateAgent('user-operations', (current) => ({
-        ...current,
-        runtime: { ...current.runtime, model: 'opus' },
-      })),
-    ).rejects.toThrow('model');
-    // 非 model 字段（status）仍可改
+    await store.add({ ...agent(root), config_hash: 'abc123' });
     await store.updateAgent('user-operations', (current) => ({ ...current, status: 'running' }));
-    expect((await store.read()).agents[0]?.status).toBe('running');
-  });
-
-  it('resyncRuntime rebuilds runtime block and config_hash from agent.yaml truth (OP3-A)', async () => {
-    const root = await tempRoot();
-    const store = new RegistryStore(path.join(root, 'registry', 'agents.yaml'));
-    await store.initialize();
-    await store.add(agent(root));
-    const runtime = { provider: 'claude' as const, locked: true as const, model: 'opus' };
-    await store.resyncRuntime('user-operations', runtime, computeConfigHash(runtime));
     const updated = (await store.read()).agents[0];
-    expect(updated?.runtime.model).toBe('opus');
-    expect(updated?.config_hash).toBe(computeConfigHash(runtime));
+    expect(updated?.status).toBe('running');
+    // Registry 不再持有 runtime 块；updateAgent 不得触碰 config_hash（仍由 refreshConfigHash 维护）
+    expect(updated?.config_hash).toBe('abc123');
   });
 
-  it('resyncRuntime refuses provider/locked immutability violations', async () => {
+  it('refreshConfigHash updates config_hash under lock (OP3-A)', async () => {
     const root = await tempRoot();
-    const store = new RegistryStore(path.join(root, 'registry', 'agents.yaml'));
+    const locksDir = path.join(root, 'locks');
+    await fs.ensureDir(locksDir);
+    const store = new RegistryStore(path.join(root, 'registry', 'agents.yaml'), locksDir);
     await store.initialize();
     await store.add(agent(root));
-    await expect(
-      store.resyncRuntime(
-        'user-operations',
-        { provider: 'codex', locked: true, model: 'sonnet' },
-        'deadbeef',
-      ),
-    ).rejects.toThrow('provider/locked');
+    const hash = computeConfigHash({ provider: 'claude', locked: true, model: 'opus' });
+    await store.refreshConfigHash('user-operations', hash);
+    const updated = (await store.read()).agents[0];
+    expect(updated?.config_hash).toBe(hash);
+    expect(await fs.pathExists(path.join(locksDir, 'registry.lock'))).toBe(false);
+  });
+
+  it('read() normalizes a v1 registry file to v2 in memory without dropping data (SOFT)', async () => {
+    const root = await tempRoot();
+    await fs.ensureDir(path.join(root, 'registry'));
+    const file = path.join(root, 'registry', 'agents.yaml');
+    const v1 = {
+      version: 1,
+      agents: [
+        {
+          ...agent(root),
+          runtime: { provider: 'claude', locked: true, model: 'sonnet' },
+          config_hash: 'abc123',
+        },
+      ],
+    };
+    await fs.writeFile(file, YAML.stringify(v1));
+    const store = new RegistryStore(file);
+    const read = await store.read();
+    expect(read.version).toBe(2);
+    const entry = read.agents[0];
+    expect(entry).toBeDefined();
+    // runtime 块被丢弃，config_hash 与其余字段保留
+    expect('runtime' in entry).toBe(false);
+    expect(entry?.config_hash).toBe('abc123');
+    expect(entry?.id).toBe('user-operations');
+  });
+
+  it('migrate() rewrites a v1 registry file to v2 on disk; dry-run does not', async () => {
+    const root = await tempRoot();
+    await fs.ensureDir(path.join(root, 'registry'));
+    await fs.ensureDir(path.join(root, 'locks'));
+    const file = path.join(root, 'registry', 'agents.yaml');
+    const v1 = {
+      version: 1,
+      agents: [
+        {
+          ...agent(root),
+          runtime: { provider: 'claude', locked: true, model: 'sonnet' },
+          config_hash: 'abc123',
+        },
+      ],
+    };
+    await fs.writeFile(file, YAML.stringify(v1));
+    const store = new RegistryStore(file, path.join(root, 'locks'));
+    const dry = await store.migrate({ dryRun: true });
+    expect(dry.migrated).toBe(true);
+    expect((YAML.parse(await fs.readFile(file, 'utf8')) as { version: number }).version).toBe(1);
+    const run = await store.migrate();
+    expect(run.migrated).toBe(true);
+    const rewritten = YAML.parse(await fs.readFile(file, 'utf8')) as {
+      version: number;
+      agents: Array<Record<string, unknown>>;
+    };
+    expect(rewritten.version).toBe(2);
+    expect('runtime' in rewritten.agents[0]).toBe(false);
+    // 幂等：再次迁移无操作
+    expect((await store.migrate()).migrated).toBe(false);
+  });
+
+  it('read() rejects an unknown registry version', async () => {
+    const root = await tempRoot();
+    await fs.ensureDir(path.join(root, 'registry'));
+    const file = path.join(root, 'registry', 'agents.yaml');
+    await fs.writeFile(file, YAML.stringify({ version: 99, agents: [] }));
+    const store = new RegistryStore(file);
+    await expect(store.read()).rejects.toThrow('格式无效');
   });
 });

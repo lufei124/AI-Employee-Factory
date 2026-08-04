@@ -3,7 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
 import YAML from 'yaml';
-import { computeConfigHash, getRegisteredAgent, loadPortableConfig } from '../core/agents.js';
+import {
+  computeConfigHash,
+  getRegisteredAgent,
+  loadPortableConfig,
+  readAgentConfigFile,
+} from '../core/agents.js';
 import { validateMemoryConfig } from '../core/authority.js';
 import { atomicWriteFile } from '../core/atomic.js';
 import { BackupService } from '../core/backup.js';
@@ -29,7 +34,7 @@ import {
   getRuntimeAdapter,
   syncCcSwitchClaudeProvider,
 } from '../core/runtime.js';
-import type { AgentConfig } from '../schemas/agent-schema.js';
+import type { AgentConfig, RuntimeProvider } from '../schemas/agent-schema.js';
 import type { JobConfig } from '../schemas/job-schema.js';
 import type { RegistryAgent } from '../schemas/registry-schema.js';
 import { bridgeLaunchdService, jobLaunchdService } from '../services/factory-services.js';
@@ -49,7 +54,8 @@ export interface AgentSummary {
   name: string;
   status: RegistryAgent['status'];
   archived: boolean;
-  runtime: RegistryAgent['runtime']['provider'];
+  // OP3-A 长期：provider 从 agent.yaml 实时读取（N+1）；缺失/无效 yaml 容错为 'unknown'。
+  runtime: RuntimeProvider | 'unknown';
   bridgeEnabled: boolean;
   bridgeAuthorization: RegistryAgent['bridge']['authorization'];
   updatedAt: string;
@@ -109,7 +115,10 @@ export class FactoryApplication {
 
   async listAgents(): Promise<AgentSummary[]> {
     const data = await this.registry.read();
-    return data.agents.map((agent) => this.toSummary(agent));
+    // OP3-A 长期：Registry 不再持有 provider，逐个读 agent.yaml 取实时 provider（N+1）。
+    return Promise.all(
+      data.agents.map(async (agent) => this.toSummary(agent, await this.readProvider(agent))),
+    );
   }
 
   async dashboard(): Promise<{
@@ -184,10 +193,10 @@ export class FactoryApplication {
   }
 
   async listSkills(id: string) {
-    const { registry } = await this.getAgent(id);
+    const { registry, agent } = await this.getAgent(id);
     return new SkillService(
       registry.workspace.path,
-      registry.runtime.provider,
+      agent.runtime.provider,
       registry.runtime_home.path,
     ).list();
   }
@@ -235,10 +244,10 @@ export class FactoryApplication {
     bridgeAuthorize: string;
     chat: string;
   }> {
-    const { registry } = await this.getAgent(id);
+    const { agent } = await this.getAgent(id);
     return {
       runtimeLogin:
-        registry.runtime.provider === 'claude'
+        agent.runtime.provider === 'claude'
           ? `agentctl runtime sync ${id}`
           : `agentctl runtime login ${id}`,
       bridgeAuthorize: `agentctl bridge authorize ${id}`,
@@ -259,7 +268,7 @@ export class FactoryApplication {
     await this.prepareRuntime(registry, agent);
     return new ProcessRunner(this.paths.logsDir).runLogged(
       id,
-      getRuntimeAdapter(registry).run(registry, task, timeoutSeconds * 1000),
+      getRuntimeAdapter(agent.runtime).run(registry, agent.runtime, task, timeoutSeconds * 1000),
       options,
     );
   }
@@ -268,17 +277,17 @@ export class FactoryApplication {
     const { registry, agent } = await this.getAgent(id);
     await this.prepareRuntime(registry, agent);
     return new ProcessRunner(this.paths.logsDir).runInteractive(
-      getRuntimeAdapter(registry).chat(registry),
+      getRuntimeAdapter(agent.runtime).chat(registry, agent.runtime),
     );
   }
 
   async runtimeAuth(id: string, operation: 'login' | 'status'): Promise<number> {
     const { registry, agent } = await this.getAgent(id);
-    if (registry.runtime.provider === 'claude') {
+    if (agent.runtime.provider === 'claude') {
       await this.prepareRuntime(registry, agent);
       return 0;
     }
-    const adapter = getRuntimeAdapter(registry);
+    const adapter = getRuntimeAdapter(agent.runtime);
     return new ProcessRunner(this.paths.logsDir).runInteractive(
       operation === 'login' ? adapter.login(registry) : adapter.authStatus(registry),
     );
@@ -286,7 +295,7 @@ export class FactoryApplication {
 
   async syncRuntime(id: string) {
     const { registry, agent } = await this.getAgent(id);
-    if (registry.runtime.provider !== 'claude') {
+    if (agent.runtime.provider !== 'claude') {
       throw new AgentCtlError('VALIDATION_ERROR', `Agent ${id} 使用 Codex，无需同步 CC Switch。`, {
         remediation: `请运行 agentctl runtime login ${id}。`,
       });
@@ -298,10 +307,10 @@ export class FactoryApplication {
     id: string,
     options: { appId?: string; tenant: 'feishu' | 'lark' },
   ): Promise<number> {
-    const { registry } = await this.getAgent(id);
+    const { registry, agent } = await this.getAgent(id);
     const adapter = new BridgeAdapter();
     const capabilities = await adapter.inspectCapabilities({
-      ...buildRuntimeEnvironment(registry),
+      ...buildRuntimeEnvironment(registry, agent.runtime),
       LARK_CHANNEL_HOME: registry.bridge.home,
     });
     if (!capabilities.compatible) {
@@ -311,18 +320,18 @@ export class FactoryApplication {
       );
     }
     const code = await new ProcessRunner(this.paths.logsDir).runInteractive(
-      adapter.authorize(registry, options),
+      adapter.authorize(registry, agent.runtime, options),
     );
     if (code === 0) {
-      await this.secureBridgeProfile(registry);
+      await this.secureBridgeProfile(registry, agent.runtime);
       await this.markBridgeReady(id);
     }
     return code;
   }
 
   async bridgeStatus(id: string): Promise<{ exitCode: number; output: string }> {
-    const { registry } = await this.getAgent(id);
-    const context = new BridgeAdapter().status(registry);
+    const { registry, agent } = await this.getAgent(id);
+    const context = new BridgeAdapter().status(registry, agent.runtime);
     const result = await execa(context.command, context.args, {
       cwd: context.cwd,
       env: context.env,
@@ -331,7 +340,7 @@ export class FactoryApplication {
       reject: false,
     });
     if (result.exitCode === 0) {
-      await this.secureBridgeProfile(registry);
+      await this.secureBridgeProfile(registry, agent.runtime);
       await this.markBridgeReady(id);
     }
     return { exitCode: result.exitCode ?? 1, output: result.stdout };
@@ -375,8 +384,10 @@ export class FactoryApplication {
     const { registry, agent } = await this.getAgent(id);
     await this.prepareRuntime(registry, agent);
     const adapter = new BridgeAdapter();
-    await this.secureBridgeProfile(registry);
-    return new ProcessRunner(this.paths.logsDir).runInteractive(adapter.run(registry));
+    await this.secureBridgeProfile(registry, agent.runtime);
+    return new ProcessRunner(this.paths.logsDir).runInteractive(
+      adapter.run(registry, agent.runtime),
+    );
   }
 
   async runJobService(id: string, jobId: string): Promise<number> {
@@ -395,9 +406,9 @@ export class FactoryApplication {
     }
     if (action === 'start' || action === 'restart') {
       await this.prepareRuntime(registry, agent);
-      await this.secureBridgeProfile(registry);
+      await this.secureBridgeProfile(registry, agent.runtime);
     }
-    const service = bridgeLaunchdService(registry, this.paths);
+    const service = bridgeLaunchdService(registry, agent.runtime, this.paths);
     if (action === 'status') {
       const status = await service.status();
       const state = status.state === 'running' ? 'running' : 'stopped';
@@ -420,7 +431,7 @@ export class FactoryApplication {
 
   async archiveAgent(id: string): Promise<void> {
     const { registry, agent } = await this.getAgent(id);
-    await bridgeLaunchdService(registry, this.paths)
+    await bridgeLaunchdService(registry, agent.runtime, this.paths)
       .uninstall()
       .catch(() => undefined);
     const now = new Date().toISOString();
@@ -447,13 +458,14 @@ export class FactoryApplication {
   async trashAgent(id: string, options: { dryRun: true }): Promise<TrashPreview>;
   async trashAgent(id: string, options?: { dryRun?: false }): Promise<TrashEntryDto>;
   async trashAgent(id: string, options: { dryRun?: boolean } = {}) {
-    const { registry } = await this.getAgent(id);
+    const { registry, agent } = await this.getAgent(id);
     const trash = new TrashService(this.paths, this.registry);
     if (options.dryRun) return trash.preview(registry);
     const jobs = await new JobStore(registry.workspace.path).list();
     for (const job of jobs) {
       await jobLaunchdService(
         registry,
+        agent.runtime,
         job,
         this.paths,
         process.argv[1] ?? 'agentctl',
@@ -463,6 +475,7 @@ export class FactoryApplication {
     if (registry.bridge.enabled) {
       await bridgeLaunchdService(
         registry,
+        agent.runtime,
         this.paths,
         process.argv[1] ?? 'agentctl',
         this.paths.userHome,
@@ -523,10 +536,10 @@ export class FactoryApplication {
   }
 
   async setJobEnabled(id: string, jobId: string, enabled: boolean): Promise<JobConfig> {
-    const { registry } = await this.getAgent(id);
+    const { registry, agent } = await this.getAgent(id);
     const store = new JobStore(registry.workspace.path);
     const job = await store.setEnabled(jobId, enabled);
-    const service = jobLaunchdService(registry, job, this.paths);
+    const service = jobLaunchdService(registry, agent.runtime, job, this.paths);
     if (enabled) await service.enableScheduled();
     else await service.uninstall();
     return job;
@@ -536,7 +549,7 @@ export class FactoryApplication {
     const { registry, agent } = await this.getAgent(id);
     const job = await new JobStore(registry.workspace.path).get(jobId);
     if (job.execution.type === 'agent') await this.prepareRuntime(registry, agent);
-    return new JobRunner(this.paths).run(registry, job, options);
+    return new JobRunner(this.paths).run(registry, agent.runtime, job, options);
   }
 
   // OP1 Stage A：运行前强制校验 memory/authority_order 不变量（W1 收敛）。
@@ -554,10 +567,11 @@ export class FactoryApplication {
 
   private async prepareRuntime(registry: RegistryAgent, agent: AgentConfig) {
     this.assertMemoryEnforced(agent);
-    if (registry.runtime.provider !== 'claude') return undefined;
+    if (agent.runtime.provider !== 'claude') return undefined;
     const config = await readConfig(this.paths);
     const summary = await syncCcSwitchClaudeProvider(
       registry,
+      agent.runtime,
       this.paths.userHome,
       this.paths.runtimesDir,
       config.sync.sanitize_non_whitelist,
@@ -571,29 +585,29 @@ export class FactoryApplication {
   }
 
   async archiveJob(id: string, jobId: string): Promise<void> {
-    const { registry } = await this.getAgent(id);
+    const { registry, agent } = await this.getAgent(id);
     const store = new JobStore(registry.workspace.path);
     const job = await store.get(jobId);
-    await jobLaunchdService(registry, job, this.paths)
+    await jobLaunchdService(registry, agent.runtime, job, this.paths)
       .uninstall()
       .catch(() => undefined);
     await store.uninstall(jobId);
   }
 
   async installSkill(id: string, source: string, scope: SkillScope = 'project') {
-    const { registry } = await this.getAgent(id);
+    const { registry, agent } = await this.getAgent(id);
     return new SkillService(
       registry.workspace.path,
-      registry.runtime.provider,
+      agent.runtime.provider,
       registry.runtime_home.path,
     ).install(source, scope);
   }
 
   async removeSkill(id: string, name: string, scope: SkillScope = 'project'): Promise<void> {
-    const { registry } = await this.getAgent(id);
+    const { registry, agent } = await this.getAgent(id);
     await new SkillService(
       registry.workspace.path,
-      registry.runtime.provider,
+      agent.runtime.provider,
       registry.runtime_home.path,
     ).remove(name, scope);
   }
@@ -625,13 +639,18 @@ export class FactoryApplication {
     agentId: string,
     scope: SkillScope = 'project',
   ) {
-    const { registry } = await this.getAgent(agentId);
+    const { registry, agent } = await this.getAgent(agentId);
     const source = await new SkillStoreService(this.paths).resolveSkillSource(repoName, skillPath);
     return new SkillService(
       registry.workspace.path,
-      registry.runtime.provider,
+      agent.runtime.provider,
       registry.runtime_home.path,
     ).install(source, scope);
+  }
+
+  // OP3-A 长期：SOFT 迁移--Registry 仍为 v1（含 runtime 块）时重写磁盘为 v2，v2 无操作。
+  async migrate(options: { dryRun?: boolean } = {}): Promise<{ migrated: boolean }> {
+    return this.registry.migrate(options);
   }
 
   async restoreBackup(
@@ -662,32 +681,41 @@ export class FactoryApplication {
     return new BackupService(this.paths, this.registry).restore(backupPath, options);
   }
 
-  // OP3-A：以 agent.yaml 为唯一可写真相，重建 Registry 的 runtime 块派生缓存 + config_hash。
-  // getAgent 已经 loadPortableConfig（校验 id/provider/locked 与 Registry 一致），故 agent.runtime 可信。
-  // resyncRuntime 在 registry.lock 下刷新缓存；provider/locked 不变量违例由其抛 CONFLICT。
-  async repairAgent(id: string): Promise<{
-    id: string;
-    resynced: { model: boolean; hash: boolean };
-  }> {
-    const { registry, agent } = await this.getAgent(id);
-    const hash = computeConfigHash(agent.runtime);
-    const modelChanged = registry.runtime.model !== agent.runtime.model;
-    const hashChanged = (registry.config_hash ?? '') !== hash;
-    await this.registry.resyncRuntime(id, agent.runtime, hash);
-    return { id, resynced: { model: modelChanged, hash: hashChanged } };
+  // OP3-A 长期：以 agent.yaml 为唯一真相，重建 Registry 的 config_hash 派生缓存。
+  // HARD 逃生口：不用 getAgent（其 loadPortableConfig 在 config_hash 漂移时抛 CONFLICT），
+  // 原样读 agent.yaml 并刷新 config_hash，使漂移 agent 恢复可用。
+  async repairAgent(id: string): Promise<{ id: string; config_hash: string }> {
+    const registry = await getRegisteredAgent(this.registry, id);
+    const file = path.join(registry.workspace.path, 'agent.yaml');
+    if (!(await fs.pathExists(file)))
+      throw new AgentCtlError('NOT_FOUND', `Agent 配置不存在：${file}`);
+    const config = await readAgentConfigFile(file);
+    const hash = computeConfigHash(config.runtime);
+    await this.registry.refreshConfigHash(id, hash);
+    return { id, config_hash: hash };
   }
 
-  private toSummary(agent: RegistryAgent): AgentSummary {
+  private toSummary(agent: RegistryAgent, runtime: RuntimeProvider | 'unknown'): AgentSummary {
     return {
       id: agent.id,
       name: agent.name,
       status: agent.status,
       archived: agent.archived,
-      runtime: agent.runtime.provider,
+      runtime,
       bridgeEnabled: agent.bridge.enabled,
       bridgeAuthorization: agent.bridge.authorization,
       updatedAt: agent.updated_at,
     };
+  }
+
+  // OP3-A 长期：原样读 agent.yaml 取 provider（不做 config_hash 校验，list 容错不因漂移失败）。
+  private async readProvider(agent: RegistryAgent): Promise<RuntimeProvider | 'unknown'> {
+    try {
+      const config = await readAgentConfigFile(path.join(agent.workspace.path, 'agent.yaml'));
+      return config.runtime.provider;
+    } catch {
+      return 'unknown';
+    }
   }
 
   private async documentFile(
@@ -747,11 +775,14 @@ export class FactoryApplication {
     return { root, file: latest.file };
   }
 
-  private async secureBridgeProfile(registry: RegistryAgent): Promise<void> {
+  private async secureBridgeProfile(
+    registry: RegistryAgent,
+    runtime: AgentConfig['runtime'],
+  ): Promise<void> {
     // R16：secureProfile 读-改-写 config.json 全程持 per-bridge 锁，防并发硬化丢失。
     const lock = new FileLock(path.join(this.paths.locksDir, `bridge-${registry.id}.lock`));
     await lock.withLock({ purpose: `bridge:secure:${registry.id}` }, () =>
-      new BridgeAdapter().secureProfile(registry),
+      new BridgeAdapter().secureProfile(registry, runtime),
     );
   }
 

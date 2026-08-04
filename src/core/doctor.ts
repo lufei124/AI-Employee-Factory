@@ -2,7 +2,7 @@ import fs from 'fs-extra';
 import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
-import { computeConfigHash, getRegisteredAgent, loadPortableConfig } from './agents.js';
+import { computeConfigHash, getRegisteredAgent, readAgentConfigFile } from './agents.js';
 import { validateMemoryConfig } from './authority.js';
 import { BridgeAdapter } from './bridge.js';
 import type { FactoryPaths } from './paths.js';
@@ -223,15 +223,20 @@ export class DoctorService {
       status: (await fs.pathExists(path.join(agent.workspace.path, '.git'))) ? 'pass' : 'fail',
       detail: path.join(agent.workspace.path, '.git'),
     });
-    const portableConfig = await loadPortableConfig(agent).catch(() => null);
-    const portableValid = portableConfig !== null;
+    // OP3-A 长期：doctor 诊断必须能检视漂移 agent，故原样读 agent.yaml（不做 config_hash 校验），
+    // 由下方 config-drift 检查独立报告漂移。
+    const portableConfig = await readAgentConfigFile(
+      path.join(agent.workspace.path, 'agent.yaml'),
+    ).catch(() => null);
+    const portValid = portableConfig !== null;
     add({
       id: 'agent-config',
       label: 'agent.yaml',
-      status: portableValid ? 'pass' : 'fail',
-      detail: portableValid ? '与 Registry 一致' : '无效或不一致',
+      status: portValid ? 'pass' : 'fail',
+      detail: portValid ? '可解析' : '无效或缺失',
     });
     // OP3-A：config_hash 漂移检测--agent.yaml runtime 块为唯一真相，Registry 派生缓存须一致。
+    // HARD 模式下漂移 agent 不可用，故状态升为 fail（remediation 指向 repair）。
     if (portableConfig) {
       const actualHash = computeConfigHash(portableConfig.runtime);
       const drift = !agent.config_hash || actualHash !== agent.config_hash;
@@ -240,7 +245,7 @@ export class DoctorService {
           ? {
               id: 'config-drift',
               label: '配置漂移',
-              status: 'warn',
+              status: 'fail',
               detail: !agent.config_hash
                 ? 'Registry 缺 config_hash（旧条目，待补齐）'
                 : 'agent.yaml 与 Registry 缓存不一致',
@@ -292,8 +297,8 @@ export class DoctorService {
     add({
       id: 'runtime-lock',
       label: '运行器锁定',
-      status: agent.runtime.locked ? 'pass' : 'fail',
-      detail: agent.runtime.locked ? '是' : '否',
+      status: portableConfig?.runtime.locked ? 'pass' : 'fail',
+      detail: portableConfig?.runtime.locked ? '是' : '否',
     });
     const personalClaude = path.join(process.env.HOME ?? '', '.claude');
     const personalCodex = path.join(process.env.HOME ?? '', '.codex');

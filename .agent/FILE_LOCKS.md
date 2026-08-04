@@ -23,6 +23,7 @@
 | `src/schemas/agent-schema.ts`, `src/core/authority.ts`, `src/core/templates.ts`, `src/core/create-agent.ts`, `src/application/factory-application.ts`, `src/core/doctor.ts`, `tests/**`                                                                                                                                     | TASK-017 | claude-20260803-01 | master            | OP1 Stage A authority_order 运行时强制          | 2026-08-04 17:09 +0800 | 2026-08-04 17:25 +0800 | RELEASED |
 | `src/core/skills.ts`, `src/core/skill-store.ts`, `src/core/config.ts`, `src/core/paths.ts`, `src/application/factory-application.ts`, `src/web/server.ts`, `src/cli-program.ts`, `web/src/**`, `tests/**`, `docs/DECISIONS.md`, `docs/ARCHITECTURE.md`, `README.md`, `docs/GLOSSARY.md`                                     | TASK-018 | claude-20260803-01 | master            | Skill 作用域 + Skill 商店(GitHub 源)            | 2026-08-04 17:47 +0800 | 2026-08-04 18:25 +0800 | RELEASED |
 
+| `src/schemas/registry-schema.ts`, `src/core/registry.ts`, `src/core/agents.ts`, `src/runtimes/**`, `src/core/runtime.ts`, `src/core/bridge.ts`, `src/core/job-runner.ts`, `src/services/factory-services.ts`, `src/core/create-agent.ts`, `src/core/backup.ts`, `src/application/factory-application.ts`, `src/cli-program.ts`, `src/core/doctor.ts`, `web/src/**`, `tests/**`, `docs/DECISIONS.md` | TASK-019 | claude-20260803-01 | master | OP3-A 长期：移除 Registry runtime 块 + I-5 收紧 + migrate | 2026-08-04 18:56 +0800 | 2026-08-04 19:16 +0800 | RELEASED |
 合法状态：`ACTIVE`、`RELEASED`、`STALE`、`TAKEOVER_PENDING`。
 
 ## 心跳与陈旧判定

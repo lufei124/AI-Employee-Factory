@@ -122,7 +122,7 @@ describe('DoctorService', () => {
     expect(check?.remediation).toContain('agentctl prune --dry-run');
   });
 
-  it('warns on config_hash drift and passes after repair (OP3-A)', async () => {
+  it('fails on config_hash drift and passes after repair (OP3-A HARD)', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-doctor-drift-'));
     roots.push(root);
     const paths = resolveFactoryPaths({
@@ -152,7 +152,7 @@ describe('DoctorService', () => {
     try {
       const report = await new DoctorService(paths, registry).run('user-operations');
       const drift = report.checks.find((c) => c.id === 'config-drift');
-      expect(drift?.status).toBe('warn');
+      expect(drift?.status).toBe('fail');
       expect(drift?.remediation).toContain('agentctl repair');
       // repair 后漂移消除
       await new FactoryApplication(paths, registry).repairAgent('user-operations');
