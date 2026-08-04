@@ -336,6 +336,7 @@ export class FactoryApplication {
     await this.prepareRuntime(registry, agent);
     // OP4-C：run 追加结构化输出（claude --output-format json / codex --json），
     // runLogged 解析 usage 供 gen_ai.* span 上报；best-effort，失败不阻断运行。
+    // OP1 Stage C：agent.yaml.memory.transcript_persist=true 时持久化会话摘要（0600）。
     return new ProcessRunner(this.paths.logsDir).runLogged(
       id,
       getRuntimeAdapter(agent.runtime).run(
@@ -345,16 +346,23 @@ export class FactoryApplication {
         timeoutSeconds * 1000,
         true,
       ),
-      { ...options, provider: agent.runtime.provider, structured: true },
+      {
+        ...options,
+        provider: agent.runtime.provider,
+        structured: true,
+        ...(agent.memory.transcript_persist === true ? { transcript: true } : {}),
+      },
     );
   }
 
   async chat(id: string): Promise<number> {
     const { registry, agent } = await this.getAgent(id);
     await this.prepareRuntime(registry, agent);
-    return new ProcessRunner(this.paths.logsDir).runInteractive(
+    const code = await new ProcessRunner(this.paths.logsDir).runInteractive(
       getRuntimeAdapter(agent.runtime).chat(registry, agent.runtime),
     );
+    // OP1 Stage C：chat 交互不落盘 transcript（D-006），仅当显式 opt-in 时经 runLogged 持久化。
+    return code;
   }
 
   async runtimeAuth(id: string, operation: 'login' | 'status'): Promise<number> {
@@ -625,7 +633,10 @@ export class FactoryApplication {
     const { registry, agent } = await this.getAgent(id);
     const job = await new JobStore(registry.workspace.path).get(jobId);
     if (job.execution.type === 'agent') await this.prepareRuntime(registry, agent);
-    return new JobRunner(this.paths).run(registry, agent.runtime, job, options);
+    // OP1 Stage C：agent.yaml.memory.transcript_persist=true 时持久化会话摘要（经 options 透传）。
+    const runOptions: LoggedRunOptions =
+      agent.memory.transcript_persist === true ? { ...options, transcript: true } : options;
+    return new JobRunner(this.paths).run(registry, agent.runtime, job, runOptions);
   }
 
   // OP1 Stage A：运行前强制校验 memory/authority_order 不变量（W1 收敛）。

@@ -45,6 +45,9 @@ export const portableMemorySchema = z.object({
   // OP1 Stage A：true 时 prepareRuntime 运行前强制校验 authority_order 不变量（W1 收敛）。
   // optional 向后兼容旧 agent.yaml（缺失视为未启用，doctor warn 引导补齐）；false 为显式降级逃生口。
   enforced: z.boolean().optional(),
+  // OP1 Stage C：true 时 chat/run/job 结束后把会话摘要写入 transcript.jsonl（0600，摘要非全量原文，
+  // secret 经 SECRET_PATTERN 过滤）。optional 向后兼容旧 agent.yaml（缺失视为未启用）。
+  transcript_persist: z.boolean().optional(),
 });
 export type PortableMemorySchema = z.infer<typeof portableMemorySchema>;
 

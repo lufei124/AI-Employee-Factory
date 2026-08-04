@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execa } from 'execa';
 import type { ExecutionContext } from '../runtimes/runtime-adapter.js';
+import { FileTranscriptSink, summarizeTranscript, type TranscriptSummary } from './transcript.js';
 import { parseStructuredUsage, type RunUsage, type StructuredOutputProvider } from './usage.js';
 
 export interface LoggedRunResult {
@@ -17,6 +18,8 @@ export interface LoggedRunResult {
   finishedAt: string;
   /** OP4-C 前置：structured 解析出的用量（best-effort，失败/未启用则省略）。 */
   usage?: RunUsage;
+  /** OP1 Stage C：transcript 启用时持久化的摘要文件（best-effort，失败则省略）。 */
+  transcriptFile?: string;
 }
 
 export interface LoggedRunOptions {
@@ -30,6 +33,17 @@ export interface LoggedRunOptions {
   /** OP4-C 前置：provider + structured 同时启用时，run 结束后解析 stdout 抽取 usage。 */
   provider?: StructuredOutputProvider;
   structured?: boolean;
+  /** OP1 Stage C：true 时把会话摘要写入 transcript.jsonl（0600，best-effort）。 */
+  transcript?: boolean;
+  /** 摘要收集器覆盖（默认内部收集全部 stdout 行；测试可注入）。 */
+  transcriptSummary?: (input: {
+    agentId: string;
+    operation: string;
+    startedAt: string;
+    finishedAt: string;
+    exitCode: number;
+    outputLines: string[];
+  }) => Promise<TranscriptSummary>;
 }
 
 export class ProcessRunner {
@@ -62,6 +76,8 @@ export class ProcessRunner {
     const metadataFile = path.join(logDir, 'metadata.json');
     const stdoutStream = fs.createWriteStream(stdoutFile, { mode: 0o600 });
     const stderrStream = fs.createWriteStream(stderrFile, { mode: 0o600 });
+    // OP1 Stage C：启用时收集 stdout 行用于生成会话摘要（摘要非全量原文）。
+    const collectedLines: string[] = [];
     const child = execa(context.command, context.args, {
       cwd: context.cwd,
       env: context.env,
@@ -76,6 +92,12 @@ export class ProcessRunner {
     child.stdout?.on('data', (chunk: Buffer) => {
       stdoutStream.write(chunk);
       options.onStdout?.(chunk.toString('utf8'));
+      if (options.transcript) {
+        for (const line of chunk.toString('utf8').split('\n')) {
+          const trimmed = line.trim();
+          if (trimmed) collectedLines.push(trimmed);
+        }
+      }
       if (options.mirror !== false) process.stdout.write(chunk);
     });
     child.stderr?.on('data', (chunk: Buffer) => {
@@ -119,6 +141,35 @@ export class ProcessRunner {
       },
       { spaces: 2, mode: 0o600 },
     );
+    // OP1 Stage C：transcript 启用时把会话摘要写入 transcript.jsonl（best-effort，失败不阻断）。
+    let transcriptFile: string | undefined;
+    if (options.transcript) {
+      try {
+        const summary =
+          options.transcriptSummary !== undefined
+            ? await options.transcriptSummary({
+                agentId,
+                operation: context.operation,
+                startedAt: startedAt.toISOString(),
+                finishedAt: finishedAt.toISOString(),
+                exitCode,
+                outputLines: collectedLines,
+              })
+            : summarizeTranscript({
+                agentId,
+                operation: context.operation,
+                startedAt: startedAt.toISOString(),
+                finishedAt: finishedAt.toISOString(),
+                exitCode,
+                outputLines: collectedLines,
+              });
+        transcriptFile = await new FileTranscriptSink(
+          path.join(logDir, 'transcript.jsonl'),
+        ).persist(summary);
+      } catch {
+        transcriptFile = undefined;
+      }
+    }
     return {
       exitCode,
       timedOut,
@@ -130,6 +181,7 @@ export class ProcessRunner {
       startedAt: startedAt.toISOString(),
       finishedAt: finishedAt.toISOString(),
       ...(usage ? { usage } : {}),
+      ...(transcriptFile ? { transcriptFile } : {}),
     };
   }
 }
