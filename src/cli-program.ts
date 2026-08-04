@@ -256,6 +256,7 @@ export function createProgram(): Command {
   registerJobCommands(program);
   registerSkillCommands(program);
   registerTrashCommands(program);
+  registerKnowledgeCommands(program);
   registerPruneCommands(program);
 
   program
@@ -754,4 +755,48 @@ function registerPruneCommands(program: Command): void {
         console.log(chalk.green(`✓ 共释放 ${total} 字节`));
       },
     );
+}
+
+// OP1 Stage B：knowledge/ 轻量索引 + recall 命令组。
+function registerKnowledgeCommands(program: Command): void {
+  const group = program.command('knowledge').description('知识库索引与召回');
+  group
+    .command('rebuild <agent-id>')
+    .description('扫描 knowledge/**/*.md 重建关键词索引（写入 knowledge/.index.json）')
+    .action(async (id: string) => {
+      const { application } = context();
+      const result = await application.knowledgeIngest(id);
+      console.log(chalk.green(`✓ 已索引 ${result.entries} 条知识 → ${result.indexFile}`));
+    });
+  group
+    .command('recall <agent-id> <query>')
+    .description('按关键词从知识库召回相关条目')
+    .action(async (id: string, query: string) => {
+      const { application } = context();
+      const result = await application.knowledgeRecall(id, query);
+      if (result.hits.length === 0) {
+        console.log('未命中任何知识条目。');
+        return;
+      }
+      for (const { entry, score, matchedKeywords } of result.hits) {
+        console.log(
+          `${chalk.green(entry.relPath)}  (score=${score}, 命中: ${matchedKeywords.join(', ')})`,
+        );
+        console.log(`  ${entry.title}`);
+        if (entry.summary) console.log(`  ${entry.summary}`);
+      }
+    });
+  group
+    .command('verify <agent-id>')
+    .description('校验索引与 knowledge/ 内容一致（索引漂移检测）')
+    .action(async (id: string) => {
+      const { application } = context();
+      const consistency = await application.knowledgeVerify(id);
+      if (consistency.ok) {
+        console.log(chalk.green('✓ 索引一致。'));
+        return;
+      }
+      for (const issue of consistency.issues) console.log(`- ${issue.detail}`);
+      process.exitCode = 6;
+    });
 }

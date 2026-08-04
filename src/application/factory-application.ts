@@ -13,6 +13,12 @@ import { validateMemoryConfig } from '../core/authority.js';
 import { atomicWriteFile } from '../core/atomic.js';
 import { BackupService } from '../core/backup.js';
 import { BridgeAdapter } from '../core/bridge.js';
+import { KnowledgeIndexImpl } from '../core/knowledge-index.js';
+import type {
+  KnowledgeConsistency,
+  KnowledgeIndexResult,
+  KnowledgeRecallResult,
+} from '../core/knowledge.js';
 import { FileLock } from '../core/locks.js';
 import { initializeFactory, readConfig } from '../core/config.js';
 import { CreateAgentService, type CreateAgentInput } from '../core/create-agent.js';
@@ -170,6 +176,68 @@ export class FactoryApplication {
     const file = await this.documentFile(registry, agent, key);
     await atomicWriteFile(file, content, 0o644);
     return this.readDocument(id, key);
+  }
+
+  // OP1 Stage B：knowledge/ 轻量索引 + recall。索引读写复用 documentFile 的
+  // assertInside+realpath+symlink 硬约束模式，root=workspace/knowledge。
+  private knowledgeRoot(registry: RegistryAgent): string {
+    return path.join(registry.workspace.path, 'knowledge');
+  }
+
+  private async knowledgeIndex(registry: RegistryAgent): Promise<KnowledgeIndexImpl> {
+    const root = await assertInsideReal(
+      this.paths.workspaceRoot,
+      this.knowledgeRoot(registry),
+      '知识库根目录',
+    );
+    return new KnowledgeIndexImpl(root);
+  }
+
+  async knowledgeIngest(id: string): Promise<KnowledgeIndexResult> {
+    const { registry } = await this.getAgent(id);
+    return this.knowledgeIndex(registry).then((index) => index.ingest());
+  }
+
+  async knowledgeCompact(id: string): Promise<KnowledgeIndexResult> {
+    const { registry } = await this.getAgent(id);
+    return this.knowledgeIndex(registry).then((index) => index.compact());
+  }
+
+  async knowledgeRecall(id: string, query: string): Promise<KnowledgeRecallResult> {
+    const { registry } = await this.getAgent(id);
+    return this.knowledgeIndex(registry).then((index) => index.recall(query));
+  }
+
+  async knowledgeVerify(id: string): Promise<KnowledgeConsistency> {
+    const { registry } = await this.getAgent(id);
+    return this.knowledgeIndex(registry).then((index) => index.verifyConsistency());
+  }
+
+  async knowledgeRead(id: string, relPath: string): Promise<{ relPath: string; content: string }> {
+    const { registry } = await this.getAgent(id);
+    const root = this.knowledgeRoot(registry);
+    const file = assertInside(root, path.resolve(root, relPath), '知识文档');
+    await assertInsideReal(root, file, '知识文档');
+    if (!(await fs.pathExists(file)))
+      throw new AgentCtlError('NOT_FOUND', `知识文档不存在：${relPath}`);
+    if ((await fs.lstat(file)).isSymbolicLink()) {
+      throw new AgentCtlError('VALIDATION_ERROR', '知识文档不能是软链接。');
+    }
+    return { relPath: path.relative(root, file), content: await fs.readFile(file, 'utf8') };
+  }
+
+  async knowledgeWrite(
+    id: string,
+    relPath: string,
+    content: string,
+  ): Promise<{ relPath: string; content: string }> {
+    const { registry } = await this.getAgent(id);
+    const root = this.knowledgeRoot(registry);
+    const file = assertInside(root, path.resolve(root, relPath), '知识文档');
+    await assertInsideReal(root, file, '知识文档');
+    await atomicWriteFile(file, content, 0o644);
+    await this.knowledgeIndex(registry).then((index) => index.ingest());
+    return { relPath: path.relative(root, file), content };
   }
 
   async listJobs(id: string): Promise<JobConfig[]> {

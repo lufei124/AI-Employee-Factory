@@ -586,6 +586,16 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
     async (request) => ({ data: await options.application.terminalGuidance(request.params.id) }),
   );
 
+  // OP1 Stage B：知识库 recall API（读路径只读，供 Web/CLI 复用）。
+  server.get<{ Params: { id: string }; Querystring: { q?: string } }>(
+    '/api/v1/agents/:id/knowledge/recall',
+    async (request) => {
+      const query = request.query.q?.trim() ?? '';
+      if (!query) throw new AgentCtlError('VALIDATION_ERROR', '缺少查询参数 q。');
+      return { data: await options.application.knowledgeRecall(request.params.id, query) };
+    },
+  );
+
   server.get('/api/v1/backups', async () => ({ data: await options.application.listBackups() }));
 
   server.post('/api/v1/backups/import', async (request, reply) => {

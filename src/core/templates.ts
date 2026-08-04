@@ -93,9 +93,35 @@ export async function renderAgentWorkspace(input: {
   await fs.writeFile(path.join(workspace, 'config/env.example'), '# 不要在此文件写入真实 Secret\n');
   await fs.writeFile(
     path.join(workspace, '.gitignore'),
-    '.env\n.env.*\n!.env.example\n*.pem\n*.key\n*.p12\n*.token\nconfig/env.local\nlogs/*\n!logs/.gitkeep\n.DS_Store\n',
+    '.env\n.env.*\n!.env.example\n*.pem\n*.key\n*.p12\n*.token\nconfig/env.local\nlogs/*\n!logs/.gitkeep\nknowledge/.index.json\n.DS_Store\n',
   );
   await fs.ensureFile(path.join(workspace, 'logs/.gitkeep'));
+  // OP1 Stage B：knowledge/ 目录约定。以 frontmatter（title/summary/keywords/updated_at/authority_layer）
+  // 描述正式知识，agentctl knowledge 命令组据此扫描生成 knowledge/.index.json（派生、gitignored）。
+  // decisions/ 下的条目默认归 'decisions' 层；其余顶层子目录默认归 'knowledge' 层。
+  await fs.writeFile(
+    path.join(workspace, 'knowledge/README.md'),
+    [
+      '# 知识库',
+      '',
+      'knowledge/ 存放正式知识（OP1 Stage B）。每个 markdown 文件以 YAML frontmatter 声明元数据，',
+      '`agentctl knowledge` 命令组据此建立关键词索引（knowledge/.index.json，自动生成、不入 Git）。',
+      '',
+      '```yaml',
+      '---',
+      'title: 条目标题',
+      'summary: 一句话摘要',
+      'keywords: [关键词A, 关键词B]',
+      'updated_at: 2026-08-04',
+      'authority_layer: knowledge  # 可选：decisions | skills | native_memory | session | agent',
+      '---',
+      '```',
+      '',
+      '子目录约定：product（产品知识）、metrics（指标口径）、decisions（决策记录，归 decisions 层）、',
+      'lessons（经验教训）、references（参考资料）。',
+      '',
+    ].join('\n'),
+  );
   await fs.writeFile(
     path.join(workspace, 'deployment/MIGRATION.md'),
     `# 迁移 ${config.name}\n\n1. 克隆本 Agent Git 仓库或使用 \`agentctl restore\`。\n2. 在新电脑运行 \`${

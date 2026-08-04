@@ -5,6 +5,7 @@ import { execa } from 'execa';
 import { computeConfigHash, getRegisteredAgent, readAgentConfigFile } from './agents.js';
 import { validateMemoryConfig } from './authority.js';
 import { BridgeAdapter } from './bridge.js';
+import { KnowledgeIndexImpl } from './knowledge-index.js';
 import type { FactoryPaths } from './paths.js';
 import type { RegistryStore } from './registry.js';
 import { buildSafeBaseEnvironment } from './runtime.js';
@@ -290,6 +291,29 @@ export class DoctorService {
                 detail: `authority_order 无效：${issues.join('；')}`,
                 remediation:
                   '修正 agent.yaml 的 memory.authority_order，或设 enforced: false 降级。',
+              },
+        );
+      }
+    }
+    // OP1 Stage B：知识库索引漂移检测。index 是派生文件（.gitignore 排除），
+    // 与 knowledge/**/*.md 内容不一致时 warn，remediation 指向 knowledge rebuild 重建。
+    const knowledgeRoot = path.join(agent.workspace.path, 'knowledge');
+    if (await fs.pathExists(knowledgeRoot)) {
+      const knowledgeDirReal = await fs.realpath(knowledgeRoot);
+      if (inside(this.paths.workspaceRoot, knowledgeDirReal)) {
+        const consistency = await new KnowledgeIndexImpl(knowledgeRoot).verifyConsistency();
+        add(
+          consistency.ok
+            ? { id: 'knowledge-index', label: '知识库索引', status: 'pass', detail: '索引一致' }
+            : {
+                id: 'knowledge-index',
+                label: '知识库索引',
+                status: 'warn',
+                detail: consistency.issues
+                  .slice(0, 3)
+                  .map((issue) => issue.detail)
+                  .join('；'),
+                remediation: `运行 agentctl knowledge rebuild ${agent.id} 重建索引。`,
               },
         );
       }
