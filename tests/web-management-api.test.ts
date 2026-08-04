@@ -107,7 +107,7 @@ describe('Web management API', () => {
           headers: readHeaders,
         })
       ).json().data,
-    ).toHaveLength(2);
+    ).toHaveLength(0);
 
     await fs.outputFile(path.join(paths.logsDir, 'user-operations/manual/latest.log'), 'a\nb\n');
     expect(
@@ -253,7 +253,7 @@ describe('Web management API', () => {
           headers: readHeaders,
         })
       ).json().data,
-    ).toHaveLength(3);
+    ).toHaveLength(1);
     await server.close();
   });
 

@@ -113,10 +113,8 @@ describe('FactoryApplication management use cases', () => {
 
   it('lists installed skills, logs, and generated backups without exposing arbitrary paths', async () => {
     const { app, paths } = await setup();
-    expect((await app.listSkills('user-operations')).map((skill) => skill.name)).toEqual([
-      'feedback-analyze',
-      'feedback-collect',
-    ]);
+    // preset 无内置 skill，初始列表为空
+    expect(await app.listSkills('user-operations')).toEqual([]);
     await fs.outputFile(
       path.join(paths.logsDir, 'user-operations/manual/output.log'),
       'line one\nline two\n',

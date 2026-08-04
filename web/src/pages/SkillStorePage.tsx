@@ -35,6 +35,8 @@ export function SkillStorePage() {
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState({ name: '', url: '', description: '' });
   const [install, setInstall] = useState<{ skill: StoreSkill; repo: string }>();
+  const [bulkRepo, setBulkRepo] = useState<string>();
+  const [bulkCount, setBulkCount] = useState<number>();
   const [installAgent, setInstallAgent] = useState(preselectAgent);
   const [installScope, setInstallScope] = useState<SkillScope>('project');
   const [installing, setInstalling] = useState(false);
@@ -136,29 +138,42 @@ export function SkillStorePage() {
     setInstallScope('project');
   };
 
-  // 一键安装仓库全部技能：装到当前预选员工或第一个员工，project 作用域。
-  const installAll = async (repo: StoreRepository) => {
-    const target = preselectAgent || agents[0]?.id || '';
-    if (!target) {
-      setFeedback('请先选择目标员工（从员工详情页进入，或先创建员工）。');
+  // 一键安装仓库全部技能：和单个安装一致，先选目标员工与作用域，再批量安装。
+  const openBulkInstall = async (repo: StoreRepository) => {
+    let repoSkills: StoreSkill[];
+    try {
+      repoSkills = await api.listSkillStoreSkills(repo.name);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
       return;
     }
+    if (repoSkills.length === 0) {
+      setFeedback(`仓库 ${repo.name} 没有可安装的技能。`);
+      return;
+    }
+    setBulkRepo(repo.name);
+    setBulkCount(repoSkills.length);
+    setInstallAgent(preselectAgent || agents[0]?.id || '');
+    setInstallScope('project');
+  };
+
+  const installAll = async (repoName: string) => {
+    const target = installAgent;
+    if (!target || !bulkRepo) return;
     setInstalling(true);
     setError('');
     try {
-      const repoSkills = await api.listSkillStoreSkills(repo.name);
-      if (repoSkills.length === 0) {
-        setFeedback(`仓库 ${repo.name} 没有可安装的技能。`);
-        return;
-      }
       const result = await api.installAllSkillFromStore({
-        repoName: repo.name,
+        repoName,
         agentId: target,
-        scope: 'project',
+        scope: installScope,
       });
+      setBulkRepo(undefined);
+      setBulkCount(undefined);
       const targetName = agents.find((agent) => agent.id === target)?.name ?? target;
+      const scopeLabel = installScope === 'project' ? '项目级' : '用户级';
       const parts = [
-        `已向 ${targetName} 一键安装 ${repo.name} 全部技能：成功 ${result.installed.length}/${result.total}`,
+        `已向 ${targetName} 一键安装 ${repoName} 全部技能（${scopeLabel}）：成功 ${result.installed.length}/${result.total}`,
       ];
       if (result.skipped.length) parts.push(`已存在跳过 ${result.skipped.length}`);
       if (result.failed.length)
@@ -291,7 +306,7 @@ export function SkillStorePage() {
               <div className="store-repo-actions">
                 <button
                   className="button primary"
-                  onClick={() => void installAll(repo)}
+                  onClick={() => void openBulkInstall(repo)}
                   disabled={installing}
                 >
                   <Download size={14} />
@@ -420,6 +435,71 @@ export function SkillStorePage() {
                   onClick={() => void confirmInstall()}
                 >
                   {installing ? '安装中…' : '确认安装'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {bulkRepo && (
+        <div className="modal-overlay" onClick={() => setBulkRepo(undefined)}>
+          <div className="modal" onClick={(event) => event.stopPropagation()}>
+            <header className="modal-head">
+              <div>
+                <strong>一键安装全部</strong>
+                <span>
+                  {bulkRepo} · {bulkCount} 个技能
+                </span>
+              </div>
+              <button className="icon-button" onClick={() => setBulkRepo(undefined)}>
+                <X size={16} />
+              </button>
+            </header>
+            <div className="form-stack">
+              <label>
+                目标员工
+                <select
+                  value={installAgent}
+                  onChange={(event) => setInstallAgent(event.target.value)}
+                >
+                  <option value="">选择员工…</option>
+                  {agents
+                    .filter((agent) => !agent.archived)
+                    .map((agent) => (
+                      <option value={agent.id} key={agent.id}>
+                        {agent.name}（{agent.id}）
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label>
+                安装作用域
+                <div className="scope-picker">
+                  <button
+                    className={installScope === 'project' ? 'active' : ''}
+                    onClick={() => setInstallScope('project')}
+                  >
+                    项目级
+                  </button>
+                  <button
+                    className={installScope === 'user' ? 'active' : ''}
+                    onClick={() => setInstallScope('user')}
+                  >
+                    用户级
+                  </button>
+                </div>
+              </label>
+              <div className="wizard-actions">
+                <span className="field-help">
+                  将把 {bulkCount} 个技能批量安装到所选员工；已存在的自动跳过。
+                </span>
+                <button
+                  className="button primary"
+                  disabled={!installAgent || installing}
+                  onClick={() => void installAll(bulkRepo)}
+                >
+                  {installing ? '安装中…' : '确认一键安装'}
                 </button>
               </div>
             </div>

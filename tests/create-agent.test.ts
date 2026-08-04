@@ -44,21 +44,10 @@ describe('CreateAgentService', () => {
     expect(await fs.pathExists(path.join(created.workspace, 'CLAUDE.md'))).toBe(true);
     expect(await fs.pathExists(path.join(created.workspace, 'AGENTS.md'))).toBe(false);
     expect(await fs.pathExists(path.join(created.workspace, '.codex'))).toBe(false);
-    expect(
-      await fs.pathExists(path.join(created.workspace, 'skills/feedback-collect/SKILL.md')),
-    ).toBe(true);
-    const presetSkillMetadata = YAML.parse(
-      await fs.readFile(
-        path.join(created.workspace, 'skills/feedback-collect/.agentctl.yaml'),
-        'utf8',
-      ),
-    ) as Record<string, string>;
-    expect(presetSkillMetadata.digest).toMatch(/^[a-f0-9]{64}$/);
-    expect(
-      (
-        await fs.lstat(path.join(created.workspace, '.claude/skills/feedback-collect'))
-      ).isSymbolicLink(),
-    ).toBe(true);
+    // preset 无内置 skill，skills 目录为空
+    expect(await fs.pathExists(path.join(created.workspace, 'skills'))).toBe(true);
+    expect(await fs.readdir(path.join(created.workspace, 'skills'))).toEqual([]);
+    expect(await fs.pathExists(path.join(created.workspace, '.claude/skills'))).toBe(true);
     expect(await fs.pathExists(path.join(paths.runtimesDir, 'user-operations/claude'))).toBe(true);
     expect(await fs.pathExists(path.join(paths.bridgesDir, 'user-operations'))).toBe(true);
     expect(await fs.pathExists(path.join(paths.logsDir, 'user-operations'))).toBe(true);

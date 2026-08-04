@@ -393,6 +393,7 @@ describe('Web console core flows', () => {
     );
 
     await user.click(await screen.findByRole('button', { name: '一键安装全部' }));
+    await user.click(screen.getByRole('button', { name: '确认一键安装' }));
 
     expect(api.installAllSkillFromStore).toHaveBeenCalledWith({
       repoName: 'larksuite-cli',
@@ -400,7 +401,65 @@ describe('Web console core flows', () => {
       scope: 'project',
     });
     expect(
-      await screen.findByText(/一键安装 larksuite-cli 全部技能：成功 1\/1/),
+      await screen.findByText(/一键安装 larksuite-cli 全部技能（项目级）：成功 1\/1/),
+    ).toBeInTheDocument();
+  });
+
+  it('bulk install modal lets choosing user scope and a target agent', async () => {
+    vi.mocked(api.listSkillStoreRepositories).mockResolvedValue([
+      {
+        name: 'superpowers',
+        url: 'https://github.com/obra/superpowers',
+        description: '社区技能',
+        cached: true,
+      },
+    ]);
+    vi.mocked(api.dashboard).mockResolvedValue({
+      total: 2,
+      running: 0,
+      pendingAuthorization: 0,
+      archived: 0,
+      agents: [
+        { id: 'ops', name: '运营专员', status: 'stopped', archived: false },
+        { id: 'growth', name: '增长专员', status: 'stopped', archived: false },
+      ],
+    } as never);
+    vi.mocked(api.listSkillStoreSkills).mockResolvedValue([
+      {
+        name: 'hello',
+        description: 'says hi',
+        version: '1.0.0',
+        path: 'skills/hello',
+        repository: 'superpowers',
+      },
+    ] as never);
+    vi.mocked(api.installAllSkillFromStore).mockResolvedValue({
+      total: 1,
+      installed: [{ name: 'hello', version: '1.0.0', scope: 'user' }],
+      skipped: [],
+      failed: [],
+    } as never);
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter initialEntries={['/skill-store']}>
+        <SkillStorePage />
+      </MemoryRouter>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: '一键安装全部' }));
+    // 选用户级作用域 + 切到增长专员
+    await user.click(screen.getByRole('button', { name: '用户级' }));
+    await user.selectOptions(screen.getByRole('combobox'), 'growth');
+    await user.click(screen.getByRole('button', { name: '确认一键安装' }));
+
+    expect(api.installAllSkillFromStore).toHaveBeenCalledWith({
+      repoName: 'superpowers',
+      agentId: 'growth',
+      scope: 'user',
+    });
+    expect(
+      await screen.findByText(/一键安装 superpowers 全部技能（用户级）：成功 1\/1/),
     ).toBeInTheDocument();
   });
 });
