@@ -18,7 +18,27 @@ Coordinator: codex-20260803-01
 | TASK-010 | 实施记忆系统优化 OP0+Phase1(OP2)                | claude-20260803-01 | DONE   | master (cb9723b)                   | 隔离与同步强化核心模块、锁、文档与测试                             | TASK-009、用户批准的研究优化方案  | 2026-08-04 11:11 +0800 |
 | TASK-011 | 备份密钥治理 OP2-E + R5 env 清洗                | claude-20260803-01 | DONE   | master (7ef0f16)                   | backup/trash/runtime/config/doctor/CLI 与测试                      | TASK-010、用户批准的 B+R5 范围    | 2026-08-04 12:35 +0800 |
 | TASK-012 | OP3-B 前向兼容基础 + OP3-C adapter 治理         | claude-20260803-01 | DONE   | master (c2a2b71)                   | schemas/agents/backup/runtime/adapters 与测试                      | TASK-011、用户批准的 OP3-B+C 范围 | 2026-08-04 12:46 +0800 |
-| TASK-013 | OP4-A 可观测性 OperationStore + query + R12/R10 | claude-20260803-01 | DONE   | master (TASK-013 commit)           | operation-store/operation-manager/server/config/launchd/CLI 与测试 | TASK-012、用户批准的 OP4-A 范围   | 2026-08-04 13:20 +0800 |
+| TASK-013 | OP4-A 可观测性 OperationStore + query + R12/R10 | claude-20260803-01 | DONE   | master (8b17712)                   | operation-store/operation-manager/server/config/launchd/CLI 与测试 | TASK-012、用户批准的 OP4-A 范围   | 2026-08-04 13:20 +0800 |
+| TASK-014 | OP4-D prune 分类 + 保留上限 + doctor 磁盘检查   | claude-20260803-01 | DONE   | master (TASK-014 commit)           | prune/factory-application/cli-program/doctor 与测试                | TASK-013、用户批准的 OP4-D 范围   | 2026-08-04 14:14 +0800 |
+
+## TASK-014 详情
+
+```text
+Task ID: TASK-014
+Title: OP4-D prune 分类开关 + 保留上限 + doctor 磁盘检查
+Owner agent: claude-20260803-01
+Status: DONE
+Branch/worktree: master (TASK-014 commit)
+Allowed scope: OP4-D(src/core/prune.ts PruneService 分类 logs/registry-backups/archives/operations + 保留上限 keep-days/keep-count + assertInsideReal 安全 + operations.jsonl 原子轮转、factory-application.ts prune 薄编排、cli-program.ts agentctl prune 命令、doctor.ts disk-usage 检查) 与相关测试及 .agent 簿记
+Forbidden scope: skill/job per-workspace 归档清理、config 保留字段、preAction 自动 prune、Stage B trace_id/ObservabilitySink、Stage C OTel GenAI、OP1/OP3-A/OP5、推送
+Dependencies: TASK-013（OperationStore 持久化就绪，满足「先持久化再 prune」硬依赖）、用户确认的 OP4-D 范围（.scratch/plan.md）
+Expected output: agentctl prune --logs/--registry-backups/--archives/--operations 分类 + dry-run + 保留上限 + assertInsideReal 安全；operations.jsonl 原子轮转保 0o600；doctor disk-usage warn；全部带回归测试且 verify/e2e 通过
+Acceptance criteria: 4 scope 分类删除正确 + 保留上限（logs/archives/operations keep-days 默认 30/90/30、registry-backups keep-count 默认 20）；dry-run 零改动；越界路径 assertInsideReal 抛错；operations.jsonl 轮转后 0o600 且可 query；无 scope flag 报错；doctor disk-usage 超阈值 warn；build/test/lint/e2e 实跑通过；任务完成即 commit（不 push）。
+Started at: 2026-08-04 13:40 +0800
+Updated at: 2026-08-04 14:14 +0800
+Completed at: 2026-08-04 14:14 +0800
+Outcome: OP4-D 全部实现并测试通过：src/core/prune.ts PruneService 4 scope 分类（logs 按 slug 目录 mtime 判龄、registry-backups 按 mtime 倒序保留 keepCount、archives 按 mtime 判龄 .tar.gz/.aief.enc/.enc、operations 按 started_at 轮转原子重写保 0o600）+ keep-days/keep-count 保留上限 + safeRemove 包 assertInsideReal 二次校验（symlink 逃逸项 isDirectory()=false 在枚举阶段跳过，越界项被跳过不中止）+ 无 scope 报 VALIDATION_ERROR；factory-application.ts prune 薄编排；cli-program.ts `agentctl prune` 单命令（scope flags + --dry-run/--yes/--keep-days/--keep-count，非 dry-run 先预览 YAML 再 confirmDanger 再实跑）；doctor.ts disk-usage 检查（warn：backupsDir 字节>500MB 或 run 日志目录>500，remediation 指向 prune --dry-run）+ backupsDirSize/countRunLogs 私有助手。新增 tests/prune.test.ts(+8)、doctor +1、cli-structure +1；共 124 单测 + e2e 全过。未 push。
+```
 
 ## TASK-013 详情
 

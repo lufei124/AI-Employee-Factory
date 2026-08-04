@@ -18,6 +18,7 @@ import type { RegistryStore } from '../core/registry.js';
 import { JobStore } from '../core/scheduler.js';
 import { SkillService } from '../core/skills.js';
 import { OperationStore, type OperationSummary } from '../core/operation-store.js';
+import { PruneService, type PruneOptions, type PruneResult } from '../core/prune.js';
 import { TrashService, type TrashEntryDto, type TrashPreview } from '../core/trash.js';
 import { ProcessRunner, type LoggedRunOptions } from '../core/process-runner.js';
 import {
@@ -512,6 +513,11 @@ export class FactoryApplication {
     } = {},
   ): Promise<OperationSummary[]> {
     return new OperationStore(this.paths.logsDir).query(filter);
+  }
+
+  // OP4-D：按分类清理 run 日志/registry 备份/员工备份归档/operations 审计日志。
+  async prune(options: PruneOptions): Promise<PruneResult> {
+    return new PruneService(this.paths).run(options);
   }
 
   async setJobEnabled(id: string, jobId: string, enabled: boolean): Promise<JobConfig> {

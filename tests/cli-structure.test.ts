@@ -28,6 +28,7 @@ describe('agentctl command surface', () => {
         'web',
         'trash',
         'operations',
+        'prune',
       ]),
     );
   });

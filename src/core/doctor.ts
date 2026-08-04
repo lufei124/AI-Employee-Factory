@@ -185,6 +185,19 @@ export class DoctorService {
           }
         : {}),
     });
+    const backupsBytes = await this.backupsDirSize();
+    const runLogCount = await this.countRunLogs();
+    const overBytes = backupsBytes > 500 * 1024 * 1024;
+    const overCount = runLogCount > 500;
+    add({
+      id: 'disk-usage',
+      label: '磁盘占用',
+      status: overBytes || overCount ? 'warn' : 'pass',
+      detail: `备份归档 ${(backupsBytes / 1024 / 1024).toFixed(1)} MiB；run 日志 ${runLogCount} 个目录`,
+      ...(overBytes || overCount
+        ? { remediation: '运行 agentctl prune --dry-run 查看可清理项。' }
+        : {}),
+    });
     if (agentId) await this.agentChecks(agentId, add);
     const summary = { pass: 0, warn: 0, fail: 0 };
     for (const check of checks) summary[check.status] += 1;
@@ -385,5 +398,34 @@ export class DoctorService {
     };
     await visit(root);
     return errors;
+  }
+
+  private async backupsDirSize(): Promise<number> {
+    if (!(await fs.pathExists(this.paths.backupsDir))) return 0;
+    let total = 0;
+    const visit = async (directory: string): Promise<void> => {
+      for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+        const file = path.join(directory, entry.name);
+        if (entry.isDirectory()) await visit(file);
+        else total += (await fs.stat(file)).size;
+      }
+    };
+    await visit(this.paths.backupsDir);
+    return total;
+  }
+
+  private async countRunLogs(): Promise<number> {
+    const logsDir = this.paths.logsDir;
+    if (!(await fs.pathExists(logsDir))) return 0;
+    let count = 0;
+    for (const agentEntry of await fs.readdir(logsDir, { withFileTypes: true })) {
+      if (!agentEntry.isDirectory()) continue;
+      const runsDir = path.join(logsDir, agentEntry.name, 'runs');
+      if (!(await fs.pathExists(runsDir))) continue;
+      for (const runEntry of await fs.readdir(runsDir, { withFileTypes: true })) {
+        if (runEntry.isDirectory()) count += 1;
+      }
+    }
+    return count;
   }
 }

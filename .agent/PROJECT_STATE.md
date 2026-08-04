@@ -1,9 +1,9 @@
 # 项目状态
 
-最后更新：2026-08-04 13:20 +0800
+最后更新：2026-08-04 14:14 +0800
 更新者：claude-20260803-01
-当前版本/分支：master（TASK-013 OP4-A 已提交，工作区干净）
-当前阶段：TASK-013 OP4-A 可观测性已完成，待用户指定下一批优化
+当前版本/分支：master（TASK-014 已提交，hash 待 TASK-015 回填；TASK-013=8b17712；工作区干净）
+当前阶段：TASK-014 OP4-D prune 分类已完成，等待用户审阅或指定下一批优化
 
 ## 已完成
 
@@ -27,10 +27,11 @@
 - 完成 TASK-011 备份密钥治理 OP2-E + R5 env 清洗：R7 shouldCopy 黑名单扩展(settings.json/config.json/.netrc/credentials.json/gcloud.json/id_rsa/id_ed25519/id_dsa/id_ecdsa + .pfx/.keystore，id_*.pub 保留)+SECRET_PATTERN、R27 rejectSecretsInStage 扫描 workspace+runtime 含未跟踪文件命中即拒、R8 解密产物 writeFile 0o600、R20 doctor trash-health 告警 failed/moving/purging + `trash purge <id> --force`、R21 verifyChecksums 集合一致性拒未声明文件(manifest.yaml/checksums.txt 豁免)、R5 factoryConfigSchema+readConfig+sync.sanitize_non_whitelist(default false)+syncCcSwitchClaudeProvider 清洗非白名单 env。新增 tests/config.test.ts(+4)、backup-restore +3、trash +3、doctor +1、runtime +1；共 101 单测 + e2e 全过。
 - 完成 TASK-012 OP3-B 前向兼容基础 + OP3-C adapter 治理（B1 最小）：OP3-B（version.ts FACTORY_VERSION、CURRENT_AGENT_CONFIG_SCHEMA_VERSION、readAgentConfig 版本化只读 reader v1=identity 不原地 mutate、backup manifest 加性 factory_version(default ''，旧备份可恢复)、trash components length(6)->min(6) 为未来第 7 类组件留前向兼容）；OP3-C（RuntimeAdapter 增 buildEnv、Claude/Codex adapter 实现、buildRuntimeEnvironment 委托 adapter.buildEnv 消除 if/else、getRuntimeAdapter 改 Record<RuntimeProvider> 工厂对象编译期穷尽+未知 provider 抛 DEPENDENCY_MISSING 不回退 Codex 修 T-2）。AIEF2 与 agentctl migrate 明确不在本批。新增 tests/agents.test.ts(+2)、runtime +2、backup-restore +2、trash +1；共 108 单测 + e2e 全过。
 - 完成 TASK-013 OP4-A 可观测性：src/core/secrets.ts 抽出共享 SECRET_PATTERN+redactSecrets（backup.ts R27 复用，消除重复正则）、src/core/operation-store.ts OperationStore append-only jsonl 0o600+query(agentId/kind/since/until/limit)+error_summary 经 redactSecrets 脱敏、OperationManager 构造注入 store+终态 best-effort record（succeeded/failed/cancelled 各一次，无 store 不回归）、server.ts 构造注入、config.ts R12 chmod 补 logsDir/servicesDir/schedulesDir/backupsDir/workspaceRoot 0o700、launchd-service.ts R10 预创建 stdout/stderr 日志 0o600 不截断、factory-application.ts queryOperations、cli-program.ts `agentctl operations query` 审计。新增 tests/operation-store.test.ts(+4)、operation-manager +2、config +1；共 115 单测 + e2e 全过。
+- 完成 TASK-014 OP4-D prune 分类：src/core/prune.ts PruneService 4 scope 分类（logs 按 slug 目录 mtime 判龄删整个 run 目录、registry-backups 按 mtime 倒序保留 keepCount 份、archives 按 mtime 判龄删 .tar.gz/.aief.enc/.enc、operations 按 started_at 轮转读全量+原子重写保 0o600）+ keep-days/keep-count 保留上限（默认 logs/archives/operations 30/90/30 天、registry-backups 20 份）+ safeRemove 包 assertInsideReal 二次校验（symlink 逃逸项 isDirectory()=false 枚举阶段跳过，越界项跳过不中止）+ 无 scope 报 VALIDATION_ERROR；factory-application.ts prune 薄编排；cli-program.ts `agentctl prune` 单命令（scope flags + --dry-run/--yes/--keep-days/--keep-count，非 dry-run 先 YAML 预览再 confirmDanger 再实跑+绿色汇总）；doctor.ts disk-usage 检查（warn：backupsDir>500MB 或 run 日志目录>500，remediation 指向 prune --dry-run）+ backupsDirSize/countRunLogs 助手。新增 tests/prune.test.ts(+8)、doctor +1、cli-structure +1；共 124 单测 + e2e 全过。
 
 ## 进行中
 
-- 无（TASK-013 已完成，待用户指定下一批优化）。
+- 无进行中任务。
 
 ## 待审查
 

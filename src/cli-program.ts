@@ -231,6 +231,7 @@ export function createProgram(): Command {
   registerJobCommands(program);
   registerSkillCommands(program);
   registerTrashCommands(program);
+  registerPruneCommands(program);
 
   program
     .command('archive <agent-id>')
@@ -561,6 +562,56 @@ function registerSkillCommands(program: Command): void {
           limit: options.limit ? Number(options.limit) : 100,
         });
         console.log(YAML.stringify(summaries));
+      },
+    );
+}
+
+function registerPruneCommands(program: Command): void {
+  program
+    .command('prune')
+    .description('按分类清理 run 日志/registry 备份/员工备份归档/operations 审计日志')
+    .option('--logs', '清理 Agent run 日志')
+    .option('--registry-backups', '清理 registry 备份')
+    .option('--archives', '清理员工备份归档')
+    .option('--operations', '清理 operations 审计日志')
+    .option('--dry-run', '仅预览，不实际清理')
+    .option('--yes', '跳过确认')
+    .option('--keep-days <number>', '按天数保留（logs/archives/operations）')
+    .option('--keep-count <number>', '按数量保留（registry-backups）')
+    .action(
+      async (options: {
+        logs?: boolean;
+        registryBackups?: boolean;
+        archives?: boolean;
+        operations?: boolean;
+        dryRun?: boolean;
+        yes?: boolean;
+        keepDays?: string;
+        keepCount?: string;
+      }) => {
+        const { application } = context();
+        const base = {
+          logs: options.logs === true,
+          registryBackups: options.registryBackups === true,
+          archives: options.archives === true,
+          operations: options.operations === true,
+          ...(options.keepDays ? { keepDays: Number(options.keepDays) } : {}),
+          ...(options.keepCount ? { keepCount: Number(options.keepCount) } : {}),
+        };
+        const preview = await application.prune({ ...base, dryRun: true });
+        console.log(YAML.stringify(preview));
+        if (options.dryRun) return;
+        await confirmDanger('按上述预览执行清理？', options.yes === true);
+        const result = await application.prune({ ...base, dryRun: false });
+        for (const scope of result.scopes) {
+          console.log(
+            chalk.green(
+              `✓ ${scope.scope}：清理 ${scope.paths.length} 项，释放 ${scope.freedBytes} 字节`,
+            ),
+          );
+        }
+        const total = result.scopes.reduce((sum, scope) => sum + scope.freedBytes, 0);
+        console.log(chalk.green(`✓ 共释放 ${total} 字节`));
       },
     );
 }

@@ -99,4 +99,25 @@ describe('DoctorService', () => {
     expect(check?.status).toBe('fail');
     expect(check?.remediation).toContain('agentctl trash purge --force');
   });
+
+  it('warns disk-usage when backups exceed the threshold (OP4-D)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-doctor-disk-'));
+    roots.push(root);
+    const paths = resolveFactoryPaths({
+      HOME: root,
+      AI_EMPLOYEES_HOME: path.join(root, 'private'),
+      AI_EMPLOYEES_WORKSPACE_ROOT: path.join(root, 'agents'),
+    });
+    await initializeFactory(paths);
+    await fs.ensureDir(paths.backupsDir);
+    const big = path.join(paths.backupsDir, 'big.tar.gz');
+    await fs.writeFile(big, '');
+    await fs.truncate(big, 600 * 1024 * 1024); // 稀疏 600MiB，stat 报告逻辑大小
+    const registry = new RegistryStore(paths.registryFile);
+
+    const report = await new DoctorService(paths, registry).run();
+    const check = report.checks.find((item) => item.id === 'disk-usage');
+    expect(check?.status).toBe('warn');
+    expect(check?.remediation).toContain('agentctl prune --dry-run');
+  });
 });
