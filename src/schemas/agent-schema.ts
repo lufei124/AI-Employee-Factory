@@ -35,6 +35,19 @@ export type AuthorityLayer = (typeof AUTHORITY_LAYERS)[number];
 // OP3-B：当前 agent.yaml schema 版本。版本化只读 reader 据此显式分派；v1=identity。
 export const CURRENT_AGENT_CONFIG_SCHEMA_VERSION = 1;
 
+// OP2-F：便携记忆 schema 的显式类型导出（data-only 契约，供未来扩展点引用）。
+// 与 agentConfigSchema.memory 同构，作为 memory 块的权威类型，避免扩展点误用整份配置。
+export const portableMemorySchema = z.object({
+  isolation: z.literal('strict'),
+  native_memory: z.boolean(),
+  portable_memory: z.boolean(),
+  authority_order: z.array(z.enum(AUTHORITY_LAYERS)),
+  // OP1 Stage A：true 时 prepareRuntime 运行前强制校验 authority_order 不变量（W1 收敛）。
+  // optional 向后兼容旧 agent.yaml（缺失视为未启用，doctor warn 引导补齐）；false 为显式降级逃生口。
+  enforced: z.boolean().optional(),
+});
+export type PortableMemorySchema = z.infer<typeof portableMemorySchema>;
+
 export const agentConfigSchema = z.object({
   schema_version: z.literal(1),
   id: agentIdSchema,
@@ -52,15 +65,7 @@ export const agentConfigSchema = z.object({
     policies_file: portableRelativePathSchema,
     current_state_file: portableRelativePathSchema,
   }),
-  memory: z.object({
-    isolation: z.literal('strict'),
-    native_memory: z.boolean(),
-    portable_memory: z.boolean(),
-    authority_order: z.array(z.enum(AUTHORITY_LAYERS)),
-    // OP1 Stage A：true 时 prepareRuntime 运行前强制校验 authority_order 不变量（W1 收敛）。
-    // optional 向后兼容旧 agent.yaml（缺失视为未启用，doctor warn 引导补齐）；false 为显式降级逃生口。
-    enforced: z.boolean().optional(),
-  }),
+  memory: portableMemorySchema,
   feishu: z.object({
     enabled: z.boolean(),
     mode: z.enum(['dedicated_bot', 'disabled']),

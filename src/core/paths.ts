@@ -21,6 +21,17 @@ export interface FactoryPaths {
   skillStoreDir: string;
 }
 
+// OP2-F 扩展面能力隔离（R23）+ OP5-E PathLayout 收敛（R25）：
+// 路径布局收敛为纯数据接口，根必须位于 home 或 workspaceRoot 树内；
+// 外置卷需经 bind mount/符号链接挂到树内并经 assertInside/assertInsideReal 校验。
+// PathLayout 是数据契约（data-only），不持有 fs/execa，也不定义加载器。
+export interface PathLayout {
+  readonly home: string;
+  readonly workspaceRoot: string;
+  /** 由 home 派生的受管目录。均须位于 home 树内（assertInside 保证）。 */
+  readonly managedDirs: readonly string[];
+}
+
 function homeFrom(env: NodeJS.ProcessEnv): string {
   const home = env.HOME || os.homedir();
   if (!path.isAbsolute(home)) {
@@ -74,6 +85,27 @@ export function resolveFactoryPaths(env: NodeJS.ProcessEnv = process.env): Facto
     trashDir: path.join(home, 'trash'),
     locksDir: path.join(home, 'locks'),
     skillStoreDir: path.join(home, 'skill-store'),
+  };
+}
+
+// OP2-F/OP5-E：从已解析路径派生 PathLayout 数据契约。所有受管目录均位于 home 树内，
+// 由消费方经 assertInside 保证（此处仅作数据声明，不做 I/O）。
+export function resolvePathLayout(paths: FactoryPaths): PathLayout {
+  return {
+    home: paths.home,
+    workspaceRoot: paths.workspaceRoot,
+    managedDirs: [
+      paths.registryDir,
+      paths.runtimesDir,
+      paths.bridgesDir,
+      paths.servicesDir,
+      paths.schedulesDir,
+      paths.logsDir,
+      paths.backupsDir,
+      paths.trashDir,
+      paths.locksDir,
+      paths.skillStoreDir,
+    ],
   };
 }
 

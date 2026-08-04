@@ -68,6 +68,21 @@ describe('BackupService', () => {
     expect((await fs.readFile(backup, 'utf8')).startsWith('AIEF1\n')).toBe(true);
   });
 
+  it('honors an injected BackupFilter (OP2-F data-only extension isolation)', async () => {
+    const { root, paths, registry } = await setup();
+    const agent = (await registry.read()).agents[0];
+    if (!agent) throw new Error('missing agent');
+    // 自定义 filter：始终放行（data-only 纯函数），证明 filter 可注入覆盖默认排除规则。
+    const custom = new BackupService(paths, registry, { shouldCopy: () => true });
+    await fs.outputFile(path.join(agent.workspace.path, '.env'), 'TOKEN=should-not-be-backed');
+
+    const backup = await custom.backup('user-operations');
+    const extract = path.join(root, 'extract-custom');
+    await fs.ensureDir(extract);
+    await tar.x({ file: backup, cwd: extract });
+    expect(await fs.pathExists(path.join(extract, 'workspace/.env'))).toBe(true);
+  });
+
   it('restores portable data under a new id with fresh private homes', async () => {
     const { paths, registry, service } = await setup();
     const backup = await service.backup('user-operations');

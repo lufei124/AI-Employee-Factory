@@ -3,7 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { AgentCtlError } from '../src/core/errors.js';
-import { assertInside, assertInsideReal, resolveFactoryPaths } from '../src/core/paths.js';
+import {
+  assertInside,
+  assertInsideReal,
+  resolveFactoryPaths,
+  resolvePathLayout,
+} from '../src/core/paths.js';
 
 describe('resolveFactoryPaths', () => {
   it('uses HOME defaults without hard-coded user paths', () => {
@@ -24,6 +29,20 @@ describe('resolveFactoryPaths', () => {
 
     expect(result.home).toBe('/tmp/private-runtime');
     expect(result.workspaceRoot).toBe('/tmp/workspaces');
+  });
+});
+
+describe('resolvePathLayout', () => {
+  it('derives a data-only layout whose managed dirs all live inside home', () => {
+    const paths = resolveFactoryPaths({ HOME: '/tmp/employee-home' });
+    const layout = resolvePathLayout(paths);
+
+    expect(layout.home).toBe(paths.home);
+    expect(layout.workspaceRoot).toBe(paths.workspaceRoot);
+    // OP2-F/OP5-E：每个受管目录都必须位于 home 树内（assertInside 语义）。
+    for (const dir of layout.managedDirs) {
+      expect(() => assertInside(layout.home, dir, '受管目录')).not.toThrow();
+    }
   });
 });
 

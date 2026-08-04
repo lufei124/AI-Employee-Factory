@@ -101,6 +101,18 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 
 状态使用 Accepted、Superseded、Proposed。日期来自已验证的实现或提交；无法证明的动机不写成事实。
 
+## D-013：OP2-F 扩展面能力隔离——扩展点限定为 data-only / adapter-interface
+
+- 状态：Accepted
+- 日期：2026-08-04
+- 决定：把可扩展点（`BackupFilter`、`PathLayout`、`PortableMemorySchema`、未来的 `CredentialProvider`）收敛为**纯数据（data-only）或 adapter 接口**契约，禁止同进程 JS 模块直接持有 `fs`/`execa`。代码型扩展（若未来需要）必须运行在子进程/Worker 并经 IPC 限制能力。具体落地：
+  - `src/core/extensions.ts`：定义 `ExtensionKind = 'data-only' | 'adapter-interface' | 'subprocess'` 与评审用 `ExtensionSandbox` 契约类型（v1 不固化加载器）。
+  - `src/core/backup.ts`：`shouldCopy`/排除名单从模块级硬编码收敛为 `BackupFilter` 接口 + `defaultBackupFilter()`（纯函数、零 I/O），`BackupService` 构造注入。
+  - `src/core/paths.ts`：`PathLayout` 接口（根必须位于 home/workspaceRoot 树内）+ `resolvePathLayout` 派生助手。
+  - `src/schemas/agent-schema.ts`：导出 `PortableMemorySchema` 类型（memory 块权威类型，供扩展点引用）。
+- 边界：本批只确立契约与默认实现，不实现加载器、不新增任何可执行扩展；`assertInside`/`assertInsideReal` 不变量语义不变；`RuntimeAdapter`/`ServiceAdapter` 等已固化扩展点保持接口形态（`buildExecEnv` 委托 adapter 属 OP3-C 已落地）。
+- 原因：红队 R23 指出扩展点若以同进程 JS 模块加载并直接持有 `fs`/`execa`，会在扩展机制建立的瞬间引入「插件可触碰宿主文件系统/进程」的权限面。把扩展点约化为纯数据或受限 adapter 接口，从根因消除该面，而非事后加校验。与 D-009（frozen/versioned 二分）一致：data-only 契约不放松安全默认。
+
 ## D-001 - 引入多 Agent 协作骨架
 
 - 状态：Accepted

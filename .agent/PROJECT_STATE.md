@@ -1,9 +1,9 @@
 # 项目状态
 
-最后更新：2026-08-04 19:16 +0800
+最后更新：2026-08-04 19:42 +0800
 更新者：claude-20260803-01
-当前版本/分支：master（工作区含 TASK-019 未提交改动）
-当前阶段：TASK-019 OP3-A 长期（移除 Registry runtime 块 + I-5 收紧 + migrate）已实现，待 commit
+当前版本/分支：master（工作区含 TASK-020 阶段1 OP2-F 未提交改动）
+当前阶段：TASK-020 记忆系统剩余批次合并（阶段1 OP2-F 扩展面隔离已实现，待 commit）
 
 ## 已完成
 
@@ -36,9 +36,11 @@
 
 - 完成 TASK-019 OP3-A 长期（移除 Registry runtime 块 + I-5 model 收紧 + agentctl migrate）：registry-schema REGISTRY_VERSION=2，registryAgentSchema 删 runtime 块、保留 config_hash optional，registrySchema.version literal(2)；registry.ts read() 版本分发（v1→normalizeRegistryV1 内存规范化丢弃 runtime 保留 config_hash 与其余字段、v2 原样、未知版本 VALIDATION_ERROR）、migrate({dryRun}) registry.lock 下重写 v2、resyncRuntime 改 refreshConfigHash(id,configHash)、updateAgent 删 runtime 守卫；agents.ts loadPortableConfig HARD 校验（config.id===agent.id 且 computeConfigHash(config.runtime)===agent.config_hash，缺失/不符抛 CONFLICT 提示 agentctl repair）+ 新增 readAgentConfigFile 原始只读 reader；adapters chat/run(agent,runtime)、getRuntimeAdapter(runtime)、buildRuntimeEnvironment(agent,runtime)、syncCcSwitchClaudeProvider(agent,runtime,...)、bridge run/authorize/status/secureProfile(agent,runtime)、job-runner run(agent,runtime,job,options)、launchd services(agent,runtime,...) 全部 runtime 透传；create-agent/backup 写 registry 不再带 runtime，backup manifest provider 从暂存 agent.yaml 读、restore provider 从恢复的 agent.yaml 读；factory-application listAgents N+1 读 agent.yaml 取实时 provider（缺/无效 yaml→'unknown'）、repairAgent 重写返回 {id,config_hash}、migrate 封装；cli-program 新增 agentctl migrate（--dry-run）；doctor runtime-lock 改 portableConfig.runtime.locked、config-drift 状态 warn→fail；web api.ts AgentSummary.runtime 加 'unknown'、AgentDetail 删 registry.runtime 增 agent.runtime，AgentDetailPage 改读 agent.runtime.*；修复 locks.ts readExisting 重读 ENOENT 误报「锁文件损坏」并发竞态。新增 registry 迁移（v1→v2 归一化/migrate 重写/未知版本）、HARD config_hash 漂移 CONFLICT、repairAgent 绕过、list N+1 'unknown'、agentctl migrate 命令结构测试；所有 RegistryAgent fixture 删 runtime 块。docs/DECISIONS.md 增 D-012 ADR，.scratch/plan.md 写 OP3-A 长期 spec。共 176 单测 + e2e 全过，npm run verify 实跑通过。
 
+- 完成 TASK-020 阶段1（OP2-F 扩展面能力隔离 R23）：src/core/extensions.ts(新增) ExtensionKind='data-only'|'adapter-interface'|'subprocess'+ExtensionSandbox/ExtensionManifest/Extension 契约类型（设计级，v1 不固化加载器）；src/core/backup.ts 把模块级 shouldCopy/excludedNames/excludedExtensions 收敛为 BackupFilter 接口+defaultBackupFilter() 纯函数零 I/O，BackupService 构造注入 filter?:BackupFilter（默认 defaultBackupFilter()），全部 shouldCopy 调用改 this.filter.shouldCopy；src/core/paths.ts 增 PathLayout 数据契约接口（home/workspaceRoot/managedDirs）+resolvePathLayout 派生（所有受管目录均位于 home 树内，assertInside 保证，纯数据不 hold fs）；src/schemas/agent-schema.ts 增 portableMemorySchema+PortableMemorySchema 类型（memory 块权威类型导出，agentConfigSchema.memory 复用，schema 内容与旧 memory 块同构零行为变更）。docs/DECISIONS.md 增 D-013 ADR（扩展点限定为 data-only/adapter-interface，禁止同进程 JS 模块直接持有 fs/execa）。新增 tests/paths.test.ts resolvePathLayout 断言所有 managedDirs 经 assertInside 位于 home 内、tests/backup-restore.test.ts 注入 BackupFilter 断言隔离生效（shouldCopy:()=>true 时 .env 被备份）。共 180 单测 + e2e 全过，npm run verify 实跑通过。
+
 ## 进行中
 
-- 无。
+- TASK-020 记忆系统剩余批次合并：阶段1（OP2-F）已实现待 commit；阶段2-12（CLI 结构化输出 / OP4-C / OP1 Stage B-E / OP5 A-E）按顺序依赖后续实施。
 
 ## 待审查
 

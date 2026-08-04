@@ -22,7 +22,15 @@ import { agentConfigSchema, agentIdSchema } from '../schemas/agent-schema.js';
 import { backupManifestSchema, type BackupManifest } from '../schemas/backup-schema.js';
 import { registryAgentSchema } from '../schemas/registry-schema.js';
 
-const excludedNames = new Set([
+// OP2-F 扩展面能力隔离（R23）：备份排除规则收敛为纯数据驱动（data-only）的
+// BackupFilter 接口，默认实现是纯函数、零 I/O。BackupService 构造注入，便于
+// 未来以数据 preset 扩展而不放开同进程 fs/execa 能力。
+export interface BackupFilter {
+  /** 返回 true 表示该文件应纳入备份。纯函数，零 I/O。 */
+  shouldCopy(sourcePath: string): boolean;
+}
+
+const defaultExcludedNames = new Set([
   '.env',
   'secrets.enc',
   // R7：含凭据的配置/密钥文件，备份时直接排除（restore 时需重新配凭据，与 R19 pending 对齐）
@@ -36,15 +44,20 @@ const excludedNames = new Set([
   'id_dsa',
   'id_ecdsa',
 ]);
-const excludedExtensions = new Set(['.pem', '.key', '.p12', '.token', '.pfx', '.keystore']);
+const defaultExcludedExtensions = new Set(['.pem', '.key', '.p12', '.token', '.pfx', '.keystore']);
 
-function shouldCopy(source: string): boolean {
-  const name = path.basename(source);
-  if (excludedNames.has(name)) return false;
-  if (name.startsWith('.env.') && name !== '.env.example') return false;
-  // SSH 私钥（id_*）排除，公钥（id_*.pub）保留可备份
-  if (name.startsWith('id_') && !name.endsWith('.pub')) return false;
-  return !excludedExtensions.has(path.extname(name).toLowerCase());
+/** 默认纯数据备份过滤规则（data-only，无代码注入、无 I/O）。 */
+export function defaultBackupFilter(): BackupFilter {
+  return {
+    shouldCopy(source: string): boolean {
+      const name = path.basename(source);
+      if (defaultExcludedNames.has(name)) return false;
+      if (name.startsWith('.env.') && name !== '.env.example') return false;
+      // SSH 私钥（id_*）排除，公钥（id_*.pub）保留可备份
+      if (name.startsWith('id_') && !name.endsWith('.pub')) return false;
+      return !defaultExcludedExtensions.has(path.extname(name).toLowerCase());
+    },
+  };
 }
 
 async function sha256(file: string): Promise<string> {
@@ -105,6 +118,8 @@ export class BackupService {
   constructor(
     private readonly paths: FactoryPaths,
     private readonly registry: RegistryStore,
+    // OP2-F：可注入的备份过滤规则（data-only）。默认纯数据规则，不放开 fs/execa。
+    private readonly filter: BackupFilter = defaultBackupFilter(),
   ) {}
 
   async backup(
@@ -123,7 +138,7 @@ export class BackupService {
     const temporaryArchive = path.join(os.tmpdir(), `agentctl-${randomUUID()}.tar.gz`);
     try {
       await fs.copy(agent.workspace.path, path.join(stage, 'workspace'), {
-        filter: shouldCopy,
+        filter: (source) => this.filter.shouldCopy(source),
         dereference: false,
       });
       await fs.writeFile(path.join(stage, 'registry-agent.yaml'), YAML.stringify(agent));
@@ -138,7 +153,7 @@ export class BackupService {
       );
       if (options.includeRuntime)
         await fs.copy(agent.runtime_home.path, path.join(stage, 'runtime'), {
-          filter: shouldCopy,
+          filter: (source) => this.filter.shouldCopy(source),
           dereference: false,
         });
       await this.rejectSecretsInStage(stage);
@@ -335,7 +350,7 @@ export class BackupService {
     if (result.exitCode !== 0) return;
     for (const relative of result.stdout.split('\n').filter(Boolean)) {
       const name = path.basename(relative);
-      if (!shouldCopy(name))
+      if (!this.filter.shouldCopy(name))
         throw new AgentCtlError('VALIDATION_ERROR', `Git 已跟踪敏感文件：${relative}`, {
           remediation: `请先将 ${relative} 从 Git 跟踪中移除并更换相关凭据。`,
         });
