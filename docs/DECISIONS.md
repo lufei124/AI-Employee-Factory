@@ -66,6 +66,15 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 - config_hash 取 runtime 块 sha256（非整文件）的裁定理由：精确覆盖 OP3-A 的 runtime 单源范围，避免 archive（写 lifecycle 块）/ identity 文档变更等合法 agent.yaml 改写误报漂移；框架原文「agent.yaml 的 sha256」在此细化为 runtime 块 sha256。
 - 原因：红队 B3/W5 指出 Registry 与 agent.yaml 各持 runtime 块（双真相源），`updateAgent` 允许改 model 不同步 agent.yaml -> 静默漂移；收紧校验（I-5）只会把「静默漂移」变「硬砖」而无修复路径。本决策以 agent.yaml 为唯一可写真相 + config_hash 漂移检测 + repair 重建路径，从根因消解双写，而非加校验。经核实四处 `updateAgent` 调用均不动 model、restore 用 `registry.add` 非 `updateAgent`，故 model 守卫零破坏。
 
+## D-011：OP1 Stage A authority_order 运行时强制 + 派生 stance 注入
+
+- 状态：Accepted
+- 日期：2026-08-04
+- 决定：`agent.yaml.memory` 增 `enforced: boolean`（optional，向后兼容旧 agent.yaml 视为未声明）。`enforced:true` 时 `FactoryApplication.prepareRuntime` 在 spawn 前经 `validateMemoryConfig` 强制校验 `authority_order` 不变量--非空、`'agent'` 必须在场且居首（R26「新层不得排在 agent 之前」）、无重复层；违则 `VALIDATION_ERROR` 硬失败，不让误配 agent 跑起来。`enforced` 缺失（旧）或 `false` 不硬失败（doctor warn），保留降级逃生口。权威顺序 stance 从 `authority_order` 派生为 markdown 段，写入 CLAUDE.md / AGENTS.md（CLI 读取的系统提示文件），替代 ENTRY.md.tmpl 的硬编码散文--改 agent.yaml 即改注入立场。doctor 增 `memory-enforcement` 检查（4 态：undefined warn / false warn / true+无效 fail / true+有效 pass）。新建员工默认 `enforced:true`。
+- 边界（本批仅 OP1 Stage A）：不实现 Stage B（knowledge 索引 + recall）/ Stage C（transcript 持久化）/ Stage D（ExperienceExtractor）/ Stage E（archival 后端）--数据可达性门控，逐 Stage 立项；不接 `resolveConflict` 热路径（无 KnowledgeIndex 调用方）；不做 CLAUDE.md/AGENTS.md 内容漂移检测（脆弱，仅 config 级一致性，stance 重建留待未来 repair 扩展）；`schema_version` 不 bump（additive optional 字段）；不动隔离层 / CC Switch / 备份回收。
+- documentFile 偏离裁定：框架提及「documentFile 路径强制校验」，经核实 documentFile 已强制身份文档路径不变量（assertInside + realpath + 拒符号链接），即身份文档层（authority 'agent'）的写入约束已就位；在 documentFile 再叠 memory 校验会令误配 agent 无法修复自身身份文档（损害可恢复性）。故 Stage A 的 memory 强制只在 prepareRuntime（pre-run 硬门），documentFile 维持既有路径校验。
+- 原因：红队 W1 指出 `authority_order` 硬编码（create-agent.ts）但无任何代码运行时强制，`knowledge/` 5 子目录为空骨架--认知记忆层「声明型、不强制、随 schema 演进被误删」（maintainability-review §2.5）。设计原则「先让既有声明型字段成为运行时强制项，再谈新增检索层」（A1）：本决策先把 authority_order 从声明升级为运行时强制 + 派生注入，避免新增检索层（Stage B）重蹈「声明不强制」覆辙。enforced 三态保证向后兼容（旧 agent.yaml 不硬砖）+ 可降级（false 逃生口）。
+
 状态使用 Accepted、Superseded、Proposed。日期来自已验证的实现或提交；无法证明的动机不写成事实。
 
 ## D-001 - 引入多 Agent 协作骨架

@@ -49,6 +49,25 @@ describe('agent schemas', () => {
     ).toThrow();
     expect(agentConfigSchema.parse(validAgent).runtime.provider).toBe('claude');
   });
+
+  it('treats memory.enforced as optional for backward compat (OP1 Stage A)', () => {
+    // 旧 agent.yaml（无 enforced）解析为 undefined。
+    expect(agentConfigSchema.parse(validAgent).memory.enforced).toBeUndefined();
+    // 新 agent.yaml 显式 enforced: true 解析为 true。
+    expect(
+      agentConfigSchema.parse({
+        ...validAgent,
+        memory: { ...validAgent.memory, enforced: true },
+      }).memory.enforced,
+    ).toBe(true);
+    // enforced: false 亦合法（显式降级逃生口）。
+    expect(
+      agentConfigSchema.parse({
+        ...validAgent,
+        memory: { ...validAgent.memory, enforced: false },
+      }).memory.enforced,
+    ).toBe(false);
+  });
 });
 
 describe('preset and job schemas', () => {

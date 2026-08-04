@@ -178,6 +178,8 @@ export class CreateAgentService {
         native_memory: true,
         portable_memory: true,
         authority_order: ['agent', 'knowledge', 'decisions', 'skills', 'native_memory', 'session'],
+        // OP1 Stage A：新建员工默认启用运行时强制（prepareRuntime 校验 authority_order 不变量）。
+        enforced: true,
       },
       feishu:
         input.feishu === 'dedicated'

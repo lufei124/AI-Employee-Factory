@@ -163,4 +163,59 @@ describe('DoctorService', () => {
       else process.env.HOME = originalHome;
     }
   });
+
+  it('reports memory-enforcement states (OP1 Stage A)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-doctor-mem-'));
+    roots.push(root);
+    const paths = resolveFactoryPaths({
+      HOME: root,
+      AI_EMPLOYEES_HOME: path.join(root, 'private'),
+      AI_EMPLOYEES_WORKSPACE_ROOT: path.join(root, 'agents'),
+    });
+    await initializeFactory(paths);
+    const registry = new RegistryStore(paths.registryFile);
+    await new CreateAgentService(paths, registry).create({
+      id: 'user-operations',
+      name: '用户运营专员',
+      runtime: 'claude',
+      preset: 'user-operations',
+      feishu: 'dedicated',
+    });
+    const agent = (await registry.read()).agents[0];
+    if (!agent) throw new Error('missing agent');
+    const agentYaml = path.join(agent.workspace.path, 'agent.yaml');
+    const originalHome = process.env.HOME;
+    process.env.HOME = root;
+    try {
+      // 新建 agent：enforced:true + 合法 6 层 -> pass。
+      let report = await new DoctorService(paths, registry).run('user-operations');
+      expect(report.checks.find((c) => c.id === 'memory-enforcement')?.status).toBe('pass');
+
+      // 旧 agent.yaml（移除 enforced）-> warn（未声明）。
+      const docOld = YAML.parse(await fs.readFile(agentYaml, 'utf8')) as {
+        memory: { enforced?: boolean; authority_order: string[] };
+      };
+      delete docOld.memory.enforced;
+      await fs.writeFile(agentYaml, YAML.stringify(docOld));
+      report = await new DoctorService(paths, registry).run('user-operations');
+      const warnCheck = report.checks.find((c) => c.id === 'memory-enforcement');
+      expect(warnCheck?.status).toBe('warn');
+      expect(warnCheck?.detail).toContain('未声明');
+
+      // enforced:true + 非法序（缺 agent）-> fail。
+      const docBad = YAML.parse(await fs.readFile(agentYaml, 'utf8')) as {
+        memory: { enforced?: boolean; authority_order: string[] };
+      };
+      docBad.memory.enforced = true;
+      docBad.memory.authority_order = ['knowledge'];
+      await fs.writeFile(agentYaml, YAML.stringify(docBad));
+      report = await new DoctorService(paths, registry).run('user-operations');
+      const failCheck = report.checks.find((c) => c.id === 'memory-enforcement');
+      expect(failCheck?.status).toBe('fail');
+      expect(failCheck?.detail).toContain('authority_order');
+    } finally {
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+    }
+  });
 });

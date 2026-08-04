@@ -1,9 +1,9 @@
 # 项目状态
 
-最后更新：2026-08-04 16:38 +0800
+最后更新：2026-08-04 17:25 +0800
 更新者：claude-20260803-01
-当前版本/分支：master（工作区含 TASK-016 未提交改动）
-当前阶段：TASK-016 OP3-A 单一可写源中期已实现并验证通过，待 commit（不 push）
+当前版本/分支：master（工作区含 TASK-017 未提交改动）
+当前阶段：TASK-017 OP1 Stage A 认知记忆层运行时强制已实现并验证通过，待 commit（不 push）
 
 ## 已完成
 
@@ -30,6 +30,7 @@
 - 完成 TASK-014 OP4-D prune 分类：src/core/prune.ts PruneService 4 scope 分类（logs 按 slug 目录 mtime 判龄删整个 run 目录、registry-backups 按 mtime 倒序保留 keepCount 份、archives 按 mtime 判龄删 .tar.gz/.aief.enc/.enc、operations 按 started_at 轮转读全量+原子重写保 0o600）+ keep-days/keep-count 保留上限（默认 logs/archives/operations 30/90/30 天、registry-backups 20 份）+ safeRemove 包 assertInsideReal 二次校验（symlink 逃逸项 isDirectory()=false 枚举阶段跳过，越界项跳过不中止）+ 无 scope 报 VALIDATION_ERROR；factory-application.ts prune 薄编排；cli-program.ts `agentctl prune` 单命令（scope flags + --dry-run/--yes/--keep-days/--keep-count，非 dry-run 先 YAML 预览再 confirmDanger 再实跑+绿色汇总）；doctor.ts disk-usage 检查（warn：backupsDir>500MB 或 run 日志目录>500，remediation 指向 prune --dry-run）+ backupsDirSize/countRunLogs 助手。新增 tests/prune.test.ts(+8)、doctor +1、cli-structure +1；共 124 单测 + e2e 全过。
 - 完成 TASK-015 OP4-B trace 关联：src/core/observability.ts ObservabilitySink/Span/NoopObservabilitySink/defaultObservabilitySink 抽象（no-op 填补 O-6）；process-runner.ts LoggedRunOptions 增 operationId/traceId、LoggedRunResult 增 startedAt/finishedAt、metadata.json 传参时富化 operation_id/trace_id/span_id（未传省略向后兼容，trace 字段经 LoggedRunOptions 而非 ExecutionContext 避免触动 adapter）；operation-store.ts OperationSummary/OperationRecordInput 增 trace_id；operation-manager.ts 构造注入 sink(默认 noop)、start 生成 traceId 入 dto、execute 以 spanStart('operation')+finally span.end() 包裹且 task context 携带 operationId/traceId、persist 写 trace_id；server.ts run/job 透传 operationId/traceId；cli-program.ts run/job 经 recordOperation 包装写 operations.jsonl（CLI 路径闭环无 web 双写）。新增 tests/observability.test.ts(+2)、process-runner +3、operation-store +1、operation-manager +2(含 RecordingSink 注入断言)；共 132 单测 + e2e 全过。
 - 完成 TASK-016 OP3-A 单一可写源中期：agent.yaml runtime 块为唯一可写真相，Registry runtime 块降级为派生缓存 + config_hash（runtime 块 sha256，非整文件以避免 archive lifecycle 块等合法改写误报漂移）。src/schemas/registry-schema.ts 增 optional config_hash（向后兼容）；src/core/agents.ts computeConfigHash（loadPortableConfig 不动 I-5）；src/core/registry.ts updateAgent 增 model 直改 CONFLICT 守卫（grep 确认 4 调用方均只动 status/archived/bridge.authorization/updated_at，零破坏）+ resyncRuntime 受信重建路径（registry.lock 下刷新 runtime 块+hash，允许 model 从 agent.yaml 派生但 provider/locked 不变量仍 CONFLICT 强制）；create-agent/backup 存 hash；factory-application.ts repairAgent（复用 getAgent 已 loadPortableConfig 校验）；cli-program.ts `agentctl repair` 命令；doctor.ts 复用 loadPortableConfig+config-drift 检查（缺/不等 warn 指向 repair，等则 pass）。docs/DECISIONS.md D-010 ADR。新增 tests/repair.test.ts(+3)、registry +4、agents +2、backup-restore +1、doctor +1、cli-structure +1；共 143 单测 + e2e 全过。
+- 完成 TASK-017 OP1 Stage A 认知记忆层运行时强制：authority_order 从「声明不强制」升级为「运行时强制 + 派生 stance 注入」。src/schemas/agent-schema.ts 增 AUTHORITY_LAYERS 常量+AuthorityLayer 类型，authority_order 改 z.array(z.enum(AUTHORITY_LAYERS)) 编译期穷尽，memory 块增 optional enforced（向后兼容，零 schema_version bump，与 config_hash 零交互）；src/core/authority.ts validateMemoryConfig（空/缺 agent/agent 非首/重复 各报 issue）+renderAuthorityStance（从 authority_order 派生 agent 居首+约束句，纯函数零 I/O）；src/core/templates.ts renderRuntimeFiles 注入派生 stance 至 CLAUDE.md/AGENTS.md；src/core/create-agent.ts 新建 agent memory.enforced=true；src/application/factory-application.ts prepareRuntime(registry,agent)+assertMemoryEnforced（enforced:true+无效抛 VALIDATION_ERROR 阻断 spawn，false/undefined 跳过）+7 调用点；src/core/doctor.ts memory-enforcement 4 态（undefined/false=warn、true+有效=pass、true+无效=fail）。documentFile 偏离裁定（D-011）：identity-doc 路径不变量校验即 agent 层写约束，不叠加 memory 校验以免阻断误配 agent 自修复。新增 tests/authority.test.ts(+8)、memory-enforcement.test.ts(+2)、schemas +1、create-agent +1、doctor +1；共 156 单测 + e2e 全过。
 
 ## 进行中
 

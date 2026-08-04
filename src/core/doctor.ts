@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
 import { computeConfigHash, getRegisteredAgent, loadPortableConfig } from './agents.js';
+import { validateMemoryConfig } from './authority.js';
 import { BridgeAdapter } from './bridge.js';
 import type { FactoryPaths } from './paths.js';
 import type { RegistryStore } from './registry.js';
@@ -247,6 +248,46 @@ export class DoctorService {
             }
           : { id: 'config-drift', label: '配置漂移', status: 'pass', detail: '一致' },
       );
+    }
+    // OP1 Stage A：memory.enforced 运行时强制一致性（W1 收敛）。4 态：undefined(旧)/false warn、true+无效 fail、true+有效 pass。
+    if (portableConfig) {
+      const enforced = portableConfig.memory.enforced;
+      if (enforced === undefined) {
+        add({
+          id: 'memory-enforcement',
+          label: '记忆强制',
+          status: 'warn',
+          detail: '未声明 memory.enforced（旧 agent.yaml）',
+          remediation: '在 agent.yaml 的 memory 块设 enforced: true 启用运行时强制。',
+        });
+      } else if (enforced === false) {
+        add({
+          id: 'memory-enforcement',
+          label: '记忆强制',
+          status: 'warn',
+          detail: 'memory.enforced 已显式关闭',
+          remediation: 'authority_order 不在运行时强制；如需启用请设 enforced: true。',
+        });
+      } else {
+        const { ok, issues } = validateMemoryConfig(portableConfig.memory);
+        add(
+          ok
+            ? {
+                id: 'memory-enforcement',
+                label: '记忆强制',
+                status: 'pass',
+                detail: '已启用运行时强制',
+              }
+            : {
+                id: 'memory-enforcement',
+                label: '记忆强制',
+                status: 'fail',
+                detail: `authority_order 无效：${issues.join('；')}`,
+                remediation:
+                  '修正 agent.yaml 的 memory.authority_order，或设 enforced: false 降级。',
+              },
+        );
+      }
     }
     add({
       id: 'runtime-lock',

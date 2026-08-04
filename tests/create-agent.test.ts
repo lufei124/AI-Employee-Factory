@@ -69,6 +69,35 @@ describe('CreateAgentService', () => {
     expect((await registry.read()).agents[0]?.runtime_home.path).not.toContain('/.claude');
   });
 
+  it('writes memory.enforced=true and derived authority stance into the runtime prompt (OP1 Stage A)', async () => {
+    const { service } = await setup();
+    const claude = await service.create({
+      id: 'claude-stance',
+      name: 'Claude Stance',
+      runtime: 'claude',
+      preset: 'user-operations',
+      feishu: 'dedicated',
+    });
+    const claudeConfig = agentConfigSchema.parse(
+      YAML.parse(await fs.readFile(path.join(claude.workspace, 'agent.yaml'), 'utf8')),
+    );
+    expect(claudeConfig.memory.enforced).toBe(true);
+    const claudePrompt = await fs.readFile(path.join(claude.workspace, 'CLAUDE.md'), 'utf8');
+    expect(claudePrompt).toContain('## 记忆权威顺序');
+    expect(claudePrompt).toContain('1. agent（岗位正式文件');
+
+    const codex = await service.create({
+      id: 'codex-stance',
+      name: 'Codex Stance',
+      runtime: 'codex',
+      preset: 'user-operations',
+      feishu: 'disabled',
+    });
+    const codexPrompt = await fs.readFile(path.join(codex.workspace, 'AGENTS.md'), 'utf8');
+    expect(codexPrompt).toContain('## 记忆权威顺序');
+    expect(codexPrompt).toContain('1. agent（岗位正式文件');
+  });
+
   it('does not leave a staging workspace after duplicate creation', async () => {
     const { paths, service } = await setup();
     const input = {

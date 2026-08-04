@@ -21,6 +21,17 @@ export const portableRelativePathSchema = z
 
 export const runtimeProviderSchema = z.enum(['claude', 'codex']);
 
+// OP1 Stage A：authority_order 的层枚举。schema 为 source of truth，authority.ts 镜像复用。
+export const AUTHORITY_LAYERS = [
+  'agent',
+  'knowledge',
+  'decisions',
+  'skills',
+  'native_memory',
+  'session',
+] as const;
+export type AuthorityLayer = (typeof AUTHORITY_LAYERS)[number];
+
 // OP3-B：当前 agent.yaml schema 版本。版本化只读 reader 据此显式分派；v1=identity。
 export const CURRENT_AGENT_CONFIG_SCHEMA_VERSION = 1;
 
@@ -45,9 +56,10 @@ export const agentConfigSchema = z.object({
     isolation: z.literal('strict'),
     native_memory: z.boolean(),
     portable_memory: z.boolean(),
-    authority_order: z.array(
-      z.enum(['agent', 'knowledge', 'decisions', 'skills', 'native_memory', 'session']),
-    ),
+    authority_order: z.array(z.enum(AUTHORITY_LAYERS)),
+    // OP1 Stage A：true 时 prepareRuntime 运行前强制校验 authority_order 不变量（W1 收敛）。
+    // optional 向后兼容旧 agent.yaml（缺失视为未启用，doctor warn 引导补齐）；false 为显式降级逃生口。
+    enforced: z.boolean().optional(),
   }),
   feishu: z.object({
     enabled: z.boolean(),

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { execa } from 'execa';
 import YAML from 'yaml';
 import { computeConfigHash, getRegisteredAgent, loadPortableConfig } from '../core/agents.js';
+import { validateMemoryConfig } from '../core/authority.js';
 import { atomicWriteFile } from '../core/atomic.js';
 import { BackupService } from '../core/backup.js';
 import { BridgeAdapter } from '../core/bridge.js';
@@ -253,8 +254,8 @@ export class FactoryApplication {
     if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0 || timeoutSeconds > 86_400) {
       throw new AgentCtlError('VALIDATION_ERROR', 'timeout 必须是 1 到 86400 秒。');
     }
-    const { registry } = await this.getAgent(id);
-    await this.prepareRuntime(registry);
+    const { registry, agent } = await this.getAgent(id);
+    await this.prepareRuntime(registry, agent);
     return new ProcessRunner(this.paths.logsDir).runLogged(
       id,
       getRuntimeAdapter(registry).run(registry, task, timeoutSeconds * 1000),
@@ -263,17 +264,17 @@ export class FactoryApplication {
   }
 
   async chat(id: string): Promise<number> {
-    const { registry } = await this.getAgent(id);
-    await this.prepareRuntime(registry);
+    const { registry, agent } = await this.getAgent(id);
+    await this.prepareRuntime(registry, agent);
     return new ProcessRunner(this.paths.logsDir).runInteractive(
       getRuntimeAdapter(registry).chat(registry),
     );
   }
 
   async runtimeAuth(id: string, operation: 'login' | 'status'): Promise<number> {
-    const { registry } = await this.getAgent(id);
+    const { registry, agent } = await this.getAgent(id);
     if (registry.runtime.provider === 'claude') {
-      await this.prepareRuntime(registry);
+      await this.prepareRuntime(registry, agent);
       return 0;
     }
     const adapter = getRuntimeAdapter(registry);
@@ -283,13 +284,13 @@ export class FactoryApplication {
   }
 
   async syncRuntime(id: string) {
-    const { registry } = await this.getAgent(id);
+    const { registry, agent } = await this.getAgent(id);
     if (registry.runtime.provider !== 'claude') {
       throw new AgentCtlError('VALIDATION_ERROR', `Agent ${id} 使用 Codex，无需同步 CC Switch。`, {
         remediation: `请运行 agentctl runtime login ${id}。`,
       });
     }
-    return this.prepareRuntime(registry);
+    return this.prepareRuntime(registry, agent);
   }
 
   async bridgeAuthorize(
@@ -370,8 +371,8 @@ export class FactoryApplication {
   }
 
   async runBridgeService(id: string): Promise<number> {
-    const { registry } = await this.getAgent(id);
-    await this.prepareRuntime(registry);
+    const { registry, agent } = await this.getAgent(id);
+    await this.prepareRuntime(registry, agent);
     const adapter = new BridgeAdapter();
     await this.secureBridgeProfile(registry);
     return new ProcessRunner(this.paths.logsDir).runInteractive(adapter.run(registry));
@@ -382,7 +383,7 @@ export class FactoryApplication {
   }
 
   async lifecycleAction(id: string, action: 'start' | 'stop' | 'restart' | 'status') {
-    const { registry } = await this.getAgent(id);
+    const { registry, agent } = await this.getAgent(id);
     if (registry.archived) throw new AgentCtlError('CONFLICT', `Agent ${id} 已归档。`);
     if (!registry.bridge.enabled)
       throw new AgentCtlError('VALIDATION_ERROR', `Agent ${id} 未启用 Bridge。`);
@@ -392,7 +393,7 @@ export class FactoryApplication {
       });
     }
     if (action === 'start' || action === 'restart') {
-      await this.prepareRuntime(registry);
+      await this.prepareRuntime(registry, agent);
       await this.secureBridgeProfile(registry);
     }
     const service = bridgeLaunchdService(registry, this.paths);
@@ -531,13 +532,27 @@ export class FactoryApplication {
   }
 
   async runJob(id: string, jobId: string, options: LoggedRunOptions = {}) {
-    const { registry } = await this.getAgent(id);
+    const { registry, agent } = await this.getAgent(id);
     const job = await new JobStore(registry.workspace.path).get(jobId);
-    if (job.execution.type === 'agent') await this.prepareRuntime(registry);
+    if (job.execution.type === 'agent') await this.prepareRuntime(registry, agent);
     return new JobRunner(this.paths).run(registry, job, options);
   }
 
-  private async prepareRuntime(registry: RegistryAgent) {
+  // OP1 Stage A：运行前强制校验 memory/authority_order 不变量（W1 收敛）。
+  // enforced:true 时硬失败（VALIDATION_ERROR），不让误配 agent 跑起来；undefined(旧)/false 不硬失败，doctor warn。
+  private assertMemoryEnforced(agent: AgentConfig): void {
+    if (agent.memory.enforced !== true) return;
+    const { ok, issues } = validateMemoryConfig(agent.memory);
+    if (!ok) {
+      throw new AgentCtlError('VALIDATION_ERROR', `Agent memory 配置无效：${issues.join('；')}`, {
+        remediation:
+          '修正 agent.yaml 的 memory.authority_order 后重试，或设 memory.enforced: false 暂时降级（doctor 将告警）。',
+      });
+    }
+  }
+
+  private async prepareRuntime(registry: RegistryAgent, agent: AgentConfig) {
+    this.assertMemoryEnforced(agent);
     if (registry.runtime.provider !== 'claude') return undefined;
     const config = await readConfig(this.paths);
     const summary = await syncCcSwitchClaudeProvider(

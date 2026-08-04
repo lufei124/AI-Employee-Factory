@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 import { AgentCtlError } from './errors.js';
 import { digestSkillDirectory } from './skills.js';
+import { renderAuthorityStance } from './authority.js';
 import type { AgentConfig, RuntimeProvider } from '../schemas/agent-schema.js';
 import { presetSchema, type Preset } from '../schemas/preset-schema.js';
 
@@ -117,7 +118,7 @@ export async function renderAgentWorkspace(input: {
   );
 
   await renderSkills(workspace, preset.skills, config.runtime.provider);
-  await renderRuntimeFiles(workspace, config.runtime.provider, values);
+  await renderRuntimeFiles(workspace, config, values);
 }
 
 async function renderSkills(
@@ -152,13 +153,17 @@ async function renderSkills(
 
 async function renderRuntimeFiles(
   workspace: string,
-  provider: RuntimeProvider,
+  config: AgentConfig,
   values: Record<string, string>,
 ): Promise<void> {
+  const provider = config.runtime.provider;
   const entry = await fs.readFile(
     path.join(packageRoot(), `templates/${provider}-agent/ENTRY.md.tmpl`),
     'utf8',
   );
+  // OP1 Stage A：权威顺序 stance 从 agent.yaml.memory.authority_order 派生，追加到 CLI 读取的系统提示文件，
+  // 替代硬编码散文--改 agent.yaml 即改注入立场（W1 收敛）。
+  const content = `${render(entry, values)}\n\n${renderAuthorityStance(config.memory)}\n`;
   if (provider === 'claude') {
     await fs.ensureDir(path.join(workspace, '.claude/rules'));
     await fs.ensureDir(path.join(workspace, '.claude/agents'));
@@ -167,13 +172,13 @@ async function renderRuntimeFiles(
       { permissions: { defaultMode: 'default' } },
       { spaces: 2 },
     );
-    await fs.writeFile(path.join(workspace, 'CLAUDE.md'), render(entry, values));
+    await fs.writeFile(path.join(workspace, 'CLAUDE.md'), content);
   } else {
     await fs.ensureDir(path.join(workspace, '.codex'));
     await fs.writeFile(
       path.join(workspace, '.codex/config.toml'),
       'approval_policy = "on-request"\nsandbox_mode = "workspace-write"\n',
     );
-    await fs.writeFile(path.join(workspace, 'AGENTS.md'), render(entry, values));
+    await fs.writeFile(path.join(workspace, 'AGENTS.md'), content);
   }
 }
