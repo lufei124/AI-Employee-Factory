@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { useNavigate } from 'react-router-dom';
 import YAML from 'yaml';
 import {
   Activity,
@@ -14,6 +15,7 @@ import {
   RefreshCw,
   Save,
   Square,
+  Store,
   Terminal,
   Trash2,
   Upload,
@@ -24,6 +26,8 @@ import {
   type AgentDocument,
   type JobConfig,
   type OperationDto,
+  type SkillMetadata,
+  type SkillScope,
 } from '../api.js';
 import { CopyButton } from '../components/CopyButton.js';
 
@@ -645,11 +649,11 @@ function JobsTab({ agentId }: { agentId: string }) {
 }
 
 function SkillsTab({ agentId }: { agentId: string }) {
-  const [skills, setSkills] = useState<Array<{ name: string; version: string; digest: string }>>(
-    [],
-  );
+  const [skills, setSkills] = useState<SkillMetadata[]>([]);
+  const [scope, setScope] = useState<SkillScope>('project');
   const [error, setError] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
   const load = async () => setSkills(await api.listSkills(agentId));
   useEffect(() => {
     inputRef.current?.setAttribute('webkitdirectory', '');
@@ -658,56 +662,100 @@ function SkillsTab({ agentId }: { agentId: string }) {
   const upload = async (files: FileList | null) => {
     if (!files?.length) return;
     try {
-      await api.uploadSkill(agentId, [...files]);
+      await api.uploadSkill(agentId, [...files], scope);
       await load();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   };
+  const remove = async (skill: SkillMetadata) => {
+    const label = skill.scope === 'project' ? '项目级' : '用户级';
+    if (!window.confirm(`归档 Skill ${skill.name}（${label}）？`)) return;
+    try {
+      await api.removeSkill(agentId, skill.name, skill.scope);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+  const groups: Array<{ scope: SkillScope; label: string; hint: string }> = [
+    { scope: 'project', label: '项目级', hint: '随工作区版本管理，进入默认备份' },
+    { scope: 'user', label: '用户级', hint: '员工运行时身份，仅随 Runtime 备份' },
+  ];
   return (
     <section className="panel">
       <div className="panel-heading">
         <div>
           <h2>Skills</h2>
-          <span>员工唯一正式 Skill 源</span>
+          <span>按项目级 / 用户级分类展示</span>
         </div>
-        <label className="button primary">
-          <Upload size={15} />
-          导入目录
-          <input
-            ref={inputRef}
-            type="file"
-            multiple
-            hidden
-            onChange={(event) => void upload(event.target.files)}
-          />
-        </label>
+        <div className="button-row">
+          <button
+            className="button secondary"
+            onClick={() => navigate(`/skill-store?agent=${encodeURIComponent(agentId)}`)}
+          >
+            <Store size={15} />
+            从商店安装
+          </button>
+          <label className="button primary">
+            <Upload size={15} />
+            导入目录
+            <input
+              ref={inputRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(event) => void upload(event.target.files)}
+            />
+          </label>
+        </div>
       </div>
-      {error && <div className="notice danger">{error}</div>}
-      <div className="data-list">
-        {skills.map((skill) => (
-          <article key={skill.name}>
-            <div>
-              <strong>{skill.name}</strong>
-              <span>
-                v{skill.version} · {skill.digest.slice(0, 12)}
-              </span>
-            </div>
-            <button
-              className="button ghost danger-text"
-              onClick={async () => {
-                if (window.confirm(`归档 Skill ${skill.name}？`)) {
-                  await api.removeSkill(agentId, skill.name);
-                  await load();
-                }
-              }}
-            >
-              <Archive size={14} />
-              归档
-            </button>
-          </article>
+      <div className="scope-picker">
+        {groups.map(({ scope: s, label }) => (
+          <button key={s} className={scope === s ? 'active' : ''} onClick={() => setScope(s)}>
+            {label}
+          </button>
         ))}
       </div>
+      {error && <div className="notice danger">{error}</div>}
+      {skills.length === 0 ? (
+        <div className="empty-state">
+          <Store size={26} />
+          <h3>暂无 Skill</h3>
+          <p>从商店安装，或按上方选中的作用域导入本地 Skill 目录。</p>
+        </div>
+      ) : (
+        groups.map(({ scope: s, label, hint }) => {
+          const items = skills.filter((skill) => skill.scope === s);
+          if (!items.length) return null;
+          return (
+            <div className="scope-group" key={s}>
+              <div className="scope-group-head">
+                <strong>{label}</strong>
+                <span>{hint}</span>
+                <em>{items.length}</em>
+              </div>
+              <div className="data-list">
+                {items.map((skill) => (
+                  <article key={skill.name}>
+                    <div>
+                      <strong>{skill.name}</strong>
+                      <span>
+                        v{skill.version} · {skill.digest.slice(0, 12)}
+                      </span>
+                    </div>
+                    <span className={`status-badge ${s}`}>{label}</span>
+                    <button className="button ghost danger-text" onClick={() => void remove(skill)}>
+                      <Archive size={14} />
+                      归档
+                    </button>
+                  </article>
+                ))}
+              </div>
+            </div>
+          );
+        })
+      )}
     </section>
   );
 }

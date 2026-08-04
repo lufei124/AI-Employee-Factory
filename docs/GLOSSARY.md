@@ -13,6 +13,8 @@
 - **Runtime Home**：某 Agent 专属的 Claude/Codex 原生配置、会话和记忆目录。
 - **Bridge Home**：某 Agent 专属的 lark-channel-bridge profile 与加密凭据目录。
 - **Portable memory**：Agent 仓库中可经 Git/备份迁移的岗位、知识、决策、Skill 和任务。
+- **Skill 作用域**：Skill 的归属级别。**项目级（project）** 存于 `workspace/skills/` 并投影到 `workspace/.claude/skills` / `workspace/.codex/skills`，随工作区版本管理和默认备份；**用户级（user）** 原位存于 `runtimeHome/skills/`（运行器原生用户级发现目录），属于员工运行时身份，仅随包含 Runtime 的备份打包。
+- **Skill 商店**：把可配置的远端 GitHub 仓库源（`config.yaml` 的 `skill_store.repositories`）浅克隆到 `~/.ai-employees/skill-store/cache/<name>/`，用 `agent-skills.yaml/json` 清单或扫描 `SKILL.md` 发现技能，安装复用 `SkillService.install`。仅接受 `https://github.com/` 公开仓库。
 - **ExecutionContext**：执行前生成的 command、argv、cwd、受控 env 和 timeout 合同。
 - **FactoryApplication**：CLI 与 Web API 共用的应用用例编排层。
 - **Web Console**：由 `agentctl web` 临时启动、仅监听 `127.0.0.1` 的 React 本地管理页面。

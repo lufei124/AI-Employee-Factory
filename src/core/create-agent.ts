@@ -239,10 +239,11 @@ export class CreateAgentService {
 
   private async projectCodexSkills(
     workspace: string,
-    runtimeHome: string,
+    _runtimeHome: string,
     skills: string[],
   ): Promise<void> {
-    const projection = path.join(runtimeHome, 'skills');
+    // 项目级：preset 声明的 Skill 随项目模板，投影到 workspace/.codex/skills（项目发现目录）。
+    const projection = path.join(workspace, '.codex', 'skills');
     await fs.ensureDir(projection);
     for (const skill of skills)
       await fs.symlink(path.join(workspace, 'skills', skill), path.join(projection, skill));

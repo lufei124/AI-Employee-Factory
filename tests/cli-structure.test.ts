@@ -26,6 +26,7 @@ describe('agentctl command surface', () => {
         'bridge',
         'job',
         'skill',
+        'skill-store',
         'web',
         'trash',
         'operations',
@@ -54,6 +55,16 @@ describe('agentctl command surface', () => {
       ]),
     );
     expect(names('skill')).toEqual(expect.arrayContaining(['list', 'install', 'remove']));
+    expect(names('skill-store')).toEqual(
+      expect.arrayContaining([
+        'list-repos',
+        'add-repo',
+        'remove-repo',
+        'refresh',
+        'list-skills',
+        'install',
+      ]),
+    );
     expect(names('trash')).toEqual(expect.arrayContaining(['move', 'list', 'restore', 'purge']));
     expect(names('operations')).toEqual(expect.arrayContaining(['query']));
   });

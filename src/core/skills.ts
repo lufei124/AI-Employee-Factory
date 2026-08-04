@@ -5,12 +5,15 @@ import YAML from 'yaml';
 import { AgentCtlError } from './errors.js';
 import { agentIdSchema, type RuntimeProvider } from '../schemas/agent-schema.js';
 
+export type SkillScope = 'project' | 'user';
+
 export interface SkillMetadata {
   name: string;
   version: string;
   source: string;
   installed_at: string;
   digest: string;
+  scope: SkillScope;
 }
 
 export async function digestSkillDirectory(root: string): Promise<string> {
@@ -31,6 +34,14 @@ export async function digestSkillDirectory(root: string): Promise<string> {
   return hash.digest('hex');
 }
 
+/**
+ * Skill 作用域（D-003 演进，见 docs/DECISIONS.md）：
+ * - project（项目级）：存于 `workspace/skills/<name>/`，投影到项目发现目录
+ *   `workspace/.claude/skills/<name>`（Claude）/ `workspace/.codex/skills/<name>`（Codex）。
+ *   随项目 git、进入默认备份。
+ * - user（用户级）：原位存于 `runtimeHome/skills/<name>/`（= CLAUDE_CONFIG_DIR/CODEX_HOME 的 skills，
+ *   即运行器原生用户级发现目录）。属于员工运行时身份，默认不进备份（仅 includeRuntime 时打包）。
+ */
 export class SkillService {
   constructor(
     readonly workspace: string,
@@ -39,24 +50,12 @@ export class SkillService {
   ) {}
 
   async list(): Promise<SkillMetadata[]> {
-    const root = path.join(this.workspace, 'skills');
-    if (!(await fs.pathExists(root))) return [];
-    const names = (await fs.readdir(root)).filter((name) => name !== '.archive').sort();
-    const result: SkillMetadata[] = [];
-    for (const name of names) {
-      const file = path.join(root, name, '.agentctl.yaml');
-      if (await fs.pathExists(file)) {
-        const metadata = YAML.parse(await fs.readFile(file, 'utf8')) as SkillMetadata;
-        result.push({
-          ...metadata,
-          digest: metadata.digest || (await digestSkillDirectory(path.join(root, name))),
-        });
-      }
-    }
-    return result;
+    const project = await this.listRoot(this.projectRoot(), 'project');
+    const user = this.runtimeHome ? await this.listRoot(this.userRoot(), 'user') : [];
+    return [...project, ...user].sort((left, right) => left.name.localeCompare(right.name));
   }
 
-  async install(source: string): Promise<SkillMetadata> {
+  async install(source: string, scope: SkillScope = 'project'): Promise<SkillMetadata> {
     const resolved = path.resolve(source);
     // R6：Skill 源根不得是软链接（rejectSymlinks 仅扫树内，不防源根本身为软链接逃逸）。
     if ((await fs.pathExists(resolved)) && (await fs.lstat(resolved)).isSymbolicLink()) {
@@ -73,9 +72,10 @@ export class SkillService {
       /^---[\s\S]*?^name:\s*([^\s]+)[\s\S]*?^---/m.exec(skillText)?.[1],
     );
     const version = /^version:\s*([^\s]+)/m.exec(skillText)?.[1] ?? '0.0.0-local';
-    const target = path.join(this.workspace, 'skills', name);
+    const root = this.storeRoot(scope);
+    const target = path.join(root, name);
     if (await fs.pathExists(target)) throw new AgentCtlError('CONFLICT', `Skill 已安装：${name}`);
-    const stage = path.join(this.workspace, 'skills', `.staging-${name}-${randomUUID()}`);
+    const stage = path.join(root, `.staging-${name}-${randomUUID()}`);
     await fs.ensureDir(path.dirname(stage));
     try {
       await fs.copy(resolved, stage, { dereference: false, errorOnExist: true });
@@ -85,10 +85,11 @@ export class SkillService {
         source: resolved,
         installed_at: new Date().toISOString(),
         digest: await digestSkillDirectory(stage),
+        scope,
       };
       await fs.writeFile(path.join(stage, '.agentctl.yaml'), YAML.stringify(metadata));
       await fs.rename(stage, target);
-      await this.project(name);
+      if (scope === 'project') await this.project(name);
       return metadata;
     } catch (error) {
       await fs.remove(stage);
@@ -96,29 +97,64 @@ export class SkillService {
     }
   }
 
-  async remove(name: string): Promise<void> {
+  async remove(name: string, scope: SkillScope = 'project'): Promise<void> {
     agentIdSchema.parse(name);
-    const target = path.join(this.workspace, 'skills', name);
+    const root = this.storeRoot(scope);
+    const target = path.join(root, name);
     if (!(await fs.pathExists(target)))
       throw new AgentCtlError('NOT_FOUND', `Skill 不存在：${name}`);
-    await fs.remove(this.projectionPath(name));
-    const archive = path.join(this.workspace, 'skills', '.archive');
+    if (scope === 'project') await fs.remove(this.projectionPath(name));
+    const archive = path.join(root, '.archive');
     await fs.ensureDir(archive);
     await fs.move(target, path.join(archive, `${name}-${Date.now()}`));
   }
 
+  // 项目级投影：store 根 `workspace/skills/<name>` 软链到项目发现目录。
   private async project(name: string): Promise<void> {
     const projection = this.projectionPath(name);
     await fs.ensureDir(path.dirname(projection));
-    if (this.provider === 'claude') await fs.symlink(path.join('../../skills', name), projection);
-    else await fs.symlink(path.join(this.workspace, 'skills', name), projection);
+    await fs.symlink(path.join('../../skills', name), projection);
+  }
+
+  private projectRoot(): string {
+    return path.join(this.workspace, 'skills');
+  }
+
+  private userRoot(): string {
+    if (!this.runtimeHome)
+      throw new AgentCtlError('VALIDATION_ERROR', '用户级 Skill 需要 Runtime Home。');
+    return path.join(this.runtimeHome, 'skills');
+  }
+
+  private storeRoot(scope: SkillScope): string {
+    return scope === 'user' ? this.userRoot() : this.projectRoot();
   }
 
   private projectionPath(name: string): string {
     if (this.provider === 'claude') return path.join(this.workspace, '.claude', 'skills', name);
-    if (!this.runtimeHome)
-      throw new AgentCtlError('VALIDATION_ERROR', 'Codex Skill 投影需要 Runtime Home。');
-    return path.join(this.runtimeHome, 'skills', name);
+    return path.join(this.workspace, '.codex', 'skills', name);
+  }
+
+  private async listRoot(root: string, scope: SkillScope): Promise<SkillMetadata[]> {
+    if (!(await fs.pathExists(root))) return [];
+    const names = (await fs.readdir(root)).filter((name) => name !== '.archive').sort();
+    const result: SkillMetadata[] = [];
+    for (const name of names) {
+      if (name.startsWith('.staging-')) continue;
+      const full = path.join(root, name);
+      // 用户级根仅统计真实目录；历史 Codex preset 投影（软链）不属于用户级 store。
+      if (scope === 'user' && (await fs.lstat(full)).isSymbolicLink()) continue;
+      const file = path.join(full, '.agentctl.yaml');
+      if (await fs.pathExists(file)) {
+        const metadata = YAML.parse(await fs.readFile(file, 'utf8')) as SkillMetadata;
+        result.push({
+          ...metadata,
+          scope: metadata.scope ?? scope,
+          digest: metadata.digest || (await digestSkillDirectory(full)),
+        });
+      }
+    }
+    return result;
   }
 
   private async rejectSymlinks(root: string): Promise<void> {

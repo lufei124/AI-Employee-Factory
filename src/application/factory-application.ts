@@ -17,7 +17,8 @@ import { JobRunner } from '../core/job-runner.js';
 import { assertInside, assertInsideReal, type FactoryPaths } from '../core/paths.js';
 import type { RegistryStore } from '../core/registry.js';
 import { JobStore } from '../core/scheduler.js';
-import { SkillService } from '../core/skills.js';
+import { SkillService, type SkillScope } from '../core/skills.js';
+import { SkillStoreService } from '../core/skill-store.js';
 import { OperationStore, type OperationSummary } from '../core/operation-store.js';
 import { PruneService, type PruneOptions, type PruneResult } from '../core/prune.js';
 import { TrashService, type TrashEntryDto, type TrashPreview } from '../core/trash.js';
@@ -579,22 +580,58 @@ export class FactoryApplication {
     await store.uninstall(jobId);
   }
 
-  async installSkill(id: string, source: string) {
+  async installSkill(id: string, source: string, scope: SkillScope = 'project') {
     const { registry } = await this.getAgent(id);
     return new SkillService(
       registry.workspace.path,
       registry.runtime.provider,
       registry.runtime_home.path,
-    ).install(source);
+    ).install(source, scope);
   }
 
-  async removeSkill(id: string, name: string): Promise<void> {
+  async removeSkill(id: string, name: string, scope: SkillScope = 'project'): Promise<void> {
     const { registry } = await this.getAgent(id);
     await new SkillService(
       registry.workspace.path,
       registry.runtime.provider,
       registry.runtime_home.path,
-    ).remove(name);
+    ).remove(name, scope);
+  }
+
+  // ---- Skill 商店（GitHub 仓库源）----
+  async listSkillStoreRepositories() {
+    return new SkillStoreService(this.paths).listRepositories();
+  }
+
+  async addSkillStoreRepository(input: { name: string; url: string; description?: string }) {
+    return new SkillStoreService(this.paths).addRepository(input);
+  }
+
+  async removeSkillStoreRepository(name: string): Promise<void> {
+    return new SkillStoreService(this.paths).removeRepository(name);
+  }
+
+  async refreshSkillStoreRepository(name: string) {
+    return new SkillStoreService(this.paths).refresh(name);
+  }
+
+  async listSkillStoreSkills(repoName: string) {
+    return new SkillStoreService(this.paths).listSkills(repoName);
+  }
+
+  async installSkillFromStore(
+    repoName: string,
+    skillPath: string,
+    agentId: string,
+    scope: SkillScope = 'project',
+  ) {
+    const { registry } = await this.getAgent(agentId);
+    const source = await new SkillStoreService(this.paths).resolveSkillSource(repoName, skillPath);
+    return new SkillService(
+      registry.workspace.path,
+      registry.runtime.provider,
+      registry.runtime_home.path,
+    ).install(source, scope);
   }
 
   async restoreBackup(

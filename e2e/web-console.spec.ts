@@ -105,6 +105,12 @@ test('initializes, creates, manages, backs up, and restores an isolated employee
   await page.getByRole('button', { name: 'Skills' }).click();
   await expect(page.getByText('feedback-analyze')).toBeVisible();
   await expect(page.getByText('feedback-collect')).toBeVisible();
+  await page.getByRole('link', { name: 'Skill 商店' }).click();
+  await expect(page.getByText('浏览远端 GitHub 仓库源并安装技能')).toBeVisible();
+  await expect(page.getByText('superpowers', { exact: true })).toBeVisible();
+  await expect(page.getByText('anthropic-skills', { exact: true })).toBeVisible();
+  await page.goto(`${new URL(consoleUrl).origin}/#/agents/user-operations`);
+  await expect(page.getByText('用户运营专员')).toBeVisible();
   await page.getByRole('button', { name: '身份文档' }).click();
   await expect(page.getByLabel('Markdown 内容')).toContainText('用户运营');
 

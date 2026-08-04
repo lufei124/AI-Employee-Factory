@@ -8,6 +8,34 @@ import { RegistryStore } from './registry.js';
 
 // R5：Factory 配置 schema。sync.sanitize_non_whitelist 控制 CC Switch 同步时是否
 // 移除员工 settings.json 中残留的非白名单 env（默认 false，保留兼容）。
+export const skillStoreRepositorySchema = z.object({
+  name: z.string().regex(/^[a-z0-9][a-z0-9._-]*$/i, '仓库名仅允许字母数字与 ._-'),
+  url: z
+    .string()
+    .url()
+    .refine((value) => value.startsWith('https://github.com/'), {
+      message: '仅支持 https://github.com/ 的公开仓库',
+    }),
+  description: z.string().min(1).optional(),
+});
+
+export type SkillStoreRepository = z.infer<typeof skillStoreRepositorySchema>;
+
+// 内置默认仓库源（可配置列表的起点，用户可增删）。商店发现逻辑会扫描 SKILL.md/清单，
+// 仓库结构不同只会得到空列表，不会影响其余安装方式。
+export const builtinSkillStoreRepositories: SkillStoreRepository[] = [
+  {
+    name: 'superpowers',
+    url: 'https://github.com/obra/superpowers',
+    description: '社区 Claude Code 技能合集（obra/superpowers）',
+  },
+  {
+    name: 'anthropic-skills',
+    url: 'https://github.com/anthropics/skills',
+    description: 'Anthropic 官方 Skills 集合',
+  },
+];
+
 export const factoryConfigSchema = z.object({
   version: z.number(),
   home: z.string(),
@@ -19,6 +47,12 @@ export const factoryConfigSchema = z.object({
     })
     .optional()
     .default({ sanitize_non_whitelist: false }),
+  skill_store: z
+    .object({
+      repositories: z.array(skillStoreRepositorySchema).max(20).default([]),
+    })
+    .optional()
+    .default({ repositories: [] }),
 });
 
 export type FactoryConfig = z.infer<typeof factoryConfigSchema>;
@@ -30,20 +64,27 @@ export async function readConfig(paths: FactoryPaths): Promise<FactoryConfig> {
     workspace_root: paths.workspaceRoot,
     service_provider: process.platform === 'darwin' ? 'launchd' : 'unsupported',
   };
-  if (!(await fs.pathExists(paths.configFile))) return factoryConfigSchema.parse(fallback);
-  let raw: unknown;
-  try {
-    raw = YAML.parse(await fs.readFile(paths.configFile, 'utf8'));
-  } catch (error) {
-    throw new AgentCtlError('VALIDATION_ERROR', `Factory 配置解析失败：${paths.configFile}`, {
-      cause: error,
-    });
+  let raw: unknown = fallback;
+  if (await fs.pathExists(paths.configFile)) {
+    try {
+      raw = YAML.parse(await fs.readFile(paths.configFile, 'utf8'));
+    } catch (error) {
+      throw new AgentCtlError('VALIDATION_ERROR', `Factory 配置解析失败：${paths.configFile}`, {
+        cause: error,
+      });
+    }
   }
   const parsed = factoryConfigSchema.safeParse(raw);
   if (!parsed.success) {
     throw new AgentCtlError('VALIDATION_ERROR', `Factory 配置无效：${paths.configFile}`, {
       cause: parsed.error,
     });
+  }
+  // 向后兼容：旧配置（或缺省）没有 skill_store 时注入内置默认仓库源；
+  // 显式存在 skill_store（即便为空）则尊重用户已清空的列表。
+  const hasSkillStore = typeof raw === 'object' && raw !== null && 'skill_store' in raw;
+  if (!hasSkillStore) {
+    return { ...parsed.data, skill_store: { repositories: builtinSkillStoreRepositories } };
   }
   return parsed.data;
 }
@@ -62,6 +103,7 @@ export async function initializeFactory(paths: FactoryPaths): Promise<void> {
       paths.backupsDir,
       paths.trashDir,
       paths.locksDir,
+      paths.skillStoreDir,
     ].map((directory) => fs.ensureDir(directory)),
   );
   if (!(await fs.pathExists(paths.configFile))) {
@@ -72,6 +114,7 @@ export async function initializeFactory(paths: FactoryPaths): Promise<void> {
         home: paths.home,
         workspace_root: paths.workspaceRoot,
         service_provider: process.platform === 'darwin' ? 'launchd' : 'unsupported',
+        skill_store: { repositories: builtinSkillStoreRepositories },
       }),
       0o600,
     );
@@ -89,5 +132,6 @@ export async function initializeFactory(paths: FactoryPaths): Promise<void> {
     fs.chmod(paths.backupsDir, 0o700),
     fs.chmod(paths.trashDir, 0o700),
     fs.chmod(paths.locksDir, 0o700),
+    fs.chmod(paths.skillStoreDir, 0o700),
   ]);
 }

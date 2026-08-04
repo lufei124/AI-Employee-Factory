@@ -1,6 +1,15 @@
 import { useState } from 'react';
 import { HashRouter, NavLink, Route, Routes, useParams } from 'react-router-dom';
-import { Activity, Archive, Bot, Factory, LayoutDashboard, Plus, ShieldCheck } from 'lucide-react';
+import {
+  Activity,
+  Archive,
+  Bot,
+  Factory,
+  LayoutDashboard,
+  Plus,
+  ShieldCheck,
+  Store,
+} from 'lucide-react';
 import { OperationsDrawer } from './components/OperationsDrawer.js';
 import { AgentDetailPage } from './pages/AgentDetailPage.js';
 import { AgentsPage } from './pages/AgentsPage.js';
@@ -8,11 +17,13 @@ import { BackupsPage } from './pages/BackupsPage.js';
 import { CreateAgentPage } from './pages/CreateAgentPage.js';
 import { DashboardPage } from './pages/DashboardPage.js';
 import { DoctorPage } from './pages/DoctorPage.js';
+import { SkillStorePage } from './pages/SkillStorePage.js';
 
 const navigation = [
   { to: '/', label: '总览', icon: LayoutDashboard },
   { to: '/agents', label: 'AI 员工', icon: Bot },
   { to: '/create', label: '创建员工', icon: Plus },
+  { to: '/skill-store', label: 'Skill 商店', icon: Store },
   { to: '/backups', label: '备份恢复', icon: Archive },
   { to: '/doctor', label: '系统诊断', icon: ShieldCheck },
 ];
@@ -66,6 +77,7 @@ function Shell() {
             <Route path="/agents/:id" element={<DetailRoute />} />
             <Route path="/create" element={<CreateAgentPage />} />
             <Route path="/backups" element={<BackupsPage />} />
+            <Route path="/skill-store" element={<SkillStorePage />} />
             <Route path="/doctor" element={<DoctorPage />} />
             <Route path="*" element={<DashboardPage />} />
           </Routes>

@@ -86,4 +86,81 @@ describe('SkillService', () => {
 
     expect(metadata?.digest).toMatch(/^[a-f0-9]{64}$/);
   });
+
+  it('stores user-scope skills in runtimeHome and does not project them', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-'));
+    roots.push(root);
+    const workspace = path.join(root, 'agent');
+    const runtimeHome = path.join(root, 'runtime');
+    const source = path.join(root, 'user-skill');
+    await fs.outputFile(
+      path.join(source, 'SKILL.md'),
+      '---\nname: user-skill\ndescription: user\n---\n',
+    );
+    const service = new SkillService(workspace, 'claude', runtimeHome);
+
+    const metadata = await service.install(source, 'user');
+
+    expect(metadata.scope).toBe('user');
+    expect(await fs.pathExists(path.join(runtimeHome, 'skills/user-skill/.agentctl.yaml'))).toBe(
+      true,
+    );
+    // 用户级不投影到项目发现目录
+    expect(await fs.pathExists(path.join(workspace, '.claude/skills/user-skill'))).toBe(false);
+  });
+
+  it('lists and tags both project and user scopes', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-'));
+    roots.push(root);
+    const workspace = path.join(root, 'agent');
+    const runtimeHome = path.join(root, 'runtime');
+    const service = new SkillService(workspace, 'codex', runtimeHome);
+    const projectSource = path.join(root, 'proj-skill');
+    const userSource = path.join(root, 'usr-skill');
+    await fs.outputFile(
+      path.join(projectSource, 'SKILL.md'),
+      '---\nname: proj-skill\ndescription: p\n---\n',
+    );
+    await fs.outputFile(
+      path.join(userSource, 'SKILL.md'),
+      '---\nname: usr-skill\ndescription: u\n---\n',
+    );
+    await service.install(projectSource, 'project');
+    await service.install(userSource, 'user');
+
+    const list = await service.list();
+
+    expect(list.find((s) => s.name === 'proj-skill')?.scope).toBe('project');
+    expect(list.find((s) => s.name === 'usr-skill')?.scope).toBe('user');
+  });
+
+  it('rejects user-scope install without a runtimeHome', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-'));
+    roots.push(root);
+    const source = path.join(root, 'noskill');
+    await fs.outputFile(path.join(source, 'SKILL.md'), '---\nname: noskill\ndescription: -\n---\n');
+
+    await expect(
+      new SkillService(path.join(root, 'agent'), 'claude').install(source, 'user'),
+    ).rejects.toThrow('Runtime Home');
+  });
+
+  it('archives user-scope skills into the runtimeHome archive', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-'));
+    roots.push(root);
+    const workspace = path.join(root, 'agent');
+    const runtimeHome = path.join(root, 'runtime');
+    const source = path.join(root, 'arch-skill');
+    await fs.outputFile(
+      path.join(source, 'SKILL.md'),
+      '---\nname: arch-skill\ndescription: a\n---\n',
+    );
+    const service = new SkillService(workspace, 'codex', runtimeHome);
+    await service.install(source, 'user');
+
+    await service.remove('arch-skill', 'user');
+
+    expect(await fs.pathExists(path.join(runtimeHome, 'skills/arch-skill'))).toBe(false);
+    expect(await fs.pathExists(path.join(runtimeHome, 'skills/.archive'))).toBe(true);
+  });
 });

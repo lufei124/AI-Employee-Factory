@@ -172,14 +172,33 @@ agentctl job disable user-operations daily-feedback-review
 
 ## Skill 安装与迁移
 
+Skill 按作用域分为两级：
+
+- **项目级（project）**：存于员工 `workspace/skills/`，投影到 `workspace/.claude/skills`（Claude）/ `workspace/.codex/skills`（Codex）。随工作区 git 进入版本管理，进入默认备份。
+- **用户级（user）**：存于员工 `runtimeHome/skills/`（运行器原生用户级发现目录）。属于员工运行时身份，仅随包含 Runtime 的备份打包。
+
 ```bash
 agentctl skill list user-operations
-agentctl skill install user-operations /path/to/feedback-collect
-agentctl skill install user-operations /path/to/feedback-analyze
-agentctl skill remove user-operations feedback-analyze
+agentctl skill install user-operations /path/to/feedback-collect            # 默认项目级
+agentctl skill install user-operations /path/to/feedback-analyze --scope user
+agentctl skill remove user-operations feedback-analyze --scope user
 ```
 
-将现有两个 Skill 的真实内容复制到独立源目录，确保每个目录包含 `SKILL.md`，再运行上述 install。Factory 会复制一份到该 Agent，记录版本和 SHA-256，并生成运行器投影；不同员工永不实时共享软链接。
+将现有 Skill 的真实内容复制到独立源目录，确保每个目录包含 `SKILL.md`，再运行上述 install。Factory 会复制一份到该 Agent，记录版本、作用域和 SHA-256，并生成运行器投影；不同员工永不实时共享软链接。
+
+### Skill 商店
+
+浏览器 Web 控制台的「Skill 商店」页或 CLI 可把远端 GitHub 仓库源作为技能来源，不影响上述上传 / 本地路径 / CLI 安装方式：
+
+```bash
+agentctl skill-store list-repos
+agentctl skill-store add-repo my-skills https://github.com/owner/repo
+agentctl skill-store refresh my-skills
+agentctl skill-store list-skills my-skills
+agentctl skill-store install user-operations my-skills skills/hello --scope project
+```
+
+仓库源浅克隆到 `~/.ai-employees/skill-store/cache/<name>/`，用 `agent-skills.yaml/json` 清单或扫描 `SKILL.md` 发现技能；仅接受 `https://github.com/` 公开仓库。内置默认仓库源（superpowers、anthropic-skills）可在 Web 或 CLI 增删。
 
 ## 记忆隔离原理
 

@@ -13,8 +13,11 @@ import type { FactoryApplication } from '../application/factory-application.js';
 import { AgentCtlError } from '../core/errors.js';
 import { createAgentInputSchema } from '../core/create-agent.js';
 import { jobConfigSchema } from '../schemas/job-schema.js';
+import type { SkillScope } from '../core/skills.js';
 import { OperationManager } from './operation-manager.js';
 import { OperationStore } from '../core/operation-store.js';
+
+const skillScopeSchema = z.enum(['project', 'user']);
 
 export interface BuildWebServerOptions {
   application: FactoryApplication;
@@ -360,8 +363,14 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
   server.post<{ Params: { id: string } }>(
     '/api/v1/agents/:id/skills/path',
     async (request, reply) => {
-      const body = z.object({ source: z.string().min(1) }).parse(request.body);
-      const installed = await options.application.installSkill(request.params.id, body.source);
+      const body = z
+        .object({ source: z.string().min(1), scope: skillScopeSchema.optional() })
+        .parse(request.body);
+      const installed = await options.application.installSkill(
+        request.params.id,
+        body.source,
+        body.scope,
+      );
       reply.code(201);
       return { data: installed };
     },
@@ -373,9 +382,13 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
       const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-upload-'));
       let total = 0;
       const uploaded: string[] = [];
+      let scope: SkillScope | undefined;
       try {
         for await (const part of request.parts()) {
-          if (part.type !== 'file') continue;
+          if (part.type === 'field') {
+            if (part.fieldname === 'scope') scope = skillScopeSchema.parse(part.value);
+            continue;
+          }
           const relative = part.filename.replaceAll('\\', '/');
           const segments = relative.split('/').filter(Boolean);
           if (
@@ -401,7 +414,7 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
           topLevels.size === 1 && uploaded.every((file) => file.includes('/'))
             ? path.join(stage, [...topLevels][0] as string)
             : stage;
-        const installed = await options.application.installSkill(request.params.id, source);
+        const installed = await options.application.installSkill(request.params.id, source, scope);
         reply.code(201);
         return { data: installed };
       } finally {
@@ -413,14 +426,88 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
   server.delete<{ Params: { id: string; name: string } }>(
     '/api/v1/agents/:id/skills/:name',
     async (request) => {
-      const body = z.object({ confirmName: z.string() }).parse(request.body);
+      const body = z
+        .object({ confirmName: z.string(), scope: skillScopeSchema.optional() })
+        .parse(request.body);
       if (body.confirmName !== request.params.name) {
         throw new AgentCtlError('VALIDATION_ERROR', 'Skill 归档确认不匹配。');
       }
-      await options.application.removeSkill(request.params.id, request.params.name);
-      return { data: { archived: true } };
+      await options.application.removeSkill(request.params.id, request.params.name, body.scope);
+      return { data: { archived: true, scope: body.scope ?? 'project' } };
     },
   );
+
+  // ---- Skill 商店（GitHub 仓库源）----
+  server.get('/api/v1/skill-store/repositories', async () => ({
+    data: await options.application.listSkillStoreRepositories(),
+  }));
+
+  server.post<{ Body: { name: string; url: string; description?: string } }>(
+    '/api/v1/skill-store/repositories',
+    async (request, reply) => {
+      const body = z
+        .object({
+          name: z.string().min(1),
+          url: z.string().min(1),
+          description: z.string().min(1).optional(),
+        })
+        .parse(request.body);
+      const added = await options.application.addSkillStoreRepository(
+        body.description
+          ? { name: body.name, url: body.url, description: body.description }
+          : { name: body.name, url: body.url },
+      );
+      reply.code(201);
+      return { data: added };
+    },
+  );
+
+  server.delete<{ Params: { name: string } }>(
+    '/api/v1/skill-store/repositories/:name',
+    async (request) => {
+      const body = z.object({ confirmName: z.string() }).parse(request.body);
+      if (body.confirmName !== request.params.name) {
+        throw new AgentCtlError('VALIDATION_ERROR', '仓库源归档确认不匹配。');
+      }
+      await options.application.removeSkillStoreRepository(request.params.name);
+      return { data: { removed: true } };
+    },
+  );
+
+  server.post<{ Params: { name: string } }>(
+    '/api/v1/skill-store/repositories/:name/refresh',
+    async (request) => ({
+      data: await options.application.refreshSkillStoreRepository(request.params.name),
+    }),
+  );
+
+  server.get<{ Params: { name: string } }>(
+    '/api/v1/skill-store/repositories/:name/skills',
+    async (request) => ({
+      data: await options.application.listSkillStoreSkills(request.params.name),
+    }),
+  );
+
+  server.post<{
+    Body: { repoName: string; skillPath: string; agentId: string; scope?: SkillScope };
+  }>('/api/v1/skill-store/install', async (request, reply) => {
+    const body = z
+      .object({
+        repoName: z.string().min(1),
+        skillPath: z.string().min(1),
+        agentId: z.string().min(1),
+        scope: skillScopeSchema.optional(),
+      })
+      .parse(request.body);
+    const installed = await options.application.installSkillFromStore(
+      body.repoName,
+      body.skillPath,
+      body.agentId,
+      body.scope,
+    );
+    reply.code(201);
+    return { data: installed };
+  });
 
   server.get<{ Params: { id: string }; Querystring: { lines?: string } }>(
     '/api/v1/agents/:id/logs',

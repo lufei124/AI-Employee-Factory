@@ -100,6 +100,33 @@ export interface AgentDetail {
   agent: { description: string };
 }
 
+export type SkillScope = 'project' | 'user';
+
+export interface SkillMetadata {
+  name: string;
+  version: string;
+  source: string;
+  installed_at: string;
+  digest: string;
+  scope: SkillScope;
+}
+
+export interface StoreRepository {
+  name: string;
+  url: string;
+  description?: string;
+  cached: boolean;
+  lastRefreshedAt?: string;
+}
+
+export interface StoreSkill {
+  name: string;
+  description: string;
+  version: string;
+  path: string;
+  repository: string;
+}
+
 let csrfToken = '';
 
 async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
@@ -203,18 +230,16 @@ export const api = {
         body: JSON.stringify(action === 'archive' ? { confirmJobId: jobId } : {}),
       },
     ),
-  listSkills: (id: string) =>
-    request<Array<{ name: string; version: string; digest: string; installed_at: string }>>(
-      `/agents/${encodeURIComponent(id)}/skills`,
-    ),
-  uploadSkill: (id: string, files: File[]) => {
+  listSkills: (id: string) => request<SkillMetadata[]>(`/agents/${encodeURIComponent(id)}/skills`),
+  uploadSkill: (id: string, files: File[], scope?: SkillScope) => {
     const data = new FormData();
     for (const file of files) {
       const relative =
         (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
       data.append('files', file, relative);
     }
-    return request<{ name: string; version: string }>(
+    if (scope) data.append('scope', scope);
+    return request<{ name: string; version: string; scope: SkillScope }>(
       `/agents/${encodeURIComponent(id)}/skills/upload`,
       {
         method: 'POST',
@@ -222,14 +247,41 @@ export const api = {
       },
     );
   },
-  removeSkill: (id: string, name: string) =>
-    request<{ archived: boolean }>(
+  removeSkill: (id: string, name: string, scope?: SkillScope) =>
+    request<{ archived: boolean; scope: SkillScope }>(
       `/agents/${encodeURIComponent(id)}/skills/${encodeURIComponent(name)}`,
       {
         method: 'DELETE',
-        body: JSON.stringify({ confirmName: name }),
+        body: JSON.stringify({ confirmName: name, ...(scope ? { scope } : {}) }),
       },
     ),
+  listSkillStoreRepositories: () => request<StoreRepository[]>('/skill-store/repositories'),
+  addSkillStoreRepository: (input: { name: string; url: string; description?: string }) =>
+    request<StoreRepository>('/skill-store/repositories', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  removeSkillStoreRepository: (name: string) =>
+    request<{ removed: boolean }>(`/skill-store/repositories/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ confirmName: name }),
+    }),
+  refreshSkillStoreRepository: (name: string) =>
+    request<StoreRepository>(`/skill-store/repositories/${encodeURIComponent(name)}/refresh`, {
+      method: 'POST',
+    }),
+  listSkillStoreSkills: (name: string) =>
+    request<StoreSkill[]>(`/skill-store/repositories/${encodeURIComponent(name)}/skills`),
+  installSkillFromStore: (input: {
+    repoName: string;
+    skillPath: string;
+    agentId: string;
+    scope?: SkillScope;
+  }) =>
+    request<SkillMetadata>('/skill-store/install', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
   latestLog: (id: string, lines = 200) =>
     request<{ file: string; content: string }>(
       `/agents/${encodeURIComponent(id)}/logs?lines=${lines}`,

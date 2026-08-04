@@ -567,27 +567,99 @@ function registerSkillCommands(program: Command): void {
   group.command('list <agent-id>').action(async (id: string) => {
     const { application } = context();
     for (const skill of await application.listSkills(id))
-      console.log(`${skill.name}\t${skill.version}\t${skill.digest.slice(0, 12)}`);
+      console.log(`${skill.name}\t${skill.scope}\t${skill.version}\t${skill.digest.slice(0, 12)}`);
   });
   group
     .command('install <agent-id> <skill-path>')
     .option('--dry-run')
-    .action(async (id: string, source: string, options: { dryRun?: boolean }) => {
-      if (options.dryRun) return console.log(`将从 ${path.resolve(source)} 安装 Skill`);
-      const { application } = context();
-      const skill = await application.installSkill(id, source);
-      console.log(chalk.green(`✓ 已安装 ${skill.name}@${skill.version}`));
-    });
+    .option('--scope <project|user>', '安装作用域（默认 project）', 'project')
+    .action(
+      async (
+        id: string,
+        source: string,
+        options: { dryRun?: boolean; scope?: 'project' | 'user' },
+      ) => {
+        if (options.dryRun)
+          return console.log(`将从 ${path.resolve(source)} 安装 Skill（scope=${options.scope}）`);
+        const { application } = context();
+        const skill = await application.installSkill(id, source, options.scope);
+        console.log(chalk.green(`✓ 已安装 ${skill.name}@${skill.version}（${skill.scope}）`));
+      },
+    );
   group
     .command('remove <agent-id> <skill-name>')
     .option('--dry-run')
     .option('--yes')
-    .action(async (id: string, name: string, options: { dryRun?: boolean; yes?: boolean }) => {
-      if (options.dryRun) return console.log(`将归档 Skill ${name}`);
-      await confirmDanger(`归档 Skill ${name}？`, options.yes === true);
+    .option('--scope <project|user>', '归档作用域（默认 project）', 'project')
+    .action(
+      async (
+        id: string,
+        name: string,
+        options: { dryRun?: boolean; yes?: boolean; scope?: 'project' | 'user' },
+      ) => {
+        if (options.dryRun) return console.log(`将归档 Skill ${name}（scope=${options.scope}）`);
+        await confirmDanger(`归档 Skill ${name}（${options.scope}）？`, options.yes === true);
+        const { application } = context();
+        await application.removeSkill(id, name, options.scope);
+      },
+    );
+
+  const storeGroup = program.command('skill-store').description('Skill 商店（GitHub 仓库源）');
+  storeGroup.command('list-repos').action(async () => {
+    const { application } = context();
+    for (const repo of await application.listSkillStoreRepositories())
+      console.log(
+        `${repo.name}\t${repo.url}\t${repo.cached ? 'cached' : 'not-cached'}\t${repo.lastRefreshedAt ?? ''}`,
+      );
+  });
+  storeGroup
+    .command('add-repo <name> <url>')
+    .option('--description <text>')
+    .action(async (name: string, url: string, options: { description?: string }) => {
       const { application } = context();
-      await application.removeSkill(id, name);
+      const repo = await application.addSkillStoreRepository(
+        options.description ? { name, url, description: options.description } : { name, url },
+      );
+      console.log(chalk.green(`✓ 已添加仓库源 ${repo.name}（${repo.url}）`));
     });
+  storeGroup
+    .command('remove-repo <name>')
+    .option('--yes')
+    .action(async (name: string, options: { yes?: boolean }) => {
+      await confirmDanger(`移除仓库源 ${name}？`, options.yes === true);
+      await context().application.removeSkillStoreRepository(name);
+      console.log(chalk.green(`已移除仓库源 ${name}`));
+    });
+  storeGroup.command('refresh <name>').action(async (name: string) => {
+    const { application } = context();
+    const repo = await application.refreshSkillStoreRepository(name);
+    console.log(chalk.green(`✓ 已刷新 ${repo.name}（${repo.lastRefreshedAt}）`));
+  });
+  storeGroup.command('list-skills <name>').action(async (name: string) => {
+    const { application } = context();
+    for (const skill of await application.listSkillStoreSkills(name))
+      console.log(`${skill.name}\t${skill.version}\t${skill.path}`);
+  });
+  storeGroup
+    .command('install <agent-id> <repo-name> <skill-path>')
+    .option('--scope <project|user>', '安装作用域（默认 project）', 'project')
+    .action(
+      async (
+        id: string,
+        repoName: string,
+        skillPath: string,
+        options: { scope?: 'project' | 'user' },
+      ) => {
+        const { application } = context();
+        const skill = await application.installSkillFromStore(
+          repoName,
+          skillPath,
+          id,
+          options.scope,
+        );
+        console.log(chalk.green(`✓ 已从商店安装 ${skill.name}@${skill.version}（${skill.scope}）`));
+      },
+    );
 
   const operationsGroup = program.command('operations').description('操作审计日志查询');
   operationsGroup

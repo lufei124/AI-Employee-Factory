@@ -6,7 +6,7 @@
 - `src/application/`：`FactoryApplication` 及聚焦用例，是 CLI 和 Web 共用的唯一业务编排层。
 - `src/web/`：Fastify 本地 API、会话/CSRF 边界、异步 Operation 与静态资源托管。
 - `web/`：React/Vite 中文单页控制台，不直接访问文件系统或执行命令。
-- `src/core/`：路径、Schema 组合、Registry、原子锁、模板、创建、执行、Job、Skill、备份与诊断。
+- `src/core/`：路径、Schema 组合、Registry、原子锁、模板、创建、执行、Job、Skill、Skill 商店、备份与诊断。
 - `src/runtimes/`：Claude/Codex 命令和 ExecutionContext，不直接执行进程。
 - `src/services/`：ServiceAdapter 和 launchd 实现；未来 systemd 实现不得改变 CLI 语义。
 - `src/schemas/`：版本化 Zod 数据合同。
@@ -35,6 +35,8 @@ Claude 默认 Provider 来自 CC Switch。应用层在 Claude chat、run、Agent
 ## 事务与安全
 
 Registry 写入、Agent 创建、恢复和 Skill 安装使用 staging + rename，失败时只回滚当次新建路径。Registry 更新前备份，且使用同目录临时文件原子替换。运行器、Bridge 与 Job 不允许 `shell: true`。
+
+Skill 按作用域分别存储：**项目级**存于 `workspace/skills/` 并投影到 `workspace/.claude/skills` / `workspace/.codex/skills`，随工作区 git 和默认备份；**用户级**原位存于 `runtimeHome/skills/`（运行器原生用户级发现目录），仅随包含 Runtime 的备份打包。Skill 商店（`SkillStoreService`）把 `config.yaml` 声明的 GitHub 仓库源浅克隆到 `~/.ai-employees/skill-store/cache/<name>/`，用 `agent-skills.yaml/json` 清单或扫描 `SKILL.md` 发现技能，安装复用 `SkillService.install`（传递源路径），从而不改变任何既有安装方式。
 
 员工回收站由 `TrashService` 管理。每个受管组件先移动到原父目录下的 `.agentctl-trash/<trash-id>/`，从而保持同文件系统 rename；全部成功后才从 Registry 移除。失败时按相反顺序回滚。中心 manifest 只记录 Registry 快照、路径和时间，不读取文件内容。恢复拒绝 ID/路径冲突，过期清理只处理 `ready` 且至少保留 7 天的条目。
 

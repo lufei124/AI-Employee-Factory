@@ -2,10 +2,12 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CreateAgentPage } from '../web/src/pages/CreateAgentPage.js';
 import { DashboardPage } from '../web/src/pages/DashboardPage.js';
 import { AgentDetailPage } from '../web/src/pages/AgentDetailPage.js';
+import { SkillStorePage } from '../web/src/pages/SkillStorePage.js';
 import { OperationsDrawer } from '../web/src/components/OperationsDrawer.js';
 import { BackupsPage } from '../web/src/pages/BackupsPage.js';
 import { api } from '../web/src/api.js';
@@ -21,6 +23,12 @@ vi.mock('../web/src/api.js', () => ({
     lifecycle: vi.fn(),
     listDocuments: vi.fn(),
     listSkills: vi.fn(),
+    listSkillStoreRepositories: vi.fn(),
+    addSkillStoreRepository: vi.fn(),
+    removeSkillStoreRepository: vi.fn(),
+    refreshSkillStoreRepository: vi.fn(),
+    listSkillStoreSkills: vi.fn(),
+    installSkillFromStore: vi.fn(),
     listOperations: vi.fn(),
     operationEvents: vi.fn(),
     trashAgent: vi.fn(),
@@ -246,5 +254,60 @@ describe('Web console core flows', () => {
     await user.click(screen.getByRole('button', { name: '恢复员工' }));
 
     expect(api.restoreTrash).toHaveBeenCalledWith('018f6b77-82d4-7c80-8000-000000000001');
+  });
+
+  it('browses a skill store repository and installs a skill to an agent', async () => {
+    vi.mocked(api.listSkillStoreRepositories).mockResolvedValue([
+      {
+        name: 'superpowers',
+        url: 'https://github.com/obra/superpowers',
+        description: '社区技能',
+        cached: false,
+      },
+    ]);
+    vi.mocked(api.dashboard).mockResolvedValue({
+      total: 1,
+      running: 0,
+      pendingAuthorization: 0,
+      archived: 0,
+      agents: [{ id: 'ops', name: '运营专员', status: 'stopped', archived: false }],
+    } as never);
+    vi.mocked(api.listSkillStoreSkills).mockResolvedValue([
+      {
+        name: 'hello',
+        description: 'says hi',
+        version: '1.0.0',
+        path: 'skills/hello',
+        repository: 'superpowers',
+      },
+    ]);
+    vi.mocked(api.installSkillFromStore).mockResolvedValue({
+      name: 'hello',
+      version: '1.0.0',
+      source: '/cache/superpowers/skills/hello',
+      installed_at: '2026-08-04T00:00:00.000Z',
+      digest: 'ab',
+      scope: 'project',
+    } as never);
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter initialEntries={['/skill-store']}>
+        <SkillStorePage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('superpowers')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '浏览技能' }));
+    expect(await screen.findByText('says hi')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '安装' }));
+    await user.click(screen.getByRole('button', { name: '确认安装' }));
+
+    expect(api.installSkillFromStore).toHaveBeenCalledWith({
+      repoName: 'superpowers',
+      skillPath: 'skills/hello',
+      agentId: 'ops',
+      scope: 'project',
+    });
+    expect(await screen.findByText(/已安装 hello@1.0.0/)).toBeInTheDocument();
   });
 });

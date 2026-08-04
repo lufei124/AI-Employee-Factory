@@ -2,48 +2,38 @@
 
 ## 身份
 
-Task ID: TASK-009
+Task ID: TASK-018
 
-Task title: 实现员工回收站与 7 天延迟清理
+Task title: Skill 作用域(项目级/用户级) + Skill 商店(GitHub 远程源)
 
-Outgoing/current agent: codex-20260803-01
+Outgoing/current agent: claude-20260803-01
 
 Intended next role/agent: 用户或后续维护者
 
-Branch/worktree: master（基线 commit 34a98b8）
+Branch/worktree: master（TASK-018 commit）
 
 Status: DONE
 
-更新时间：2026-08-03 19:20 +0800
+更新时间：2026-08-04 18:25 +0800
 
 ## 已完成
 
-- 新增 Factory 自管回收站，同卷原子移走 Workspace、Runtime、Bridge、日志、服务和定时任务数据。
-- 移入前卸载 Bridge 和全部 Job 服务，然后从 Registry 移除 Agent，原 ID 可重新创建。
-- Web 员工详情提供一次确认的“移入回收站”；备份/恢复页可查看和恢复。
-- CLI 新增 `trash move|list|restore|purge`，支持 `--dry-run` 和 `--yes`。
-- 保留期固定 7 天；下次启动 Web 或运行公开 CLI 命令时懒清理过期条目。
-- 恢复后固定为 `stopped`，不自动重新安装或启动服务；ID 或目标路径已占用时拒绝覆盖。
-- 同一本地提交中保留 TASK-008 的 CC Switch Provider 隔离同步和飞书 Bridge 兼容性修正。
+- Skill 引入显式作用域两级：**项目级（project）** 存 `workspace/skills/` 并投影 `workspace/.claude/skills` / `workspace/.codex/skills`，随工作区 git 与默认备份；**用户级（user）** 原位存 `runtimeHome/skills/`（运行器原生用户级发现目录），仅随包含 Runtime 的备份打包。`SkillService.install/list/remove` 均支持 scope，默认 project 不改既有行为。
+- 新增 Skill 商店：`SkillStoreService` 把 `config.yaml` 声明的 GitHub 仓库源浅克隆到 `~/.ai-employees/skill-store/cache/<name>/`，用 `agent-skills.yaml/json` 清单或扫描 `SKILL.md` 发现技能，安装复用 `SkillService.install`（传递源路径）。仅接受 `https://github.com/` 公开仓库；内置默认源 superpowers、anthropic-skills。
+- Web 新增「Skill 商店」顶级页（仓库增删/刷新/浏览技能/安装，`?agent=` 预选员工）+ 员工详情 SkillsTab 按项目级/用户级分组展示并带「从商店安装」入口；CLI 新增 `skill-store` 命令组 + `skill list/install/remove` 的 `--scope` 旗标。
+- 文档：docs/DECISIONS.md D-003 演进为作用域分离 + D-008 商店 ADR；ARCHITECTURE/README/GLOSSARY 同步。
 
 ## 验证
 
-| 命令/检查          | 结果 | 相关输出                     |
-| ------------------ | ---- | ---------------------------- |
-| `npm run verify`   | 通过 | build + 22 文件/80 项 + lint |
-| `npm run test:e2e` | 通过 | 1/1，4.2s                    |
-| `git diff --check` | 通过 | 无空白或补丁格式错误         |
+| 命令/检查          | 结果 | 相关输出                 |
+| ------------------ | ---- | ------------------------ |
+| `npm run build`    | 通过 | tsc + vite 均通过        |
+| `npm test`         | 通过 | 32 文件 / 169 项         |
+| `npm run lint`     | 通过 | eslint + prettier 均通过 |
+| `npm run test:e2e` | 通过 | 1/1，3.8s                |
 
 ## 安全边界与限制
 
-- 未对用户当前真实 Agent 执行移入回收站，未修改个人 Runtime/Bridge 或真实 launchd 服务。
-- 回收站是 Factory 管理的可恢复存储，不是 macOS 系统废纸篓。
-- 过期清理是下次 Web/CLI 调用触发，不启动常驻守护进程。
-- 恢复只恢复数据并登记 stopped 状态，需由用户审核后再手动启动。
-
-## 接管说明
-
-1. 先读 `AGENTS.md`、`.agent/PROJECT_STATE.md` 和本文件。
-2. 日常管理用 `agentctl web`；CLI 可用 `agentctl trash list` 查看回收站。
-3. 不要手动删除 `.agentctl-trash` 组件目录；应走 restore/purge 以保持 manifest/index 一致。
-4. 本任务只授权本地 commit，未授权 push。
+- 未改动备份/回收站/CC Switch/隔离层语义；未改既有 Skill 安装方式的默认行为（默认 project）。
+- 商店仅接受 `https://github.com/` 公开仓库；安装复用 `SkillService.install` 的软链接拒绝规则（R6）。
+- 未 push；按用户常驻规则「任务完成即 commit」只提交不推送。

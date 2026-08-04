@@ -18,6 +18,7 @@ export interface FactoryPaths {
   backupsDir: string;
   trashDir: string;
   locksDir: string;
+  skillStoreDir: string;
 }
 
 function homeFrom(env: NodeJS.ProcessEnv): string {
@@ -72,6 +73,7 @@ export function resolveFactoryPaths(env: NodeJS.ProcessEnv = process.env): Facto
     backupsDir: path.join(home, 'backups'),
     trashDir: path.join(home, 'trash'),
     locksDir: path.join(home, 'locks'),
+    skillStoreDir: path.join(home, 'skill-store'),
   };
 }
 

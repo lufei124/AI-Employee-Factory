@@ -1236,6 +1236,221 @@ textarea:focus {
   line-height: 1.6;
 }
 
+/* ---- Skill scope + Skill store ---- */
+.scope-picker {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  background: #f1f2f7;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+}
+.scope-picker button {
+  border: 0;
+  background: transparent;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  cursor: pointer;
+}
+.scope-picker button.active {
+  background: #fff;
+  color: var(--accent-dark);
+  box-shadow: 0 2px 8px rgba(28, 35, 56, 0.08);
+}
+.scope-group {
+  margin-top: 22px;
+}
+.scope-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.scope-group-head strong {
+  font-size: 13px;
+}
+.scope-group-head span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.scope-group-head em {
+  margin-left: auto;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--accent-dark);
+  background: var(--accent-soft);
+  padding: 2px 9px;
+  border-radius: 99px;
+}
+.status-badge.project {
+  color: #5144a4;
+  background: #efedff;
+}
+.status-badge.user {
+  color: #157455;
+  background: #e5f6ef;
+}
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.store-heading {
+  align-items: center;
+}
+.store-add-form {
+  max-width: 720px;
+}
+.store-field-wide {
+  grid-column: 1 / -1;
+}
+.store-repo-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.store-repo-card {
+  background: var(--panel);
+  border: 1px solid rgba(225, 228, 238, 0.95);
+  border-radius: 16px;
+  padding: 18px;
+  display: grid;
+  gap: 14px;
+  box-shadow: var(--shadow);
+}
+.store-repo-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.store-repo-title {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  min-width: 0;
+}
+.store-repo-icon {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--accent-dark);
+  background: var(--accent-soft);
+}
+.store-repo-title strong {
+  font-size: 14px;
+}
+.store-repo-title > div > span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 3px;
+  line-height: 1.5;
+}
+.store-repo-url {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.store-repo-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--line);
+  padding-top: 13px;
+}
+.store-repo-actions .button {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+.store-skills-panel {
+  margin-top: 4px;
+}
+.store-skill-list {
+  display: grid;
+  gap: 8px;
+}
+.store-skill-list article {
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 13px 14px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.store-skill-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.store-skill-main strong {
+  font-size: 13px;
+}
+.store-skill-main p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.store-skill-main span {
+  color: var(--muted);
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  word-break: break-all;
+}
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(22, 23, 38, 0.42);
+  backdrop-filter: blur(3px);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.modal {
+  width: min(440px, 100%);
+  background: #fff;
+  border-radius: 18px;
+  padding: 22px;
+  box-shadow: 0 24px 60px rgba(20, 24, 44, 0.28);
+}
+.modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.modal-head strong {
+  font-size: 16px;
+}
+.modal-head span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 4px;
+}
+
 @keyframes pulse {
   0%,
   100% {

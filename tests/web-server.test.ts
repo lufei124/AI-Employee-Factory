@@ -170,6 +170,60 @@ describe('local Web API security', () => {
     await server.close();
   });
 
+  it('manages skill-store repositories through the API', async () => {
+    const server = setup();
+    const exchange = await server.inject({
+      method: 'POST',
+      url: '/api/v1/session',
+      headers: { host: '127.0.0.1:48123' },
+      payload: { token: 'bootstrap-secret' },
+    });
+    const cookie = exchange.headers['set-cookie']?.split(';')[0];
+    const csrf = exchange.json<{ data: { csrfToken: string } }>().data.csrfToken;
+    const headers = {
+      host: '127.0.0.1:48123',
+      origin: 'http://127.0.0.1:48123',
+      cookie,
+      'x-csrf-token': csrf,
+    };
+
+    const added = await server.inject({
+      method: 'POST',
+      url: '/api/v1/skill-store/repositories',
+      headers,
+      payload: { name: 'my-skills', url: 'https://github.com/owner/repo' },
+    });
+    expect(added.statusCode).toBe(201);
+    expect(added.json().data).toMatchObject({ name: 'my-skills', cached: false });
+
+    const rejected = await server.inject({
+      method: 'POST',
+      url: '/api/v1/skill-store/repositories',
+      headers,
+      payload: { name: 'bad', url: 'https://example.com/repo' },
+    });
+    expect(rejected.statusCode).toBe(400);
+
+    const listed = await server.inject({
+      method: 'GET',
+      url: '/api/v1/skill-store/repositories',
+      headers: { host: '127.0.0.1:48123', cookie },
+    });
+    expect(listed.json().data).toContainEqual(
+      expect.objectContaining({ name: 'my-skills', url: 'https://github.com/owner/repo' }),
+    );
+
+    const removed = await server.inject({
+      method: 'DELETE',
+      url: '/api/v1/skill-store/repositories/my-skills',
+      headers,
+      payload: { confirmName: 'my-skills' },
+    });
+    expect(removed.statusCode).toBe(200);
+    expect(removed.json().data).toEqual({ removed: true });
+    await server.close();
+  });
+
   it('cancels unfinished Web operations when the server closes', async () => {
     const operations = new OperationManager();
     const server = setup(operations);

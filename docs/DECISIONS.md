@@ -8,9 +8,22 @@ v1 使用单 npm 包，通过 core/runtime/service/schema 边界保留扩展性�
 
 Factory 启动 Bridge 的前台 `run` 命令，不委托 Bridge 自有 daemon，以强制注入隔离环境、统一日志和状态。
 
-## D-003：Skill 按 Agent 复制
+## D-003：Skill 按 Agent 复制与作用域分离
 
-Agent 根目录 `skills/` 是唯一正式源；运行器只使用该 Agent 内部投影。不同 Agent 不得连接同一实时共享 Skill 目录。
+- 状态：Evolved（原 v1 为单一项目级源；现按作用域分离，见下）
+- 决定：Skill 按 Agent 独立复制，并按作用域分为两级，两处存储互不共享：
+  - **project（项目级）**：存于 `workspace/skills/<name>/`，投影到项目发现目录 `workspace/.claude/skills/<name>`（Claude）/ `workspace/.codex/skills/<name>`（Codex）。随 Agent 工作区 git 进入版本管理，进入默认备份。
+  - **user（用户级）**：原位存于 `runtimeHome/skills/<name>/`（= CLAUDE_CONFIG_DIR/CODEX_HOME 的 skills，即运行器原生用户级发现目录）。属于员工运行时身份，默认不进备份（仅 `includeRuntime` 时打包）。
+- 边界：不同 Agent 不得连接同一实时共享 Skill 目录；用户级 store 仅统计真实目录（跳过历史 Codex preset 投影软链）。安装复用 `SkillService.install`，拒绝源内软链接（R6）。
+- 原因：原单一 `workspace/skills/` 造成 Claude（项目级）与 Codex（用户级）的 Provider 不对称；显式作用域让 UI 按项目级/用户级分类展示，并让备份语义清晰（项目级随工作区、用户级仅随 Runtime）。
+
+## D-008：Skill 商店（远端 GitHub 仓库源）
+
+- 状态：Accepted
+- 日期：2026-08-04
+- 决定：新增 `agentctl skill-store` 命令组与「Skill 商店」顶级页，把可配置的远端 GitHub 仓库源（`config.yaml` 的 `skill_store.repositories`）浅克隆到 `~/.ai-employees/skill-store/cache/<name>/`，用 `agent-skills.yaml/json` 清单或扫描 `SKILL.md` 发现技能，安装复用 `SkillService.install`（传递源路径）。
+- 边界：仅接受 `https://github.com/` 公开仓库；仓库源上限 20 个；安装沿用既有作用域（project/user）与软链接拒绝规则。不改变任何既有安装方式（上传目录 / 本地路径 / CLI）。
+- 原因：满足「连接远端 GitHub 仓库共享技能」的需求，同时不破坏既有安装方式；内置默认仓库源（superpowers、anthropic-skills）作为可配置列表的起点。
 
 ## D-004：非破坏归档和可验证备份
 
