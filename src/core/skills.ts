@@ -104,9 +104,8 @@ export class SkillService {
     if (!(await fs.pathExists(target)))
       throw new AgentCtlError('NOT_FOUND', `Skill 不存在：${name}`);
     if (scope === 'project') await fs.remove(this.projectionPath(name));
-    const archive = path.join(root, '.archive');
-    await fs.ensureDir(archive);
-    await fs.move(target, path.join(archive, `${name}-${Date.now()}`));
+    // 卸载为不可恢复操作：直接删除技能目录（含用户级原位目录 / 项目级 store 根），不再移入 .archive。
+    await fs.remove(target);
   }
 
   // 项目级投影：store 根 `workspace/skills/<name>` 软链到项目发现目录。
@@ -137,7 +136,7 @@ export class SkillService {
 
   private async listRoot(root: string, scope: SkillScope): Promise<SkillMetadata[]> {
     if (!(await fs.pathExists(root))) return [];
-    const names = (await fs.readdir(root)).filter((name) => name !== '.archive').sort();
+    const names = (await fs.readdir(root)).sort();
     const result: SkillMetadata[] = [];
     for (const name of names) {
       if (name.startsWith('.staging-')) continue;

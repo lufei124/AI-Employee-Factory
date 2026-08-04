@@ -250,7 +250,7 @@ export const api = {
     );
   },
   removeSkill: (id: string, name: string, scope?: SkillScope) =>
-    request<{ archived: boolean; scope: SkillScope }>(
+    request<{ removed: boolean; scope: SkillScope }>(
       `/agents/${encodeURIComponent(id)}/skills/${encodeURIComponent(name)}`,
       {
         method: 'DELETE',

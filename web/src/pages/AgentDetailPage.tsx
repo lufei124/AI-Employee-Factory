@@ -670,7 +670,7 @@ function SkillsTab({ agentId }: { agentId: string }) {
   };
   const remove = async (skill: SkillMetadata) => {
     const label = skill.scope === 'project' ? '项目级' : '用户级';
-    if (!window.confirm(`归档 Skill ${skill.name}（${label}）？`)) return;
+    if (!window.confirm(`卸载 Skill ${skill.name}（${label}）？此操作不可恢复。`)) return;
     try {
       await api.removeSkill(agentId, skill.name, skill.scope);
       await load();
@@ -748,8 +748,8 @@ function SkillsTab({ agentId }: { agentId: string }) {
                   </div>
                   <span className={`status-badge ${s}`}>{label}</span>
                   <button className="button ghost danger-text" onClick={() => void remove(skill)}>
-                    <Archive size={14} />
-                    归档
+                    <Trash2 size={14} />
+                    卸载
                   </button>
                 </article>
               ))}

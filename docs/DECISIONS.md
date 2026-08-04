@@ -28,6 +28,7 @@ Factory 启动 Bridge 的前台 `run` 命令，不委托 Bridge 自有 daemon，
 ## D-004：非破坏归档和可验证备份
 
 archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包含 runtime 时强制 scrypt + AES-256-GCM 加密。
+例外：Skill remove（D-003 演进）是用户决策的彻底卸载——直接删除技能目录（项目级含投影软链，用户级含 runtimeHome 原位目录），不可恢复、不再进归档区；Agent/Job 归档仍走归档区。
 
 ## D-005：本地临时 Web 控制面
 

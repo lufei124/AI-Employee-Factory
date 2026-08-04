@@ -23,6 +23,7 @@ vi.mock('../web/src/api.js', () => ({
     lifecycle: vi.fn(),
     listDocuments: vi.fn(),
     listSkills: vi.fn(),
+    removeSkill: vi.fn(),
     listSkillStoreRepositories: vi.fn(),
     addSkillStoreRepository: vi.fn(),
     removeSkillStoreRepository: vi.fn(),
@@ -461,5 +462,54 @@ describe('Web console core flows', () => {
     expect(
       await screen.findByText(/一键安装 superpowers 全部技能（用户级）：成功 1\/1/),
     ).toBeInTheDocument();
+  });
+
+  it('uninstalls a Skill from the Skills tab after an irreversible confirmation', async () => {
+    vi.mocked(api.getAgent).mockResolvedValue({
+      registry: {
+        id: 'ops',
+        name: '运营专员',
+        status: 'stopped',
+        runtime_home: { path: '/private/runtimes/ops/claude' },
+        bridge: { enabled: false, authorization: 'pending', home: '/private/bridges/ops' },
+      },
+      agent: {
+        description: '负责用户运营',
+        runtime: { provider: 'claude', locked: true, model: 'sonnet' },
+      },
+    } as never);
+    vi.mocked(api.terminalGuidance).mockResolvedValue({
+      runtimeLogin: 'agentctl runtime sync ops',
+      bridgeAuthorize: 'agentctl bridge authorize ops',
+      chat: 'agentctl chat ops',
+    });
+    vi.mocked(api.listSkills)
+      .mockResolvedValueOnce([
+        {
+          name: 'research-helper',
+          version: '1.0.0',
+          source: '/tmp/research-helper',
+          installed_at: '2026-08-04T00:00:00.000Z',
+          digest: 'abcdef0123456789',
+          scope: 'project',
+        },
+      ])
+      .mockResolvedValue([]);
+    vi.mocked(api.removeSkill).mockResolvedValue({ removed: true, scope: 'project' });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter initialEntries={['/agents/ops']}>
+        <AgentDetailPage agentId="ops" />
+      </MemoryRouter>,
+    );
+    await user.click(await screen.findByRole('button', { name: 'Skills' }));
+    await user.click(await screen.findByRole('button', { name: '卸载' }));
+
+    expect(confirm).toHaveBeenCalledWith('卸载 Skill research-helper（项目级）？此操作不可恢复。');
+    expect(api.removeSkill).toHaveBeenCalledWith('ops', 'research-helper', 'project');
+    // 卸载后列表刷新（getAgent 重载 + listSkills 重新拉取）
+    expect(await screen.findByText('暂无 项目级 Skill')).toBeInTheDocument();
   });
 });

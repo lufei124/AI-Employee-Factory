@@ -145,7 +145,7 @@ describe('SkillService', () => {
     ).rejects.toThrow('Runtime Home');
   });
 
-  it('archives user-scope skills into the runtimeHome archive', async () => {
+  it('uninstalls user-scope skills permanently (no .archive)', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-'));
     roots.push(root);
     const workspace = path.join(root, 'agent');
@@ -160,7 +160,38 @@ describe('SkillService', () => {
 
     await service.remove('arch-skill', 'user');
 
+    // 卸载为彻底删除：runtimeHome 原位目录删除，且不再产生 .archive 归档区
     expect(await fs.pathExists(path.join(runtimeHome, 'skills/arch-skill'))).toBe(false);
-    expect(await fs.pathExists(path.join(runtimeHome, 'skills/.archive'))).toBe(true);
+    expect(await fs.pathExists(path.join(runtimeHome, 'skills/.archive'))).toBe(false);
+  });
+
+  it('uninstalls project-scope skills and their projection symlink', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-'));
+    roots.push(root);
+    const workspace = path.join(root, 'agent');
+    const source = path.join(root, 'proj-remove-skill');
+    await fs.outputFile(
+      path.join(source, 'SKILL.md'),
+      '---\nname: proj-remove-skill\ndescription: p\n---\n',
+    );
+    const service = new SkillService(workspace, 'claude');
+    await service.install(source, 'project');
+
+    await service.remove('proj-remove-skill', 'project');
+
+    // store 根目录与 .claude/skills 投影软链都删除，无 .archive
+    expect(await fs.pathExists(path.join(workspace, 'skills/proj-remove-skill'))).toBe(false);
+    expect(await fs.pathExists(path.join(workspace, '.claude/skills/proj-remove-skill'))).toBe(
+      false,
+    );
+    expect(await fs.pathExists(path.join(workspace, 'skills/.archive'))).toBe(false);
+  });
+
+  it('rejects removing a skill that does not exist', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-'));
+    roots.push(root);
+    const service = new SkillService(path.join(root, 'agent'), 'claude');
+
+    await expect(service.remove('missing-skill', 'project')).rejects.toThrow('Skill 不存在');
   });
 });

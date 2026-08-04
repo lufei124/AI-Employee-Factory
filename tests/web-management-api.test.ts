@@ -281,6 +281,56 @@ describe('Web management API', () => {
     await server.close();
   });
 
+  it('uninstalls a Skill via DELETE and rejects a mismatched confirmName', async () => {
+    const { server, readHeaders, writeHeaders } = await setup();
+    const boundary = '----agentctl-remove-boundary';
+    const body = [
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="files"; filename="remove-me/SKILL.md"',
+      'Content-Type: text/markdown',
+      '',
+      '---\nname: remove-me\nversion: 1.0.0\n---\n# Remove me\n',
+      `--${boundary}--`,
+      '',
+    ].join('\r\n');
+    const uploaded = await server.inject({
+      method: 'POST',
+      url: '/api/v1/agents/user-operations/skills/upload',
+      headers: { ...writeHeaders, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: body,
+    });
+    expect(uploaded.statusCode).toBe(201);
+
+    const removed = await server.inject({
+      method: 'DELETE',
+      url: '/api/v1/agents/user-operations/skills/remove-me',
+      headers: writeHeaders,
+      payload: { confirmName: 'remove-me', scope: 'project' },
+    });
+    expect(removed.statusCode).toBe(200);
+    expect(removed.json().data).toEqual({ removed: true, scope: 'project' });
+    expect(
+      (
+        await server.inject({
+          method: 'GET',
+          url: '/api/v1/agents/user-operations/skills',
+          headers: readHeaders,
+        })
+      ).json().data,
+    ).toHaveLength(0);
+
+    const mismatched = await server.inject({
+      method: 'DELETE',
+      url: '/api/v1/agents/user-operations/skills/remove-me',
+      headers: writeHeaders,
+      payload: { confirmName: 'other-name', scope: 'project' },
+    });
+    expect(mismatched.statusCode).toBe(400);
+    expect(mismatched.json().error.code).toBe('VALIDATION_ERROR');
+    expect(mismatched.json().error.message).toContain('卸载确认不匹配');
+    await server.close();
+  });
+
   it('streams an imported backup into the controlled backup directory', async () => {
     const { server, readHeaders, writeHeaders } = await setup();
     const boundary = '----agentctl-backup-boundary';

@@ -430,10 +430,10 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
         .object({ confirmName: z.string(), scope: skillScopeSchema.optional() })
         .parse(request.body);
       if (body.confirmName !== request.params.name) {
-        throw new AgentCtlError('VALIDATION_ERROR', 'Skill 归档确认不匹配。');
+        throw new AgentCtlError('VALIDATION_ERROR', 'Skill 卸载确认不匹配。');
       }
       await options.application.removeSkill(request.params.id, request.params.name, body.scope);
-      return { data: { archived: true, scope: body.scope ?? 'project' } };
+      return { data: { removed: true, scope: body.scope ?? 'project' } };
     },
   );
 

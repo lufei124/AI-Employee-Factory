@@ -235,7 +235,7 @@ agentctl archive user-operations
 - Workspace/runtime/Bridge 路径必须位于各自根目录，且全局唯一。
 - Registry 先备份后原子更新，创建与运行使用原子锁。
 - Claude 不开启 bypassPermissions；Codex 使用 workspace-write/on-request。
-- archive、Skill/Job remove 都是可恢复归档，不直接永久删除。
+- archive、Job remove 都是可恢复归档，不直接永久删除。Skill remove 是彻底卸载（不可恢复，直接删除技能目录）。
 
 常见问题：
 
