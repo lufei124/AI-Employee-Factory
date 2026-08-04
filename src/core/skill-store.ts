@@ -39,6 +39,20 @@ const manifestSchema = z.object({
  * 或扫 `SKILL.md` 发现技能。安装复用 `SkillService.install`（传递源路径），不改变任何
  * 既有安装方式（上传目录 / 本地路径 / CLI）。仅接受 `https://github.com/` 公开仓库。
  */
+// 扫描 SKILL.md 时跳过的常见测试/内部/构建目录，避免把仓库自带的 skill 测试夹具暴露成可安装项。
+const SKIP_DIR_NAMES = new Set([
+  'test',
+  'tests',
+  '_test',
+  'testdata',
+  'scripts',
+  'internal',
+  'node_modules',
+  'dist',
+  'build',
+  'coverage',
+]);
+
 export class SkillStoreService {
   constructor(private readonly paths: FactoryPaths) {}
 
@@ -194,6 +208,8 @@ export class SkillStoreService {
         if (entry.name.startsWith('.')) continue; // 跳过 .git 与隐藏目录
         const full = path.join(directory, entry.name);
         if (entry.isDirectory()) {
+          // 跳过常见测试/内部/构建目录，避免把仓库自带的 skill 测试夹具暴露成可安装项。
+          if (SKIP_DIR_NAMES.has(entry.name)) continue;
           await visit(full);
         } else if (entry.name === 'SKILL.md') {
           const text = await fs.readFile(full, 'utf8');

@@ -103,6 +103,39 @@ describe('SkillStoreService', () => {
     });
   });
 
+  it('skips test and internal directories when scanning for skills', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-store-'));
+    roots.push(root);
+    const paths = pathsFor(root);
+    await writeEmptyConfig(paths);
+    const service = new SkillStoreService(paths);
+    await service.addRepository({ name: 'filtered', url: 'https://github.com/a/b' });
+    const cacheRoot = path.join(paths.skillStoreDir, 'cache', 'filtered');
+    await fs.ensureDir(path.join(cacheRoot, '.git'));
+    // 真实技能
+    await fs.outputFile(
+      path.join(cacheRoot, 'skills/real/SKILL.md'),
+      '---\nname: real\ndescription: real\n---\n',
+    );
+    // 测试 / 内部 / 脚本目录里的夹具不应被暴露
+    await fs.outputFile(
+      path.join(cacheRoot, 'tests/testskill/SKILL.md'),
+      '---\nname: testskill\ndescription: fixture\n---\n',
+    );
+    await fs.outputFile(
+      path.join(cacheRoot, 'internal/fixture/SKILL.md'),
+      '---\nname: fixture\ndescription: fixture\n---\n',
+    );
+    await fs.outputFile(
+      path.join(cacheRoot, 'scripts/fmtcheck/bad-skill/SKILL.md'),
+      '---\nname: bad-skill\ndescription: fixture\n---\n',
+    );
+
+    const skills = await service.listSkills('filtered');
+
+    expect(skills.map((skill) => skill.name)).toEqual(['real']);
+  });
+
   it('reads skills from an agent-skills.yaml manifest', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-store-'));
     roots.push(root);
