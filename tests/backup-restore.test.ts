@@ -2,6 +2,7 @@ import fs from 'fs-extra';
 import os from 'node:os';
 import path from 'node:path';
 import * as tar from 'tar';
+import YAML from 'yaml';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BackupService } from '../src/core/backup.js';
 import { CreateAgentService } from '../src/core/create-agent.js';
@@ -130,5 +131,35 @@ describe('BackupService', () => {
     );
 
     await expect(service.restore(backup)).rejects.toThrow(/未声明文件/);
+  });
+
+  it('writes factory_version into the backup manifest (OP3-B)', async () => {
+    const { service, root } = await setup();
+    const backup = await service.backup('user-operations');
+    const extract = path.join(root, 'extract');
+    await fs.ensureDir(extract);
+    await tar.x({ file: backup, cwd: extract });
+    const manifest = YAML.parse(await fs.readFile(path.join(extract, 'manifest.yaml'), 'utf8'));
+    expect(manifest.factory_version).toBe('0.1.0');
+  });
+
+  it('restores an old backup manifest that lacks factory_version (OP3-B forward-compat)', async () => {
+    const { service, root } = await setup();
+    const backup = await service.backup('user-operations');
+    const tamper = path.join(root, 'tamper');
+    await fs.ensureDir(tamper);
+    await tar.x({ file: backup, cwd: tamper });
+    const manifestFile = path.join(tamper, 'manifest.yaml');
+    const manifest = YAML.parse(await fs.readFile(manifestFile, 'utf8'));
+    delete manifest.factory_version;
+    await fs.writeFile(manifestFile, YAML.stringify(manifest));
+    await fs.remove(backup);
+    await tar.c(
+      { gzip: true, cwd: tamper, file: backup, portable: true },
+      await fs.readdir(tamper),
+    );
+
+    const restored = await service.restore(backup, { newId: 'user-operations-old' });
+    expect(restored.id).toBe('user-operations-old');
   });
 });

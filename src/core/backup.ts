@@ -16,6 +16,7 @@ import { AgentCtlError } from './errors.js';
 import { getRegisteredAgent } from './agents.js';
 import { assertInside, type FactoryPaths } from './paths.js';
 import type { RegistryStore } from './registry.js';
+import { FACTORY_VERSION } from './version.js';
 import { agentConfigSchema, agentIdSchema } from '../schemas/agent-schema.js';
 import { backupManifestSchema, type BackupManifest } from '../schemas/backup-schema.js';
 import { registryAgentSchema } from '../schemas/registry-schema.js';
@@ -152,6 +153,7 @@ export class BackupService {
         include_runtime: options.includeRuntime === true,
         files,
         environment: { node: process.version, platform: process.platform, arch: process.arch },
+        factory_version: FACTORY_VERSION,
       });
       await fs.writeFile(path.join(stage, 'manifest.yaml'), YAML.stringify(manifest));
       await fs.writeFile(

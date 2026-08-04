@@ -1,9 +1,13 @@
-import { buildRuntimeEnvironment } from '../core/runtime.js';
+import { buildSafeBaseEnvironment } from '../core/runtime.js';
 import type { RegistryAgent } from '../schemas/registry-schema.js';
 import type { ExecutionContext, RuntimeAdapter } from './runtime-adapter.js';
 
 export class ClaudeRuntimeAdapter implements RuntimeAdapter {
   readonly provider = 'claude' as const;
+
+  buildEnv(agent: RegistryAgent, source: NodeJS.ProcessEnv = process.env): Record<string, string> {
+    return { ...buildSafeBaseEnvironment(source), CLAUDE_CONFIG_DIR: agent.runtime_home.path };
+  }
 
   chat(agent: RegistryAgent): ExecutionContext {
     return this.context(agent, 'chat', agent.runtime.model ? ['--model', agent.runtime.model] : []);
@@ -34,7 +38,7 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapter {
       command: 'claude',
       args,
       cwd: agent.workspace.path,
-      env: buildRuntimeEnvironment(agent),
+      env: this.buildEnv(agent),
     };
     if (timeoutMs !== undefined) context.timeoutMs = timeoutMs;
     return context;

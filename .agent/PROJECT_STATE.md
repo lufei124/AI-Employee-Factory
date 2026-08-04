@@ -1,9 +1,9 @@
 # 项目状态
 
-最后更新：2026-08-04 12:35 +0800
+最后更新：2026-08-04 12:46 +0800
 更新者：claude-20260803-01
-当前版本/分支：master（TASK-010 已提交 cb9723b；TASK-011 改动待提交）
-当前阶段：TASK-011 备份密钥治理 OP2-E + R5 env 清洗 实施完成，待 commit
+当前版本/分支：master（TASK-011 已提交 7ef0f16；TASK-012 改动待提交）
+当前阶段：TASK-012 OP3-B 前向兼容基础 + OP3-C adapter 治理 实施完成，待 commit
 
 ## 已完成
 
@@ -25,10 +25,11 @@
 - 完成 Factory 自管员工回收站：一键移入、7 天恢复、ID 重用防冲突和下次 Web/CLI 启动时过期清理。
 - 完成 TASK-010 记忆系统优化 OP0+Phase1(OP2)：ADR D-009（frozen/versioned 演进流程）、R2 script Job 注入 runtime env、R4 CC Switch 源不得指向员工 Runtime Home、R24 流量路由字段保留同步+routedFieldsChanged 审计告警、OP2-B assertInsideReal 落地于 ccSwitch/job-runner/installSkill/restoreBackupPath/scheduler、OP2-C Registry 序列化锁+secureProfile per-bridge 锁+FileLock 损坏拒绝、OP2-D R14 bridgeStatus 补 secureProfile+R19 restore 重置授权态。89 单测 + e2e 全过。
 - 完成 TASK-011 备份密钥治理 OP2-E + R5 env 清洗：R7 shouldCopy 黑名单扩展(settings.json/config.json/.netrc/credentials.json/gcloud.json/id_rsa/id_ed25519/id_dsa/id_ecdsa + .pfx/.keystore，id_*.pub 保留)+SECRET_PATTERN、R27 rejectSecretsInStage 扫描 workspace+runtime 含未跟踪文件命中即拒、R8 解密产物 writeFile 0o600、R20 doctor trash-health 告警 failed/moving/purging + `trash purge <id> --force`、R21 verifyChecksums 集合一致性拒未声明文件(manifest.yaml/checksums.txt 豁免)、R5 factoryConfigSchema+readConfig+sync.sanitize_non_whitelist(default false)+syncCcSwitchClaudeProvider 清洗非白名单 env。新增 tests/config.test.ts(+4)、backup-restore +3、trash +3、doctor +1、runtime +1；共 101 单测 + e2e 全过。
+- 完成 TASK-012 OP3-B 前向兼容基础 + OP3-C adapter 治理（B1 最小）：OP3-B（version.ts FACTORY_VERSION、CURRENT_AGENT_CONFIG_SCHEMA_VERSION、readAgentConfig 版本化只读 reader v1=identity 不原地 mutate、backup manifest 加性 factory_version(default ''，旧备份可恢复)、trash components length(6)->min(6) 为未来第 7 类组件留前向兼容）；OP3-C（RuntimeAdapter 增 buildEnv、Claude/Codex adapter 实现、buildRuntimeEnvironment 委托 adapter.buildEnv 消除 if/else、getRuntimeAdapter 改 Record<RuntimeProvider> 工厂对象编译期穷尽+未知 provider 抛 DEPENDENCY_MISSING 不回退 Codex 修 T-2）。AIEF2 与 agentctl migrate 明确不在本批。新增 tests/agents.test.ts(+2)、runtime +2、backup-restore +2、trash +1；共 108 单测 + e2e 全过。
 
 ## 进行中
 
-- 无（TASK-011 待 commit，未 push）。
+- 无（TASK-012 待 commit，未 push）。
 
 ## 待审查
 

@@ -21,6 +21,9 @@ export const portableRelativePathSchema = z
 
 export const runtimeProviderSchema = z.enum(['claude', 'codex']);
 
+// OP3-B：当前 agent.yaml schema 版本。版本化只读 reader 据此显式分派；v1=identity。
+export const CURRENT_AGENT_CONFIG_SCHEMA_VERSION = 1;
+
 export const agentConfigSchema = z.object({
   schema_version: z.literal(1),
   id: agentIdSchema,

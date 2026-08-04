@@ -2,7 +2,7 @@ import fs from 'fs-extra';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { buildRuntimeEnvironment } from '../src/core/runtime.js';
+import { buildRuntimeEnvironment, getRuntimeAdapter } from '../src/core/runtime.js';
 import { ClaudeRuntimeAdapter } from '../src/runtimes/claude-adapter.js';
 import { CodexRuntimeAdapter } from '../src/runtimes/codex-adapter.js';
 import type { RegistryAgent } from '../src/schemas/registry-schema.js';
@@ -49,6 +49,23 @@ describe('runtime environment isolation', () => {
     expect(env).not.toHaveProperty('OPENAI_API_KEY');
     expect(env).not.toHaveProperty('AWS_SECRET_ACCESS_KEY');
     expect(env.HOME).toBe('/Users/person');
+  });
+
+  it('throws DEPENDENCY_MISSING for an unknown provider instead of falling back to Codex (OP3-C)', () => {
+    const rogue: RegistryAgent = {
+      ...agent('claude'),
+      runtime: { provider: 'unknown' as 'claude', locked: true },
+    };
+    expect(() => getRuntimeAdapter(rogue)).toThrow(/未注册的 Runtime Provider/);
+  });
+
+  it('builds CODEX_HOME for the codex provider via adapter.buildEnv delegation (OP3-C)', () => {
+    const env = buildRuntimeEnvironment(agent('codex'), {
+      HOME: '/Users/person',
+      PATH: '/bin',
+    });
+    expect(env.CODEX_HOME).toBe('/tmp/private/runtimes/employee/codex');
+    expect(env).not.toHaveProperty('CLAUDE_CONFIG_DIR');
   });
 
   it('syncs only the active CC Switch provider into the isolated Claude home', async () => {

@@ -1,9 +1,13 @@
-import { buildRuntimeEnvironment } from '../core/runtime.js';
+import { buildSafeBaseEnvironment } from '../core/runtime.js';
 import type { RegistryAgent } from '../schemas/registry-schema.js';
 import type { ExecutionContext, RuntimeAdapter } from './runtime-adapter.js';
 
 export class CodexRuntimeAdapter implements RuntimeAdapter {
   readonly provider = 'codex' as const;
+
+  buildEnv(agent: RegistryAgent, source: NodeJS.ProcessEnv = process.env): Record<string, string> {
+    return { ...buildSafeBaseEnvironment(source), CODEX_HOME: agent.runtime_home.path };
+  }
 
   chat(agent: RegistryAgent): ExecutionContext {
     const args = ['-C', agent.workspace.path];
@@ -37,7 +41,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
       command: 'codex',
       args,
       cwd: agent.workspace.path,
-      env: buildRuntimeEnvironment(agent),
+      env: this.buildEnv(agent),
     };
     if (timeoutMs !== undefined) context.timeoutMs = timeoutMs;
     return context;

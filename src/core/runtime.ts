@@ -5,6 +5,7 @@ import { atomicWriteFile } from './atomic.js';
 import { ClaudeRuntimeAdapter } from '../runtimes/claude-adapter.js';
 import { CodexRuntimeAdapter } from '../runtimes/codex-adapter.js';
 import type { RuntimeAdapter } from '../runtimes/runtime-adapter.js';
+import type { RuntimeProvider } from '../schemas/agent-schema.js';
 import type { RegistryAgent } from '../schemas/registry-schema.js';
 
 const safeInheritedVariables = new Set([
@@ -194,16 +195,29 @@ export function buildRuntimeEnvironment(
   agent: RegistryAgent,
   source: NodeJS.ProcessEnv = process.env,
 ): Record<string, string> {
-  const result = buildSafeBaseEnvironment(source);
-  if (agent.runtime.provider === 'claude') result.CLAUDE_CONFIG_DIR = agent.runtime_home.path;
-  else result.CODEX_HOME = agent.runtime_home.path;
-  return result;
+  // OP3-C：委托给 adapter.buildEnv，消除 provider if/else 与静默回退。
+  return getRuntimeAdapter(agent).buildEnv(agent, source);
 }
+
+// OP3-C：工厂对象。Record<RuntimeProvider, _> 类型注解对对象字面量做穷尽性检查--
+// 新增 provider 时此处编译失败，等价 assertNever；未知 provider 运行时抛
+// DEPENDENCY_MISSING，不再静默回退 Codex（修 T-2）。
+const runtimeAdapterFactories: Record<RuntimeProvider, () => RuntimeAdapter> = {
+  claude: () => new ClaudeRuntimeAdapter(),
+  codex: () => new CodexRuntimeAdapter(),
+};
 
 export function getRuntimeAdapter(agent: RegistryAgent): RuntimeAdapter {
   if (!agent.runtime.locked)
     throw new AgentCtlError('CONFLICT', `Agent ${agent.id} 的运行器未锁定。`);
-  return agent.runtime.provider === 'claude'
-    ? new ClaudeRuntimeAdapter()
-    : new CodexRuntimeAdapter();
+  const factory = runtimeAdapterFactories[agent.runtime.provider];
+  if (!factory)
+    throw new AgentCtlError(
+      'DEPENDENCY_MISSING',
+      `未注册的 Runtime Provider：${agent.runtime.provider}`,
+      {
+        remediation: '请检查 agent.yaml 的 runtime.provider，仅支持 claude / codex。',
+      },
+    );
+  return factory();
 }

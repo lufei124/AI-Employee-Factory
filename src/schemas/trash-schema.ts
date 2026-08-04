@@ -28,7 +28,7 @@ export const trashManifestSchema = z.object({
   expires_at: z.string().datetime(),
   state: z.enum(['moving', 'ready', 'restoring', 'purging', 'failed']),
   registry: registryAgentSchema,
-  components: z.array(trashComponentSchema).length(6),
+  components: z.array(trashComponentSchema).min(6),
   error: z.string().min(1).optional(),
 });
 

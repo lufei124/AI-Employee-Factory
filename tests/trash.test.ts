@@ -115,6 +115,31 @@ describe('trash manifest schema', () => {
       }),
     ).toMatchObject({ schema_version: 1, state: 'ready' });
   });
+
+  it('accepts seven components for forward-compat after min(6) (OP3-B)', async () => {
+    const module = (await import('../src/schemas/trash-schema.js')) as Record<string, unknown>;
+    const schema = module.trashManifestSchema as { parse: (value: unknown) => unknown };
+    const names = ['workspace', 'runtime', 'bridge', 'logs', 'services', 'schedules', 'workspace'];
+    expect(
+      schema.parse({
+        schema_version: 1,
+        trash_id: '018f6b77-82d4-7c80-8000-000000000002',
+        agent_id: 'test-employee',
+        name: '测试员工',
+        deleted_at: '2026-08-03T00:00:00.000Z',
+        expires_at: '2026-08-10T00:00:00.000Z',
+        state: 'ready',
+        registry: testAgent('/tmp/trash-schema-7'),
+        components: names.map((name, index) => ({
+          name,
+          source: `/tmp/trash-schema-7/${name}/test-employee`,
+          trashed: `/tmp/trash-schema-7/${name}/.agentctl-trash/id-${index}`,
+          existed: true,
+          moved: true,
+        })),
+      }),
+    ).toMatchObject({ schema_version: 1 });
+  });
 });
 
 describe('TrashService', () => {
