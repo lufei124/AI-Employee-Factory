@@ -48,6 +48,15 @@ Web 仅绑定 `127.0.0.1`：启动 URL fragment 中的一次性 token 交换为 
 
 外部/持久化 archival 后端（`local-sqlite` / `external`）当前**仅定义契约、不实现**（`src/core/archival.ts`，默认 `none`）。任何后端落地前必须满足 D-014 的 frozen 写入不变量：写入前经 `SECRET_PATTERN` 过滤、用户显式 per-entry 授权、只归档工作区可迁移身份知识（不传输 `runtime_home` / `bridge` 内容）、网络面与多租户威胁模型经安全评审。本地归档区（`archive`/`trash`/`PruneService.archives`）是另一概念，语义不受影响。
 
+## OP5-E：PathLayout 路径布局收敛（R25）
+
+`resolvePathLayout` 返回数据契约 `PathLayout`（home、workspaceRoot、managedDirs）。收敛语义（`src/core/paths.ts` 注释 + `assertPathLayout`）：
+
+- **两棵树**：`home`（所有受管目录：registry/runtimes/bridges/services/schedules/logs/backups/trash/locks/skill-store）与 `workspaceRoot`（每个员工 workspace）。所有受管根目录必须位于 home 或 workspaceRoot 树内。
+- **外置卷**：默认不支持直接把外部路径作为受管目录。外置存储须先用 **bind mount 或符号链接**挂到 home/workspaceRoot 树内，并经 `assertInsideReal`（OP2-B，realpath 解析 + 拒软链接逃逸）校验；直接把外部路径当受管目录会被拒绝。
+- **根覆盖是刻意选择**：用户可用 `AI_EMPLOYEES_HOME` / `AI_EMPLOYEES_WORKSPACE_ROOT` 把根覆盖到外置卷（README「覆盖默认值」）。该覆盖不硬失败，但受管目录仍须经 `assertInside`/`assertInsideReal` 落回树内；对「根位于 userHome 之外」的外置覆盖，doctor 应告警（未来批次）。
+- **`assertPathLayout`**：同步、零 I/O 的收敛校验，供初始化/doctor 等入口调用。
+
 ## 工程边界
 
 v1 为本地单用户 macOS 工具，不是强安全多租户沙箱。`workspace` 权限和人工审批是默认防线；若需要对不可信 Agent 进行 OS 级强隔离，应另行增加容器或虚拟机边界。

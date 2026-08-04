@@ -1,9 +1,9 @@
 # 项目状态
 
-最后更新：2026-08-04 21:20 +0800
+最后更新：2026-08-04 21:30 +0800
 更新者：claude-20260803-01
-当前版本/分支：master（TASK-020 阶段11 OP5-D per-agent Provider 解耦 已提交）
-当前阶段：TASK-020 记忆系统剩余批次合并（阶段1-11 已提交；阶段12 按顺序依赖后续实施）
+当前版本/分支：master（TASK-020 阶段12 OP5-E PathLayout 收敛 已提交）
+当前阶段：TASK-020 记忆系统剩余批次合并（阶段1-12 全部已提交，计划完成）
 
 ## 已完成
 
@@ -58,9 +58,11 @@
 
 - 完成 TASK-020 阶段11（OP5-D per-agent Provider 解耦）：registry-schema registryAgentSchema 增 optional credential_provider:string（Registry 本机绑定侧，不进便携文件 agent.yaml，守 D-006/OP3-A 便携面；v2 加性字段零 bump）；runtime.ts 新增 SqliteExecutor 类型+defaultSqliteExecutor（sqlite3 CLI `-readonly -json` 只读查询，CI ubuntu/Node 20.19 无 node:sqlite 且不引入原生依赖；sqlite3 打开不存在文件 exit 1 报 NOT_FOUND）+ccSwitchProviderSettingsConfig（app_type='claude' AND name=... 单引号转义防注入，解析 settings_config.env）+ccSwitchProviderNames（NOT_FOUND 列出可用 Provider）；syncCcSwitchClaudeProvider 增 providerName+sqliteExecutor 参数（指定时从 DB 读该 Provider 白名单过滤，否则沿用 live 零行为变更），抽出 applyProviderEnv 公共尾部（合并写+保留员工非白名单+R24 routedFieldsChanged+0600）；factory-application syncRuntime(id,{provider}) 增 --provider 写/清 Registry 绑定（live 清除），prepareRuntime 透传 registry.credential_provider；cli-program runtime sync 增 --provider <name>（exactOptionalPropertyTypes 下条件传参）；doctor 增 credential-provider 检查（claude 且有绑定 → warn 短期语义+remediation --provider live，无绑定 → pass）。新增 runtime.test.ts(+3：注入 SqliteExecutor 同步指定 Provider+白名单+0600+摘要无值、缺失 Provider NOT_FOUND、真实 sqlite3 CLI e2e 绑定非 live）、registry +1、doctor +1、cli-structure +1。共 231 单测。docs/DECISIONS.md 增 D-016 ADR；README 增 --provider 用法段。npm run verify 实跑（build+231 单测全绿+lint+prettier 全绿）通过；npm run test:e2e 在干净树同样失败（web-console.spec.ts 既有 feedback-analyze Skill 可见性 flake，git stash 复现确认非本阶段引入）。未 push。
 
+- 完成 TASK-020 阶段12（OP5-E PathLayout 收敛）：src/core/paths.ts 增 assertPathLayout 同步收敛校验（data-only 零 I/O，校验全部受管目录位于 home/workspaceRoot 两棵树内；违反抛 VALIDATION_ERROR，remediation 指向 bind mount/符号链接挂入树内并经 realpath 校验）+isInsideAny 助手（path.relative 包含语义，防前缀兄弟目录 trick）；PathLayout 注释与接口语义显式化（OP5-E 外置卷：home/workspaceRoot 根允许用户显式覆盖到外置卷属刻意选择不硬失败，但受管目录仍须落回树内）；docs/ARCHITECTURE.md 增「OP5-E：PathLayout 路径布局收敛（R25）」段（两棵树/外置卷须 bind mount/symlink 挂入+assertInsideReal/根覆盖是刻意选择/assertPathLayout 同步零 I/O）。新增 tests/paths.test.ts(+4：assertPathLayout 默认布局通过、/etc 逃逸拒绝+remediation 含 bind mount/符号链接/realpath、home 前缀兄弟目录拒绝、workspaceRoot 显式覆盖作为第二棵树通过、home 外置覆盖时外部受管目录仍拒绝)。共 235 单测。npm run verify 实跑（build+235 单测全绿+lint --max-warnings=0+prettier 全绿）通过。未 push。
+
 ## 进行中
 
-- TASK-020 记忆系统剩余批次合并：阶段1-11（OP2-F / CLI 结构化输出 / OP4-C / OP1 Stage B-E / OP5-A / OP5-B / OP5-C / OP5-D）已提交；阶段12（OP5-E PathLayout 收敛）按顺序依赖后续实施。
+- TASK-020 记忆系统剩余批次合并：阶段1-12（OP2-F / CLI 结构化输出 / OP4-C / OP1 Stage B-E / OP5-A / OP5-B / OP5-C / OP5-D / OP5-E）全部已提交，计划完成，无剩余阶段。
 
 ## 待审查
 

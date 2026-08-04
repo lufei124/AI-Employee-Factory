@@ -22,9 +22,17 @@ export interface FactoryPaths {
 }
 
 // OP2-F 扩展面能力隔离（R23）+ OP5-E PathLayout 收敛（R25）：
-// 路径布局收敛为纯数据接口，根必须位于 home 或 workspaceRoot 树内；
-// 外置卷需经 bind mount/符号链接挂到树内并经 assertInside/assertInsideReal 校验。
-// PathLayout 是数据契约（data-only），不持有 fs/execa，也不定义加载器。
+// 路径布局收敛为纯数据接口。PathLayout 是数据契约（data-only），不持有 fs/execa，也不定义加载器。
+//
+// OP5-E 外置卷语义（R25，显式声明）：
+// - PathLayout 的根（home、workspaceRoot）是 Factory 的两棵树。所有受管根目录（managedDirs，
+//   以及每个员工 workspace 位于 workspaceRoot 树内）必须位于 home 或 workspaceRoot 树内。
+// - 外置卷（外部存储）默认不支持直接作为受管目录；如需外置，必须用 bind mount 或符号链接把它
+//   挂进 home/workspaceRoot 树内，并经 realpath 校验（assertInsideReal，OP2-B）。直接把外部路径
+//   当作受管目录（含软链接逃逸）会被拒绝。
+// - home 与 workspaceRoot 本身允许由用户显式覆盖到外置卷（README「覆盖默认值」场景，属有意选择）；
+//   该覆盖不在此处硬失败，但受管目录仍须经 assertInsideReal 落到树内，且 doctor 应在未来批次
+//   对「根位于 userHome 之外」的外置覆盖给出 warn。
 export interface PathLayout {
   readonly home: string;
   readonly workspaceRoot: string;
@@ -107,6 +115,36 @@ export function resolvePathLayout(paths: FactoryPaths): PathLayout {
       paths.skillStoreDir,
     ],
   };
+}
+
+// OP5-E：PathLayout 收敛的同步校验（data-only，零 I/O）。
+// 校验两棵树与全部受管目录都位于 home 或 workspaceRoot 树内——受管目录一律以 home 为根
+// （resolveFactoryPaths 的布局），workspaceRoot 是第二棵树（员工 workspace 所在）。外部直接
+// 覆盖到 home 树之外（README「覆盖默认值」的有意外置选择）不被拒绝，但其受管目录仍须落回 home 内；
+// 违反则抛 VALIDATION_ERROR，remediation 指向 bind mount/符号链接挂入树内。
+export function assertPathLayout(layout: PathLayout): void {
+  const roots = [layout.home, layout.workspaceRoot];
+  for (const dir of layout.managedDirs) {
+    if (!isInsideAny(dir, roots)) {
+      throw new AgentCtlError(
+        'VALIDATION_ERROR',
+        `受管目录必须位于 ${layout.home} 树内（或由 workspaceRoot 覆盖）。`,
+        {
+          remediation:
+            '请检查路径配置。外置卷须先用 bind mount 或符号链接挂到 home/workspaceRoot 树内，并经 realpath 校验。',
+        },
+      );
+    }
+  }
+}
+
+function isInsideAny(candidate: string, roots: readonly string[]): boolean {
+  const resolved = path.resolve(candidate);
+  return roots.some((root) => {
+    const resolvedRoot = path.resolve(root);
+    const relative = path.relative(resolvedRoot, resolved);
+    return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  });
 }
 
 export function assertInside(root: string, candidate: string, label: string): string {
