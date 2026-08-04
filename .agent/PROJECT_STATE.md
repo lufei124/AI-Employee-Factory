@@ -1,9 +1,9 @@
 # 项目状态
 
-最后更新：2026-08-04 20:00 +0800
+最后更新：2026-08-04 20:16 +0800
 更新者：claude-20260803-01
-当前版本/分支：master（工作区含 TASK-020 阶段3 OP4-C 未提交改动）
-当前阶段：TASK-020 记忆系统剩余批次合并（阶段1-2 已提交；阶段3 OP4-C 已实现，待 commit）
+当前版本/分支：master（TASK-020 阶段4 OP1 Stage B knowledge/ 索引 + recall 已提交）
+当前阶段：TASK-020 记忆系统剩余批次合并（阶段1-4 已提交；阶段5-12 按顺序依赖后续实施）
 
 ## 已完成
 
@@ -42,9 +42,11 @@
 
 - 完成 TASK-020 阶段3（OP4-C OTel GenAI span，gated on 阶段2）：src/core/observability.ts SpanAttrs 增 'gen_ai.request.model'/'gen_ai.usage.input_tokens'/'gen_ai.usage.output_tokens'/'gen_ai.usage.cost_usd'（可选）+toGenAiAttrs(usage) 映射助手（缺省字段省略，Codex 无 model/cost 自然不报）；src/web/operation-manager.ts OperationTask 返回类型增 usage?:RunUsage，execute 内 task 结果 usage 经 finally span.end(toGenAiAttrs(usage)) 上报（无 usage 传 {}，向后兼容）；src/application/factory-application.ts runAgent 默认启用结构化输出（run 传 structured=true + options 合并 provider/structured），runLogged 解析 usage；src/web/server.ts run handler 返回 {exitCode, usage?} 透传。新增 tests/observability.test.ts toGenAiAttrs(+2)、operation-manager +2（RecordingSink 捕获 endAttrs 断言 gen_ai 属性/无 usage 传 {}）。共 192 单测 + e2e 全过，npm run verify 实跑通过。
 
+- 完成 TASK-020 阶段4（OP1 Stage B knowledge/ 轻量索引 + recall）：src/core/knowledge.ts(新增) KnowledgeIndex 接口（ingest/recall/compact/verifyConsistency）+KnowledgeEntry（frontmatter title/summary/keywords/updated_at/authority_layer）+defaultLayerFor（按顶层子目录推断：decisions→'decisions'、其余→'knowledge'）；src/core/knowledge-index.ts(新增) KnowledgeIndexImpl 扫描 knowledge/**\/*.md 解析 frontmatter 建关键词倒排，写派生 knowledge/.index.json（atomicWriteFile 0600，.gitignore 排除），recall 中文感知（整词+2-gram 退化+同义词扩展），verifyConsistency 检测漂移；src/core/templates.ts 增 knowledge/README.md frontmatter 约定种子+workspace .gitignore 排除 knowledge/.index.json；src/application/factory-application.ts knowledgeIngest/knowledgeCompact/knowledgeRecall/knowledgeVerify/knowledgeRead/knowledgeWrite 复用 documentFile 的 assertInside+realpath+symlink 硬约束模式，写后自动 re-ingest；src/cli-program.ts 新增 agentctl knowledge 命令组（rebuild/recall/verify）；src/core/doctor.ts 增 knowledge-index 索引漂移检查；src/web/server.ts 增 GET /api/v1/agents/:id/knowledge/recall?q= 只读 API。新增 tests/knowledge.test.ts(+8)。npm run verify 实跑（build+lint+prettier 全绿；test 4 项既有失败为并发 TASK-018 技能空预设回归，干净树复现，非本阶段引入）。未 push。
+
 ## 进行中
 
-- TASK-020 记忆系统剩余批次合并：阶段1（OP2-F）、阶段2（CLI 结构化输出）、阶段3（OP4-C）已实现待 commit；阶段4-12（OP1 Stage B-E / OP5 A-E）按顺序依赖后续实施。
+- TASK-020 记忆系统剩余批次合并：阶段1（OP2-F）、阶段2（CLI 结构化输出）、阶段3（OP4-C）、阶段4（OP1 Stage B knowledge/ 索引 + recall）已提交；阶段5-12（OP1 Stage C-E / OP5 A-E）按顺序依赖后续实施。
 
 ## 待审查
 
