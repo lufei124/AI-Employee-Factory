@@ -22,6 +22,4 @@ escalation_conditions:
   - 同一用户问题短时间快速增长
   - 自动任务连续失败、数据来源中断或任务长期阻塞
   - 需要生产权限或管理决策
-skills:
-  - feedback-collect
-  - feedback-analyze
+skills: []
