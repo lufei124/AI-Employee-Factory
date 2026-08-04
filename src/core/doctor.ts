@@ -2,6 +2,7 @@ import fs from 'fs-extra';
 import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
+import YAML from 'yaml';
 import { computeConfigHash, getRegisteredAgent, readAgentConfigFile } from './agents.js';
 import { validateMemoryConfig } from './authority.js';
 import { BridgeAdapter } from './bridge.js';
@@ -139,14 +140,31 @@ export class DoctorService {
         detail: available ? '已安装' : '未安装（只影响使用该能力的 Agent）',
       });
     }
-    if (process.platform === 'darwin')
+    // OP5-A：service-platform 按 config.yaml 的 service_provider 分发。
+    let serviceProvider = 'unsupported';
+    if (await fs.pathExists(this.paths.configFile)) {
+      try {
+        const raw = YAML.parse(await fs.readFile(this.paths.configFile, 'utf8'));
+        if (typeof raw?.service_provider === 'string') serviceProvider = raw.service_provider;
+      } catch {
+        // 配置不可解析则维持 unsupported，由 config-permissions 检查另行告警。
+      }
+    }
+    if (serviceProvider === 'launchd')
       add({ id: 'service-platform', label: 'launchd', status: 'pass', detail: 'macOS launchd' });
+    else if (serviceProvider === 'systemd')
+      add({
+        id: 'service-platform',
+        label: 'systemd',
+        status: 'warn',
+        detail: 'systemd 服务适配器为桩，install 抛 DEPENDENCY_MISSING（v1 仅正式支持 macOS）',
+      });
     else
       add({
         id: 'service-platform',
         label: '服务平台',
         status: 'warn',
-        detail: 'v1 仅正式支持 macOS',
+        detail: '未配置受支持的 service_provider（v1 仅正式支持 macOS launchd）',
       });
     if (await fs.pathExists(this.paths.configFile)) {
       const configMode = (await fs.stat(this.paths.configFile)).mode & 0o777;

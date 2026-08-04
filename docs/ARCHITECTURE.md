@@ -8,7 +8,7 @@
 - `web/`：React/Vite 中文单页控制台，不直接访问文件系统或执行命令。
 - `src/core/`：路径、Schema 组合、Registry、原子锁、模板、创建、执行、Job、Skill、Skill 商店、备份与诊断。
 - `src/runtimes/`：Claude/Codex 命令和 ExecutionContext，不直接执行进程。
-- `src/services/`：ServiceAdapter 和 launchd 实现；未来 systemd 实现不得改变 CLI 语义。
+- `src/services/`：ServiceAdapter、launchd 实现与按 `service_provider` 分发的工厂（`createServiceFactory`）；systemd 适配器为桩（`install()` 抛 `DEPENDENCY_MISSING`），实现不得改变 CLI 语义。
 - `src/schemas/`：版本化 Zod 数据合同。
 - `presets/` 与 `templates/`：可审查、不含 Secret 的生成源。
 

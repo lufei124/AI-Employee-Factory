@@ -1,6 +1,7 @@
 # v1 假设与默认值
 
 - 正式支持 macOS，Linux systemd 仅保留适配器边界。
+- 服务平台由 `config.yaml` 的 `service_provider` 分发：`launchd`（macOS 唯一正式实现）或 `systemd`（OP5-A 桩，`install()` 抛 `DEPENDENCY_MISSING`，待映射实现）。
 - `user-operations` 使用 Claude `sonnet`；Codex 未指定模型时使用 CLI 默认值。
 - Registry 保存规范化绝对路径，终端显示时缩写为 `~`。
 - 飞书只支持 dedicated 或 disabled；真实登录、扫码、Secret 与现有 Skill 内容由用户后续完成。
