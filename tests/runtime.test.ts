@@ -112,6 +112,41 @@ describe('runtime environment isolation', () => {
     }
   });
 
+  it('sanitizes non-whitelist env when sanitizeNonWhitelist is true (R5)', async () => {
+    const runtime = (await import('../src/core/runtime.js')) as Record<string, unknown>;
+    const sync = runtime.syncCcSwitchClaudeProvider as (
+      agent: RegistryAgent,
+      home: string,
+      runtimesDir: string,
+      sanitize?: boolean,
+    ) => Promise<unknown>;
+    expect(sync).toBeTypeOf('function');
+    if (typeof sync !== 'function') return;
+
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-cc-switch-r5-'));
+    try {
+      const claudeAgent = {
+        ...agent('claude'),
+        runtime_home: { path: path.join(root, 'private/runtime') },
+      };
+      await fs.outputJson(path.join(root, '.claude/settings.json'), {
+        env: { ANTHROPIC_AUTH_TOKEN: 'provider-secret' },
+      });
+      await fs.outputJson(path.join(claudeAgent.runtime_home.path, 'settings.json'), {
+        env: { EMPLOYEE_LOCAL_SETTING: 'drop-me', ANTHROPIC_AUTH_TOKEN: 'old-secret' },
+      });
+
+      await sync(claudeAgent, root, path.join(root, 'runtimes'), true);
+      const isolated = await fs.readJson(path.join(claudeAgent.runtime_home.path, 'settings.json'));
+
+      // 白名单 provider 字段保留，非白名单残留被移除
+      expect(isolated.env).toMatchObject({ ANTHROPIC_AUTH_TOKEN: 'provider-secret' });
+      expect(isolated.env).not.toHaveProperty('EMPLOYEE_LOCAL_SETTING');
+    } finally {
+      await fs.remove(root);
+    }
+  });
+
   it('rejects a CC Switch source that points into an employee Runtime Home', async () => {
     const runtime = (await import('../src/core/runtime.js')) as Record<string, unknown>;
     const sync = runtime.syncCcSwitchClaudeProvider as (

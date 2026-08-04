@@ -83,4 +83,52 @@ describe('BackupService', () => {
       'user-operations-copy',
     ]);
   });
+
+  it('excludes known secret files (R7) but keeps ssh public keys', async () => {
+    const { registry, service, root } = await setup();
+    const agent = (await registry.read()).agents[0];
+    if (!agent) throw new Error('missing agent');
+    await fs.outputFile(path.join(agent.workspace.path, 'settings.json'), '{"theme":"dark"}');
+    await fs.outputFile(path.join(agent.workspace.path, 'id_rsa'), 'PRIVATE-KEY');
+    await fs.outputFile(path.join(agent.workspace.path, 'id_ed25519'), 'PRIVATE-KEY');
+    await fs.outputFile(path.join(agent.workspace.path, 'id_rsa.pub'), 'ssh-rsa AAAA PUBLIC');
+
+    const backup = await service.backup('user-operations');
+    const extract = path.join(root, 'extract');
+    await fs.ensureDir(extract);
+    await tar.x({ file: backup, cwd: extract });
+
+    expect(await fs.pathExists(path.join(extract, 'workspace/settings.json'))).toBe(false);
+    expect(await fs.pathExists(path.join(extract, 'workspace/id_rsa'))).toBe(false);
+    expect(await fs.pathExists(path.join(extract, 'workspace/id_ed25519'))).toBe(false);
+    expect(await fs.pathExists(path.join(extract, 'workspace/id_rsa.pub'))).toBe(true);
+  });
+
+  it('rejects backup when an untracked staged file contains a secret (R27)', async () => {
+    const { registry, service } = await setup();
+    const agent = (await registry.read()).agents[0];
+    if (!agent) throw new Error('missing agent');
+    await fs.outputFile(
+      path.join(agent.workspace.path, 'scripts', 'run.sh'),
+      'export TOKEN=sk-abcdefghijklmnopqrstuvwxyz0123456789XYZ\n',
+    );
+
+    await expect(service.backup('user-operations')).rejects.toThrow(/Secret/);
+  });
+
+  it('rejects restore when the archive contains undeclared files (R21)', async () => {
+    const { service, root } = await setup();
+    const backup = await service.backup('user-operations');
+    const tamper = path.join(root, 'tamper');
+    await fs.ensureDir(tamper);
+    await tar.x({ file: backup, cwd: tamper });
+    await fs.outputFile(path.join(tamper, 'workspace', 'sneaky.txt'), 'extra');
+    await fs.remove(backup);
+    await tar.c(
+      { gzip: true, cwd: tamper, file: backup, portable: true },
+      await fs.readdir(tamper),
+    );
+
+    await expect(service.restore(backup)).rejects.toThrow(/未声明文件/);
+  });
 });

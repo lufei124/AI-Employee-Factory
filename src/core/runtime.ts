@@ -88,6 +88,7 @@ export async function syncCcSwitchClaudeProvider(
   agent: RegistryAgent,
   userHome: string,
   runtimesDir: string,
+  sanitizeNonWhitelist = false,
 ): Promise<CcSwitchSyncSummary> {
   if (agent.runtime.provider !== 'claude') {
     throw new AgentCtlError('VALIDATION_ERROR', `Agent ${agent.id} 不是 Claude Runtime。`);
@@ -166,6 +167,10 @@ export async function syncCcSwitchClaudeProvider(
     if (oldValue !== newValue) routedFieldsChanged.push(key);
   }
   for (const key of ccSwitchClaudeProviderVariables) delete existingEnv[key];
+  // R5：sanitize 时移除员工设置中残留的非白名单 env（默认 false，保留兼容）。
+  if (sanitizeNonWhitelist) {
+    for (const key of Object.keys(existingEnv)) delete existingEnv[key];
+  }
   await atomicWriteFile(
     destination,
     `${JSON.stringify({ ...isolated, env: { ...existingEnv, ...providerEnv } }, null, 2)}\n`,

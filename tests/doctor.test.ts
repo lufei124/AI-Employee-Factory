@@ -1,12 +1,14 @@
 import fs from 'fs-extra';
 import os from 'node:os';
 import path from 'node:path';
+import YAML from 'yaml';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CreateAgentService } from '../src/core/create-agent.js';
 import { initializeFactory } from '../src/core/config.js';
 import { DoctorService } from '../src/core/doctor.js';
 import { resolveFactoryPaths } from '../src/core/paths.js';
 import { RegistryStore } from '../src/core/registry.js';
+import { TrashService } from '../src/core/trash.js';
 
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => fs.remove(root))));
@@ -66,5 +68,35 @@ describe('DoctorService', () => {
     expect(await fs.pathExists(path.join(root, '.claude'))).toBe(false);
     expect(await fs.pathExists(path.join(root, '.codex'))).toBe(false);
     expect(await fs.pathExists(path.join(root, '.lark-channel'))).toBe(false);
+  });
+
+  it('reports a failed/moving trash entry as fail with purge --force remediation (R20)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-doctor-trash-'));
+    roots.push(root);
+    const paths = resolveFactoryPaths({
+      HOME: root,
+      AI_EMPLOYEES_HOME: path.join(root, 'private'),
+      AI_EMPLOYEES_WORKSPACE_ROOT: path.join(root, 'agents'),
+    });
+    await initializeFactory(paths);
+    const registry = new RegistryStore(paths.registryFile);
+    await new CreateAgentService(paths, registry).create({
+      id: 'user-operations',
+      name: '用户运营专员',
+      runtime: 'claude',
+      preset: 'user-operations',
+      feishu: 'dedicated',
+    });
+    const agent = (await registry.read()).agents[0];
+    const entry = await new TrashService(paths, registry).move(agent);
+    const manifestFile = path.join(paths.trashDir, 'manifests', `${entry.trashId}.yaml`);
+    const doc = YAML.parse(await fs.readFile(manifestFile, 'utf8')) as Record<string, unknown>;
+    doc.state = 'failed';
+    await fs.writeFile(manifestFile, YAML.stringify(doc));
+
+    const report = await new DoctorService(paths, registry).run();
+    const check = report.checks.find((item) => item.id === 'trash-health');
+    expect(check?.status).toBe('fail');
+    expect(check?.remediation).toContain('agentctl trash purge --force');
   });
 });

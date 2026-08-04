@@ -168,16 +168,21 @@ export class DoctorService {
       detail: `AI_EMPLOYEES_HOME=${this.paths.home}; AI_EMPLOYEES_WORKSPACE_ROOT=${this.paths.workspaceRoot}`,
     });
     const trashEntries = await new TrashService(this.paths, this.registry).list().catch(() => []);
-    const failedTrash = trashEntries.filter((entry) => entry.state === 'failed');
+    const stuckTrash = trashEntries.filter(
+      (entry) => entry.state === 'failed' || entry.state === 'moving' || entry.state === 'purging',
+    );
     add({
       id: 'trash-health',
       label: '员工回收站',
-      status: failedTrash.length ? 'fail' : 'pass',
-      detail: failedTrash.length
-        ? `${failedTrash.length} 个事务需要人工检查`
+      status: stuckTrash.length ? 'fail' : 'pass',
+      detail: stuckTrash.length
+        ? `${stuckTrash.length} 个事务处于失败/卡死状态（${stuckTrash.map((entry) => entry.trashId).join(', ')}）`
         : `${trashEntries.length} 个可恢复条目`,
-      ...(failedTrash.length
-        ? { remediation: '检查回收站 manifest 和原路径，修复前不要手工删除数据。' }
+      ...(stuckTrash.length
+        ? {
+            remediation:
+              '检查回收站 manifest 与原路径；确认无需保留后运行 agentctl trash purge --force <trash-id> 清理失败/卡死条目。',
+          }
         : {}),
     });
     if (agentId) await this.agentChecks(agentId, add);

@@ -1,6 +1,7 @@
 import fs from 'fs-extra';
 import os from 'node:os';
 import path from 'node:path';
+import YAML from 'yaml';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initializeFactory } from '../src/core/config.js';
 import { resolveFactoryPaths } from '../src/core/paths.js';
@@ -57,6 +58,14 @@ async function setupTrashAgent() {
   for (const component of components) await fs.outputFile(path.join(component, 'marker'), 'data');
   await fs.outputFile(path.join(agent.runtime_home.path, 'settings.json'), 'runtime-secret-value');
   return { root, paths, registry, agent, components };
+}
+
+// R20：直接改写 manifest 状态，模拟 purgeExpired/restore 中途失败留下的 failed/卡死条目。
+async function forceTrashState(paths: { trashDir: string }, trashId: string, state: string) {
+  const file = path.join(paths.trashDir, 'manifests', `${trashId}.yaml`);
+  const doc = YAML.parse(await fs.readFile(file, 'utf8')) as Record<string, unknown>;
+  doc.state = state;
+  await fs.writeFile(file, YAML.stringify(doc));
 }
 
 describe('RegistryStore trash support', () => {
@@ -229,5 +238,57 @@ describe('TrashService', () => {
     });
 
     await expect(service.restore(entry.trashId)).rejects.toThrow('Agent ID 已被占用');
+  });
+
+  it('purgeExpired skips failed entries and purgeOne --force clears them (R20)', async () => {
+    const { paths, registry, agent } = await setupTrashAgent();
+    const { TrashService } = await import('../src/core/trash.js');
+    const service = new TrashService(paths, registry);
+    const entry = await service.move(agent, new Date('2026-08-01T00:00:00.000Z'));
+    await forceTrashState(paths, entry.trashId, 'failed');
+
+    // purgeExpired 不触碰 failed 条目（仅清理 ready+过期）
+    expect((await service.purgeExpired(new Date('2026-08-09T00:00:00.000Z'))).purged).toEqual([]);
+    expect(await service.list()).toHaveLength(1);
+
+    // 无 --force 在 failed 上拒绝
+    await expect(
+      service.purgeOne(entry.trashId, {}, new Date('2026-08-09T00:00:00.000Z')),
+    ).rejects.toThrow();
+    expect(await service.list()).toHaveLength(1);
+
+    // --force 清理成功
+    expect((await service.purgeOne(entry.trashId, { force: true })).purged).toBe(true);
+    expect(await service.list()).toEqual([]);
+  });
+
+  it('purgeOne without --force refuses a non-expired ready entry (R20)', async () => {
+    const { paths, registry, agent } = await setupTrashAgent();
+    const { TrashService } = await import('../src/core/trash.js');
+    const service = new TrashService(paths, registry);
+    const entry = await service.move(agent, new Date('2026-08-04T00:00:00.000Z'));
+
+    await expect(
+      service.purgeOne(entry.trashId, {}, new Date('2026-08-05T00:00:00.000Z')),
+    ).rejects.toThrow();
+    expect(await service.list()).toHaveLength(1);
+
+    // --force 可无视未过期清理
+    expect((await service.purgeOne(entry.trashId, { force: true })).purged).toBe(true);
+    expect(await service.list()).toEqual([]);
+  });
+
+  it('purgeOne --dry-run reports wouldPurge without removing (R20)', async () => {
+    const { paths, registry, agent } = await setupTrashAgent();
+    const { TrashService } = await import('../src/core/trash.js');
+    const service = new TrashService(paths, registry);
+    const entry = await service.move(agent, new Date('2026-08-01T00:00:00.000Z'));
+    await forceTrashState(paths, entry.trashId, 'failed');
+
+    expect(await service.purgeOne(entry.trashId, { force: true, dryRun: true })).toEqual({
+      purged: false,
+      wouldPurge: true,
+    });
+    expect(await service.list()).toHaveLength(1);
   });
 });

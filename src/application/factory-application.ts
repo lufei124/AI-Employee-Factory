@@ -8,7 +8,7 @@ import { atomicWriteFile } from '../core/atomic.js';
 import { BackupService } from '../core/backup.js';
 import { BridgeAdapter } from '../core/bridge.js';
 import { FileLock } from '../core/locks.js';
-import { initializeFactory } from '../core/config.js';
+import { initializeFactory, readConfig } from '../core/config.js';
 import { CreateAgentService, type CreateAgentInput } from '../core/create-agent.js';
 import { DoctorService } from '../core/doctor.js';
 import { AgentCtlError } from '../core/errors.js';
@@ -493,6 +493,13 @@ export class FactoryApplication {
     return { ...(await trash.purgeExpired()), wouldPurge: [] as string[] };
   }
 
+  async purgeTrash(
+    trashId: string,
+    options: { force?: boolean; dryRun?: boolean } = {},
+  ): Promise<{ purged: boolean; wouldPurge?: boolean }> {
+    return new TrashService(this.paths, this.registry).purgeOne(trashId, options);
+  }
+
   async setJobEnabled(id: string, jobId: string, enabled: boolean): Promise<JobConfig> {
     const { registry } = await this.getAgent(id);
     const store = new JobStore(registry.workspace.path);
@@ -512,10 +519,12 @@ export class FactoryApplication {
 
   private async prepareRuntime(registry: RegistryAgent) {
     if (registry.runtime.provider !== 'claude') return undefined;
+    const config = await readConfig(this.paths);
     const summary = await syncCcSwitchClaudeProvider(
       registry,
       this.paths.userHome,
       this.paths.runtimesDir,
+      config.sync.sanitize_non_whitelist,
     );
     if (summary.routedFieldsChanged.length > 0) {
       console.warn(

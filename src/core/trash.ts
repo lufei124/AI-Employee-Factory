@@ -240,6 +240,55 @@ export class TrashService {
     });
   }
 
+  // R20：按 trashId 清理指定条目。force=true 时无视 state（含 failed/moving/purging），
+  // 用于 doctor 告警的失败/卡死条目人工清理；force=false 时仅清理 ready+过期。
+  async purgeOne(
+    trashId: string,
+    options: { force?: boolean; dryRun?: boolean } = {},
+    now = new Date(),
+  ): Promise<{ purged: boolean; wouldPurge?: boolean }> {
+    return this.lock().withLock({ purpose: `trash:purge-one:${trashId}` }, async () => {
+      const manifest = await this.readManifest(trashId).catch(() => undefined);
+      if (!manifest) throw new AgentCtlError('NOT_FOUND', `回收站条目不存在：${trashId}`);
+      const expired = new Date(manifest.expires_at).getTime() <= now.getTime();
+      if (!options.force && (manifest.state !== 'ready' || !expired))
+        throw new AgentCtlError(
+          'VALIDATION_ERROR',
+          `条目 ${trashId} 状态为 ${manifest.state}（${expired ? '已过期' : '未过期'}），仅 ready+过期 可清理；清理失败/卡死条目请加 --force。`,
+        );
+      if (options.dryRun) return { purged: false, wouldPurge: true };
+      manifest.state = 'purging';
+      await this.saveManifest(manifest);
+      try {
+        for (const component of manifest.components) {
+          this.validateComponent(component);
+          if (component.existed) {
+            if (
+              (await fs.pathExists(component.trashed)) &&
+              (await fs.lstat(component.trashed)).isSymbolicLink()
+            ) {
+              throw new AgentCtlError(
+                'VALIDATION_ERROR',
+                `回收站组件不能是软链接：${component.name}`,
+              );
+            }
+            await fs.remove(component.trashed);
+          }
+        }
+        await fs.remove(this.manifestFile(trashId));
+        await this.removeFromIndex(trashId);
+        return { purged: true };
+      } catch (error) {
+        manifest.state = 'failed';
+        manifest.error = '清理失败，请运行 doctor 检查。';
+        await this.saveManifest(manifest);
+        throw new AgentCtlError('OPERATION_FAILED', `清理回收站条目失败：${trashId}`, {
+          cause: error,
+        });
+      }
+    });
+  }
+
   private lock(): FileLock {
     return new FileLock(path.join(this.paths.locksDir, 'trash.lock'));
   }

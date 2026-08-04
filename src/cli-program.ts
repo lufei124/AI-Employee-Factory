@@ -409,22 +409,40 @@ function registerTrashCommands(program: Command): void {
       console.log(chalk.green(`✓ 已恢复 ${trashId}`));
     });
   group
-    .command('purge')
-    .description('永久清理已超过 7 天的条目')
-    .option('--expired', '仅清理过期条目', true)
+    .command('purge [trash-id]')
+    .description(
+      '永久清理回收站条目；不指定 ID 则清理所有已过期条目，指定 ID 配合 --force 可清理失败/卡死条目',
+    )
+    .option('--force', '强制清理指定 ID（含 failed/moving/purging 态）')
     .option('--dry-run')
     .option('--yes')
-    .action(async (options: { expired: boolean; dryRun?: boolean; yes?: boolean }) => {
-      if (!options.expired) throw new AgentCtlError('VALIDATION_ERROR', 'v1 只支持清理过期条目。');
-      const { application } = context();
-      if (options.dryRun) {
-        console.log(YAML.stringify(await application.purgeExpiredTrash({ dryRun: true })));
-        return;
-      }
-      await confirmDanger('永久清理所有已超过 7 天的回收站条目？', options.yes === true);
-      const result = await application.purgeExpiredTrash();
-      console.log(chalk.green(`✓ 已永久清理 ${result.purged.length} 个条目`));
-    });
+    .action(
+      async (
+        trashId: string | undefined,
+        options: { force?: boolean; dryRun?: boolean; yes?: boolean },
+      ) => {
+        const { application } = context();
+        if (trashId) {
+          if (options.dryRun) {
+            console.log(YAML.stringify(await application.purgeTrash(trashId, { dryRun: true })));
+            return;
+          }
+          await confirmDanger(`永久清理回收站条目 ${trashId}？`, options.yes === true);
+          await application.purgeTrash(trashId, { force: options.force === true });
+          console.log(chalk.green(`✓ 已清理 ${trashId}`));
+          return;
+        }
+        if (options.force)
+          throw new AgentCtlError('VALIDATION_ERROR', '--force 需配合指定 <trash-id> 使用。');
+        if (options.dryRun) {
+          console.log(YAML.stringify(await application.purgeExpiredTrash({ dryRun: true })));
+          return;
+        }
+        await confirmDanger('永久清理所有已超过 7 天的回收站条目？', options.yes === true);
+        const result = await application.purgeExpiredTrash();
+        console.log(chalk.green(`✓ 已永久清理 ${result.purged.length} 个条目`));
+      },
+    );
 }
 
 async function runRuntimeAuth(id: string, operation: 'login' | 'status'): Promise<void> {

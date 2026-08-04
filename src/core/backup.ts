@@ -20,13 +20,32 @@ import { agentConfigSchema, agentIdSchema } from '../schemas/agent-schema.js';
 import { backupManifestSchema, type BackupManifest } from '../schemas/backup-schema.js';
 import { registryAgentSchema } from '../schemas/registry-schema.js';
 
-const excludedNames = new Set(['.env', 'secrets.enc']);
-const excludedExtensions = new Set(['.pem', '.key', '.p12', '.token']);
+const excludedNames = new Set([
+  '.env',
+  'secrets.enc',
+  // R7：含凭据的配置/密钥文件，备份时直接排除（restore 时需重新配凭据，与 R19 pending 对齐）
+  'settings.json',
+  'config.json',
+  '.netrc',
+  'credentials.json',
+  'gcloud.json',
+  'id_rsa',
+  'id_ed25519',
+  'id_dsa',
+  'id_ecdsa',
+]);
+const excludedExtensions = new Set(['.pem', '.key', '.p12', '.token', '.pfx', '.keystore']);
+
+// R27：内容扫描用 Secret 正则（AKIA AWS / sk- OpenAI·Anthropic / api_key·app_secret 赋值）
+const SECRET_PATTERN =
+  /(?:AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,}|(?:api[_-]?key|app[_-]?secret)\s*[:=]\s*[^\s]+)/i;
 
 function shouldCopy(source: string): boolean {
   const name = path.basename(source);
-  if (excludedNames.has(name) || (name.startsWith('.env.') && name !== '.env.example'))
-    return false;
+  if (excludedNames.has(name)) return false;
+  if (name.startsWith('.env.') && name !== '.env.example') return false;
+  // SSH 私钥（id_*）排除，公钥（id_*.pub）保留可备份
+  if (name.startsWith('id_') && !name.endsWith('.pub')) return false;
   return !excludedExtensions.has(path.extname(name).toLowerCase());
 }
 
@@ -124,6 +143,7 @@ export class BackupService {
           filter: shouldCopy,
           dereference: false,
         });
+      await this.rejectSecretsInStage(stage);
       const files = await collectFiles(stage);
       const manifest: BackupManifest = backupManifestSchema.parse({
         schema_version: 1,
@@ -172,6 +192,7 @@ export class BackupService {
         await fs.writeFile(
           archive,
           decryptArchive(await fs.readFile(backup, 'utf8'), options.passphrase),
+          { mode: 0o600 },
         );
       } else await fs.copyFile(backup, archive);
       await tar.x({ cwd: extract, file: archive, strict: true, preservePaths: false });
@@ -281,12 +302,22 @@ export class BackupService {
   }
 
   private async verifyChecksums(root: string, manifest: BackupManifest): Promise<void> {
+    const manifestPaths = new Set(manifest.files.map((entry) => entry.path));
     for (const entry of manifest.files) {
       if (path.isAbsolute(entry.path) || entry.path.split(path.sep).includes('..'))
         throw new AgentCtlError('VALIDATION_ERROR', '备份 checksum 包含非法路径。');
       const file = path.join(root, entry.path);
       if (!(await fs.pathExists(file)) || (await sha256(file)) !== entry.sha256)
         throw new AgentCtlError('VALIDATION_ERROR', `备份校验失败：${entry.path}`);
+    }
+    // R21：集合一致性--拒绝 extract 树中 manifest 未声明的额外文件
+    // （manifest.yaml/checksums.txt 为归档时在 collectFiles 之后写入的元数据，豁免）
+    const knownMeta = new Set(['manifest.yaml', 'checksums.txt']);
+    const actual = await collectFiles(root);
+    for (const found of actual) {
+      if (knownMeta.has(found.path)) continue;
+      if (!manifestPaths.has(found.path))
+        throw new AgentCtlError('VALIDATION_ERROR', `备份含未声明文件：${found.path}`);
     }
   }
 
@@ -306,17 +337,37 @@ export class BackupService {
       const file = path.join(workspace, relative);
       if ((await fs.stat(file)).size < 1024 * 1024) {
         const content = await fs.readFile(file, 'utf8');
-        if (
-          /(?:AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,}|(?:api[_-]?key|app[_-]?secret)\s*[:=]\s*[^\s]+)/i.test(
-            content,
-          )
-        )
+        if (SECRET_PATTERN.test(content))
           throw new AgentCtlError(
             'VALIDATION_ERROR',
             `Git 已跟踪的文件疑似包含 Secret：${relative}`,
           );
       }
     }
+  }
+
+  // R27：对所有暂存文件（workspace 全部含未跟踪 + runtime_home）做内容扫描，
+  // 命中 Secret 正则即拒绝备份并指出文件。不改动文件内容。覆盖 rejectTrackedSecrets 漏掉的未跟踪与 runtime 文件。
+  private async rejectSecretsInStage(stage: string): Promise<void> {
+    const scan = async (directory: string): Promise<void> => {
+      if (!(await fs.pathExists(directory))) return;
+      const entries = await fs.readdir(directory, { withFileTypes: true });
+      for (const entry of entries) {
+        const file = path.join(directory, entry.name);
+        if (entry.isDirectory()) await scan(file);
+        else if (entry.isFile() && (await fs.stat(file)).size < 1024 * 1024) {
+          const content = await fs.readFile(file, 'utf8');
+          if (SECRET_PATTERN.test(content))
+            throw new AgentCtlError(
+              'VALIDATION_ERROR',
+              `暂存文件疑似包含 Secret：${path.relative(stage, file)}`,
+              { remediation: '请从该文件移除 Secret，或将其加入备份排除名单。' },
+            );
+        }
+      }
+    };
+    await scan(path.join(stage, 'workspace'));
+    await scan(path.join(stage, 'runtime'));
   }
 
   private async rewriteGeneratedLaunchers(
