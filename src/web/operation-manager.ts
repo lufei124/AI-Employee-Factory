@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { AgentCtlError } from '../core/errors.js';
 import type { OperationStore } from '../core/operation-store.js';
-import { defaultObservabilitySink, type ObservabilitySink } from '../core/observability.js';
+import {
+  defaultObservabilitySink,
+  toGenAiAttrs,
+  type ObservabilitySink,
+} from '../core/observability.js';
+import type { RunUsage } from '../core/usage.js';
 
 export type OperationState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
@@ -45,7 +50,7 @@ export interface OperationTaskContext {
 
 export type OperationTask = (
   context: OperationTaskContext,
-) => Promise<{ exitCode?: number } | void>;
+) => Promise<{ exitCode?: number; usage?: RunUsage } | void>;
 
 interface InternalOperation {
   dto: OperationDto;
@@ -164,6 +169,8 @@ export class OperationManager {
       kind: operation.dto.type,
       ...(operation.dto.agentId ? { agent_id: operation.dto.agentId } : {}),
     });
+    // OP4-C：task 返回的 CLI 结构化用量，在 finally 经 span.end 上报为 gen_ai.* 属性。
+    let usage: RunUsage | undefined;
     try {
       if (operation.controller.signal.aborted) {
         await this.finishCancelled(operation);
@@ -184,6 +191,7 @@ export class OperationManager {
           operationId: operation.dto.id,
           traceId: operation.dto.traceId ?? '',
         });
+        usage = result?.usage;
         if (operation.controller.signal.aborted) {
           await this.finishCancelled(operation);
           return;
@@ -216,7 +224,7 @@ export class OperationManager {
       }
       await this.persist(operation);
     } finally {
-      span.end();
+      span.end(usage !== undefined ? toGenAiAttrs(usage) : {});
     }
   }
 

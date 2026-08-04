@@ -8,13 +8,24 @@ import type { ObservabilitySink, Span, SpanAttrs } from '../src/core/observabili
 import { OperationManager } from '../src/web/operation-manager.js';
 
 class RecordingSink implements ObservabilitySink {
-  readonly spans: { name: string; attrs: SpanAttrs; ended: boolean }[] = [];
+  readonly spans: {
+    name: string;
+    attrs: SpanAttrs;
+    ended: boolean;
+    endAttrs?: Partial<SpanAttrs>;
+  }[] = [];
   spanStart(name: string, attrs: SpanAttrs): Span {
-    const record = { name, attrs, ended: false };
+    const record = {
+      name,
+      attrs,
+      ended: false,
+      endAttrs: undefined as Partial<SpanAttrs> | undefined,
+    };
     this.spans.push(record);
     return {
-      end: () => {
+      end: (endAttrs?: Partial<SpanAttrs>) => {
         record.ended = true;
+        record.endAttrs = endAttrs;
       },
     };
   }
@@ -186,5 +197,29 @@ describe('OperationManager', () => {
       agent_id: 'ops',
     });
     expect(sink.spans[0]!.ended).toBe(true);
+  });
+
+  it('reports task usage as gen_ai.* span attrs on end (OP4-C)', async () => {
+    const sink = new RecordingSink();
+    const manager = new OperationManager({ sink });
+    const operation = manager.start('run', 'ops', async () => ({
+      exitCode: 0,
+      usage: { inputTokens: 100, outputTokens: 20, model: 'claude-opus-4-8', totalCostUsd: 0.5 },
+    }));
+    await manager.wait(operation.id);
+    expect(sink.spans[0]!.endAttrs).toMatchObject({
+      'gen_ai.request.model': 'claude-opus-4-8',
+      'gen_ai.usage.input_tokens': 100,
+      'gen_ai.usage.output_tokens': 20,
+      'gen_ai.usage.cost_usd': 0.5,
+    });
+  });
+
+  it('emits no gen_ai attrs when the task has no usage (OP4-C backward compatible)', async () => {
+    const sink = new RecordingSink();
+    const manager = new OperationManager({ sink });
+    const operation = manager.start('doctor', 'ops', async () => ({ exitCode: 0 }));
+    await manager.wait(operation.id);
+    expect(sink.spans[0]!.endAttrs).toEqual({});
   });
 });

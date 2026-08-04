@@ -266,10 +266,18 @@ export class FactoryApplication {
     }
     const { registry, agent } = await this.getAgent(id);
     await this.prepareRuntime(registry, agent);
+    // OP4-C：run 追加结构化输出（claude --output-format json / codex --json），
+    // runLogged 解析 usage 供 gen_ai.* span 上报；best-effort，失败不阻断运行。
     return new ProcessRunner(this.paths.logsDir).runLogged(
       id,
-      getRuntimeAdapter(agent.runtime).run(registry, agent.runtime, task, timeoutSeconds * 1000),
-      options,
+      getRuntimeAdapter(agent.runtime).run(
+        registry,
+        agent.runtime,
+        task,
+        timeoutSeconds * 1000,
+        true,
+      ),
+      { ...options, provider: agent.runtime.provider, structured: true },
     );
   }
 

@@ -1,9 +1,9 @@
 # 项目状态
 
-最后更新：2026-08-04 19:50 +0800
+最后更新：2026-08-04 20:00 +0800
 更新者：claude-20260803-01
-当前版本/分支：master（工作区含 TASK-020 阶段2 CLI 结构化输出未提交改动）
-当前阶段：TASK-020 记忆系统剩余批次合并（阶段1 OP2-F 已提交；阶段2 CLI 结构化输出已实现，待 commit）
+当前版本/分支：master（工作区含 TASK-020 阶段3 OP4-C 未提交改动）
+当前阶段：TASK-020 记忆系统剩余批次合并（阶段1-2 已提交；阶段3 OP4-C 已实现，待 commit）
 
 ## 已完成
 
@@ -40,9 +40,11 @@
 
 - 完成 TASK-020 阶段2（CLI 结构化输出，A2 门控通过）：调研写入 .scratch/cli-structured-output.md——Claude 完全可达（`claude -p --output-format json` 单对象含 usage input/output/cache tokens、modelUsage per-model canonicalModel+costUSD、total_cost_usd、result，本机 2.1.221 实测）；Codex 仅 token 可达（`codex exec --json` JSONL 事件流仅 turn.completed 携带 usage 含 cached_input_tokens，事件 schema 无 model/cost，源码核查 openai/codex main codex-rs/exec）。src/core/usage.ts(新增) RunUsage 类型+parseClaudeUsage（主模型取 modelUsage inputTokens 最大者）/parseCodexUsage（累加 turn.completed usage）/parseStructuredUsage 纯函数零 I/O；runtime-adapter.ts run 增 structured?:boolean 参，claude 追加 --output-format json、codex 追加 --json；process-runner.ts LoggedRunOptions 增 provider/structured、LoggedRunResult 增 usage，runLogged 结束后读 stdout 文件 best-effort 解析写入 metadata.json 与 result（exactOptionalPropertyTypes 下条件展开）。新增 tests/usage.test.ts(+8)、process-runner +2、runtime +2；共 188 单测 + e2e 全过，npm run verify 实跑通过。
 
+- 完成 TASK-020 阶段3（OP4-C OTel GenAI span，gated on 阶段2）：src/core/observability.ts SpanAttrs 增 'gen_ai.request.model'/'gen_ai.usage.input_tokens'/'gen_ai.usage.output_tokens'/'gen_ai.usage.cost_usd'（可选）+toGenAiAttrs(usage) 映射助手（缺省字段省略，Codex 无 model/cost 自然不报）；src/web/operation-manager.ts OperationTask 返回类型增 usage?:RunUsage，execute 内 task 结果 usage 经 finally span.end(toGenAiAttrs(usage)) 上报（无 usage 传 {}，向后兼容）；src/application/factory-application.ts runAgent 默认启用结构化输出（run 传 structured=true + options 合并 provider/structured），runLogged 解析 usage；src/web/server.ts run handler 返回 {exitCode, usage?} 透传。新增 tests/observability.test.ts toGenAiAttrs(+2)、operation-manager +2（RecordingSink 捕获 endAttrs 断言 gen_ai 属性/无 usage 传 {}）。共 192 单测 + e2e 全过，npm run verify 实跑通过。
+
 ## 进行中
 
-- TASK-020 记忆系统剩余批次合并：阶段1（OP2-F）、阶段2（CLI 结构化输出）已实现待 commit；阶段3-12（OP4-C / OP1 Stage B-E / OP5 A-E）按顺序依赖后续实施。
+- TASK-020 记忆系统剩余批次合并：阶段1（OP2-F）、阶段2（CLI 结构化输出）、阶段3（OP4-C）已实现待 commit；阶段4-12（OP1 Stage B-E / OP5 A-E）按顺序依赖后续实施。
 
 ## 待审查
 

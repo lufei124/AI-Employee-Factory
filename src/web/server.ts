@@ -715,7 +715,7 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
             onStderr: (message) => emit({ kind: 'output', stream: 'stderr', message }),
           },
         );
-        return { exitCode: result.exitCode };
+        return { exitCode: result.exitCode, ...(result.usage ? { usage: result.usage } : {}) };
       },
     );
     reply.code(202);
