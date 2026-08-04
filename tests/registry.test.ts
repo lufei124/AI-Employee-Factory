@@ -83,4 +83,23 @@ describe('RegistryStore', () => {
     ).rejects.toThrow('Bridge Profile');
     await expect(store.add(first)).rejects.toThrow('已存在');
   });
+
+  it('serializes concurrent updates under a global registry lock without losing entries', async () => {
+    const root = await tempRoot();
+    const locksDir = path.join(root, 'locks');
+    await fs.ensureDir(locksDir);
+    const store = new RegistryStore(path.join(root, 'registry', 'agents.yaml'), locksDir);
+    await store.initialize();
+
+    const count = 12;
+    await Promise.all(
+      Array.from({ length: count }, (_, index) => store.add(agent(root, `agent-${index}`))),
+    );
+
+    const agents = (await store.read()).agents;
+    expect(agents).toHaveLength(count);
+    expect(new Set(agents.map((entry) => entry.id)).size).toBe(count);
+    // 锁在 finally 中释放
+    expect(await fs.pathExists(path.join(locksDir, 'registry.lock'))).toBe(false);
+  });
 });

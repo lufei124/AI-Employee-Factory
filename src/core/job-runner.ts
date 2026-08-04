@@ -1,9 +1,9 @@
 import fs from 'fs-extra';
 import path from 'node:path';
-import type { FactoryPaths } from './paths.js';
+import { assertInsideReal, type FactoryPaths } from './paths.js';
 import { FileLock } from './locks.js';
 import { ProcessRunner, type LoggedRunOptions, type LoggedRunResult } from './process-runner.js';
-import { buildSafeBaseEnvironment, getRuntimeAdapter } from './runtime.js';
+import { buildRuntimeEnvironment, getRuntimeAdapter } from './runtime.js';
 import type { JobConfig } from '../schemas/job-schema.js';
 import type { RegistryAgent } from '../schemas/registry-schema.js';
 import type { ExecutionContext } from '../runtimes/runtime-adapter.js';
@@ -25,12 +25,12 @@ export class JobRunner {
     return lock.withLock({ purpose: `job:${agent.id}:${job.id}` }, async () => {
       const runner = new ProcessRunner(this.paths.logsDir);
       if (job.execution.type === 'script') {
-        return runner.runLogged(agent.id, this.scriptContext(agent, job.execution), options);
+        return runner.runLogged(agent.id, await this.scriptContext(agent, job.execution), options);
       }
       if (job.execution.precheck) {
         const result = await runner.runLogged(
           agent.id,
-          this.scriptContext(agent, {
+          await this.scriptContext(agent, {
             ...job.execution.precheck,
             timeout_seconds: job.execution.timeout_seconds,
           }),
@@ -40,10 +40,9 @@ export class JobRunner {
           return { ...result, exitCode: 0, skipped: true };
         if (result.exitCode !== 0) return result;
       }
-      const prompt = await fs.readFile(
-        path.resolve(agent.workspace.path, job.execution.prompt_file),
-        'utf8',
-      );
+      const promptPath = path.resolve(agent.workspace.path, job.execution.prompt_file);
+      await assertInsideReal(agent.workspace.path, promptPath, '任务 Prompt 文件');
+      const prompt = await fs.readFile(promptPath, 'utf8');
       const context = getRuntimeAdapter(agent).run(
         agent,
         prompt,
@@ -54,7 +53,7 @@ export class JobRunner {
     });
   }
 
-  private scriptContext(
+  private async scriptContext(
     agent: RegistryAgent,
     execution: {
       script_file: string;
@@ -62,8 +61,9 @@ export class JobRunner {
       args: string[];
       timeout_seconds: number;
     },
-  ): ExecutionContext {
+  ): Promise<ExecutionContext> {
     const script = path.resolve(agent.workspace.path, execution.script_file);
+    await assertInsideReal(agent.workspace.path, script, '任务脚本');
     const command =
       execution.interpreter === 'node'
         ? process.execPath
@@ -76,7 +76,7 @@ export class JobRunner {
       command,
       args,
       cwd: agent.workspace.path,
-      env: buildSafeBaseEnvironment(),
+      env: buildRuntimeEnvironment(agent),
       timeoutMs: execution.timeout_seconds * 1000,
     };
   }

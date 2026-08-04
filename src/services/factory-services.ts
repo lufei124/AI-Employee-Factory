@@ -55,6 +55,7 @@ export function jobLaunchdService(
     program: exec.program,
     args: [...exec.prefix, '_service', 'job', agent.id, job.id],
     env: {
+      ...buildRuntimeEnvironment(agent),
       AI_EMPLOYEES_HOME: paths.home,
       AI_EMPLOYEES_WORKSPACE_ROOT: paths.workspaceRoot,
     },

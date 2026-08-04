@@ -48,10 +48,19 @@ const ccSwitchClaudeProviderVariables = new Set([
   'CLAUDE_CODE_USE_BEDROCK',
 ]);
 
+// R24：流量路由字段（同步=流量重定向原语）。保留可同步（兼容中继/代理型 Provider，D-006），
+// 但在 SyncSummary.routedFieldsChanged 标记变更并告警，使路由变更可见可审计。
+const routedFields = new Set([
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_CUSTOM_HEADERS',
+  'CLAUDE_CODE_USE_BEDROCK',
+]);
+
 export interface CcSwitchSyncSummary {
   source: string;
   destination: string;
   keys: string[];
+  routedFieldsChanged: string[];
 }
 
 async function ccSwitchClaudeSettingsFile(userHome: string): Promise<string> {
@@ -78,6 +87,7 @@ async function ccSwitchClaudeSettingsFile(userHome: string): Promise<string> {
 export async function syncCcSwitchClaudeProvider(
   agent: RegistryAgent,
   userHome: string,
+  runtimesDir: string,
 ): Promise<CcSwitchSyncSummary> {
   if (agent.runtime.provider !== 'claude') {
     throw new AgentCtlError('VALIDATION_ERROR', `Agent ${agent.id} 不是 Claude Runtime。`);
@@ -86,6 +96,27 @@ export async function syncCcSwitchClaudeProvider(
   const destination = path.join(agent.runtime_home.path, 'settings.json');
   if (path.resolve(source) === path.resolve(destination)) {
     throw new AgentCtlError('CONFLICT', 'CC Switch 配置目录不能直接复用员工 Runtime Home。');
+  }
+  // R4：CC Switch 源不得指向任一员工 Runtime Home（防跨员工凭据复制），且不得是软链接。
+  if (await fs.pathExists(source)) {
+    if ((await fs.lstat(source)).isSymbolicLink()) {
+      throw new AgentCtlError('VALIDATION_ERROR', 'CC Switch 配置不能是软链接。', {
+        remediation: '请在 CC Switch 中检查 claude_config_dir 指向，移除软链接后重试。',
+      });
+    }
+    const sourceReal = await fs.realpath(source);
+    const runtimesReal = (await fs.pathExists(runtimesDir))
+      ? await fs.realpath(runtimesDir)
+      : path.resolve(runtimesDir);
+    const relative = path.relative(runtimesReal, sourceReal);
+    const insideRuntimes =
+      relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+    if (insideRuntimes) {
+      throw new AgentCtlError('CONFLICT', 'CC Switch 配置目录不得指向员工 Runtime Home。', {
+        remediation:
+          '请在 CC Switch 中将 claude_config_dir 指向用户自己的 Claude 配置目录，而非员工 Runtime Home。',
+      });
+    }
   }
   if (!(await fs.pathExists(source))) {
     throw new AgentCtlError('NOT_FOUND', `未找到 CC Switch 当前 Claude 配置：${source}`, {
@@ -126,13 +157,21 @@ export async function syncCcSwitchClaudeProvider(
     isolated.env && typeof isolated.env === 'object' && !Array.isArray(isolated.env)
       ? ({ ...isolated.env } as Record<string, unknown>)
       : {};
+  // R24：记录流量路由字段的有效值变更（仅字段名，不记录值，守 D-006）。
+  const routedFieldsChanged: string[] = [];
+  for (const key of routedFields) {
+    const oldValue =
+      typeof existingEnv[key] === 'string' ? (existingEnv[key] as string) : undefined;
+    const newValue: string | undefined = providerEnv[key];
+    if (oldValue !== newValue) routedFieldsChanged.push(key);
+  }
   for (const key of ccSwitchClaudeProviderVariables) delete existingEnv[key];
   await atomicWriteFile(
     destination,
     `${JSON.stringify({ ...isolated, env: { ...existingEnv, ...providerEnv } }, null, 2)}\n`,
     0o600,
   );
-  return { source, destination, keys };
+  return { source, destination, keys, routedFieldsChanged };
 }
 
 export function buildSafeBaseEnvironment(

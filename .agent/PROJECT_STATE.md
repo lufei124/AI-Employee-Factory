@@ -1,9 +1,9 @@
 # 项目状态
 
-最后更新：2026-08-03 19:20 +0800
-更新者：codex-20260803-01
-当前版本/分支：master（commit 34a98b8）
-当前阶段：TASK-009 员工回收站实施完成，待本地 Git 提交
+最后更新：2026-08-04 11:11 +0800
+更新者：claude-20260803-01
+当前版本/分支：master（commit 34a98b8，工作区含 TASK-010 未提交改动）
+当前阶段：TASK-010 记忆系统优化 OP0+Phase1(OP2) 实施完成，待用户审阅与提交决策
 
 ## 已完成
 
@@ -23,10 +23,11 @@
 - 完成 Claude 默认 CC Switch Provider 白名单同步；兼容的 `runtime login` 不再调用官方 OAuth。
 - 完成飞书官方 PersonalAgent/WebSocket 方案兼容性核查、Bridge 多命令能力探测和 workspace 权限收紧。
 - 完成 Factory 自管员工回收站：一键移入、7 天恢复、ID 重用防冲突和下次 Web/CLI 启动时过期清理。
+- 完成 TASK-010 记忆系统优化 OP0+Phase1(OP2)：ADR D-009（frozen/versioned 演进流程）、R2 script Job 注入 runtime env、R4 CC Switch 源不得指向员工 Runtime Home、R24 流量路由字段保留同步+routedFieldsChanged 审计告警、OP2-B assertInsideReal 落地于 ccSwitch/job-runner/installSkill/restoreBackupPath/scheduler、OP2-C Registry 序列化锁+secureProfile per-bridge 锁+FileLock 损坏拒绝、OP2-D R14 bridgeStatus 补 secureProfile+R19 restore 重置授权态。89 单测 + e2e 全过。
 
 ## 进行中
 
-- 无。
+- 无（TASK-010 改动未提交，待用户授权 commit）。
 
 ## 待审查
 

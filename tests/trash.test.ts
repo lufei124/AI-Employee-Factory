@@ -147,6 +147,45 @@ describe('TrashService', () => {
     expect(await service.list()).toEqual([]);
   });
 
+  it('resets Bridge authorization to pending on restore so stale credentials must be re-authorized', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-trash-r19-'));
+    roots.push(root);
+    const paths = resolveFactoryPaths({
+      HOME: root,
+      AI_EMPLOYEES_HOME: path.join(root, 'private'),
+      AI_EMPLOYEES_WORKSPACE_ROOT: path.join(root, 'agents'),
+    });
+    await initializeFactory(paths);
+    const registry = new RegistryStore(paths.registryFile);
+    const readyAgent: RegistryAgent = {
+      ...testAgent(root),
+      bridge: {
+        enabled: true,
+        profile: 'test-employee',
+        home: path.join(root, 'private/bridges/test-employee'),
+        mode: 'dedicated_bot',
+        authorization: 'ready',
+      },
+    };
+    await registry.add(readyAgent);
+    for (const component of [
+      readyAgent.workspace.path,
+      readyAgent.runtime_home.path,
+      readyAgent.bridge.home,
+    ])
+      await fs.outputFile(path.join(component, 'marker'), 'data');
+
+    const { TrashService } = await import('../src/core/trash.js');
+    const service = new TrashService(paths, registry);
+    const entry = await service.move(readyAgent);
+
+    await service.restore(entry.trashId);
+
+    const restored = (await registry.read()).agents[0];
+    expect(restored).toMatchObject({ id: 'test-employee', status: 'stopped' });
+    expect(restored.bridge.authorization).toBe('pending');
+  });
+
   it('purges only ready entries whose seven-day retention has expired', async () => {
     const { paths, registry, agent } = await setupTrashAgent();
     const { TrashService } = await import('../src/core/trash.js');

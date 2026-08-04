@@ -156,6 +156,8 @@ export class TrashService {
           ...manifest.registry,
           status: 'stopped',
           archived: false,
+          // R19：恢复后强制重新授权（Bridge 凭据可能已失效），与 BackupService.restore 一致。
+          bridge: { ...manifest.registry.bridge, authorization: 'pending' },
           updated_at: now.toISOString(),
         });
         registryAdded = true;

@@ -23,4 +23,13 @@ describe('FileLock', () => {
     await lock.release();
     await expect(fs.pathExists(lock.path)).resolves.toBe(false);
   });
+
+  it('refuses to seize a lock backed by a corrupt lock file instead of treating it as unlocked', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-lock-corrupt-'));
+    tempDirs.push(root);
+    const lockPath = path.join(root, 'corrupt.lock');
+    await fs.writeFile(lockPath, 'not-valid-json-{corrupt');
+
+    await expect(new FileLock(lockPath).acquire({ purpose: 'first' })).rejects.toThrow('损坏');
+  });
 });

@@ -48,6 +48,22 @@ describe('SkillService', () => {
     ).rejects.toThrow('软链接');
   });
 
+  it('rejects a skill source whose root is itself a symlink', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-'));
+    roots.push(root);
+    const realSource = path.join(root, 'real-skill');
+    await fs.outputFile(
+      path.join(realSource, 'SKILL.md'),
+      '---\nname: linked-skill\ndescription: linked\n---\n',
+    );
+    const linkedSource = path.join(root, 'linked-skill');
+    await fs.symlink(realSource, linkedSource);
+
+    await expect(
+      new SkillService(path.join(root, 'agent'), 'claude').install(linkedSource),
+    ).rejects.toThrow('软链接');
+  });
+
   it('computes a display digest for preset or legacy metadata that does not contain one', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-'));
     roots.push(root);

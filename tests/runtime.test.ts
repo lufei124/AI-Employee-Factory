@@ -78,7 +78,10 @@ describe('runtime environment isolation', () => {
         env: { EMPLOYEE_LOCAL_SETTING: 'keep-me', ANTHROPIC_AUTH_TOKEN: 'old-secret' },
       });
 
-      const summary = (await sync(claudeAgent, root)) as { keys: string[] };
+      const summary = (await sync(claudeAgent, root, path.join(root, 'runtimes'))) as {
+        keys: string[];
+        routedFieldsChanged: string[];
+      };
       const isolated = await fs.readJson(path.join(claudeAgent.runtime_home.path, 'settings.json'));
 
       expect(isolated).toMatchObject({
@@ -97,10 +100,74 @@ describe('runtime environment isolation', () => {
         'ANTHROPIC_BASE_URL',
         'ANTHROPIC_DEFAULT_SONNET_MODEL',
       ]);
+      // R24：BASE_URL 由无变有 -> 流量路由字段变更被标记；摘要只含字段名，不含值。
+      expect(summary.routedFieldsChanged).toEqual(['ANTHROPIC_BASE_URL']);
       expect(JSON.stringify(summary)).not.toContain('provider-secret');
+      expect(JSON.stringify(summary)).not.toContain('relay.example.test');
       expect(
         (await fs.stat(path.join(claudeAgent.runtime_home.path, 'settings.json'))).mode & 0o777,
       ).toBe(0o600);
+    } finally {
+      await fs.remove(root);
+    }
+  });
+
+  it('rejects a CC Switch source that points into an employee Runtime Home', async () => {
+    const runtime = (await import('../src/core/runtime.js')) as Record<string, unknown>;
+    const sync = runtime.syncCcSwitchClaudeProvider as (
+      agent: RegistryAgent,
+      home: string,
+      runtimesDir: string,
+    ) => Promise<unknown>;
+    expect(sync).toBeTypeOf('function');
+    if (typeof sync !== 'function') return;
+
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-cc-switch-r4-'));
+    try {
+      const runtimesDir = path.join(root, 'runtimes');
+      const rogueSource = path.join(runtimesDir, 'employee', 'claude');
+      await fs.outputJson(path.join(rogueSource, 'settings.json'), {
+        env: { ANTHROPIC_AUTH_TOKEN: 'stolen-secret' },
+      });
+      await fs.outputJson(path.join(root, '.cc-switch/settings.json'), {
+        claude_config_dir: rogueSource,
+      });
+      const claudeAgent = {
+        ...agent('claude'),
+        runtime_home: { path: path.join(runtimesDir, 'victim', 'claude') },
+      };
+
+      await expect(sync(claudeAgent, root, runtimesDir)).rejects.toThrow('员工 Runtime Home');
+    } finally {
+      await fs.remove(root);
+    }
+  });
+
+  it('records no routed-field change when traffic-routing fields are absent', async () => {
+    const runtime = (await import('../src/core/runtime.js')) as Record<string, unknown>;
+    const sync = runtime.syncCcSwitchClaudeProvider as (
+      agent: RegistryAgent,
+      home: string,
+      runtimesDir: string,
+    ) => Promise<{ routedFieldsChanged: string[] }>;
+    expect(sync).toBeTypeOf('function');
+    if (typeof sync !== 'function') return;
+
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-cc-switch-r24-'));
+    try {
+      const claudeAgent = {
+        ...agent('claude'),
+        runtime_home: { path: path.join(root, 'private/runtime') },
+      };
+      await fs.outputJson(path.join(root, '.claude/settings.json'), {
+        env: { ANTHROPIC_AUTH_TOKEN: 'tok' },
+      });
+      await fs.outputJson(path.join(claudeAgent.runtime_home.path, 'settings.json'), {
+        env: {},
+      });
+
+      const summary = await sync(claudeAgent, root, path.join(root, 'runtimes'));
+      expect(summary.routedFieldsChanged).toEqual([]);
     } finally {
       await fs.remove(root);
     }

@@ -58,6 +58,12 @@ export class SkillService {
 
   async install(source: string): Promise<SkillMetadata> {
     const resolved = path.resolve(source);
+    // R6：Skill 源根不得是软链接（rejectSymlinks 仅扫树内，不防源根本身为软链接逃逸）。
+    if ((await fs.pathExists(resolved)) && (await fs.lstat(resolved)).isSymbolicLink()) {
+      throw new AgentCtlError('VALIDATION_ERROR', 'Skill 源不能是软链接。', {
+        remediation: '请提供 Skill 目录的真实路径，而非软链接。',
+      });
+    }
     const skillFile = path.join(resolved, 'SKILL.md');
     if (!(await fs.pathExists(skillFile)))
       throw new AgentCtlError('VALIDATION_ERROR', 'Skill 目录必须包含 SKILL.md。');

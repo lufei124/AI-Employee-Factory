@@ -4,10 +4,14 @@ import { randomUUID } from 'node:crypto';
 import YAML from 'yaml';
 import { atomicWriteFile } from './atomic.js';
 import { AgentCtlError } from './errors.js';
+import { FileLock } from './locks.js';
 import { registrySchema, type Registry, type RegistryAgent } from '../schemas/registry-schema.js';
 
 export class RegistryStore {
-  constructor(readonly file: string) {}
+  constructor(
+    readonly file: string,
+    readonly locksDir?: string,
+  ) {}
 
   async initialize(): Promise<void> {
     if (await fs.pathExists(this.file)) {
@@ -99,6 +103,36 @@ export class RegistryStore {
   }
 
   private async update(transform: (registry: Registry) => Registry): Promise<void> {
+    // R15：读-改-写全程持全局 registry.lock，防并发丢失员工条目。
+    // 未传 locksDir 时（如部分测试）保持无锁路径，向后兼容。
+    if (!this.locksDir) {
+      return this.updateUnlocked(transform);
+    }
+    const lock = new FileLock(path.join(this.locksDir, 'registry.lock'));
+    await this.serialize(lock, () => this.updateUnlocked(transform));
+  }
+
+  /**
+   * FileLock 本身是 fail-fast（并发 acquire 即拒绝）。对用户可见的 Registry 写入改为
+   * 有界重试，使 Web+CLI 并发更新排队完成而非立即抛 LOCKED。非 LOCKED 错误直传。
+   */
+  private async serialize<T>(lock: FileLock, operation: () => Promise<T>): Promise<T> {
+    const maxAttempts = 80;
+    const delayMs = 25;
+    let lastError: unknown;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        return await lock.withLock({ purpose: 'registry:update' }, operation);
+      } catch (error) {
+        if (!(error instanceof AgentCtlError) || error.code !== 'LOCKED') throw error;
+        lastError = error;
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    throw lastError;
+  }
+
+  private async updateUnlocked(transform: (registry: Registry) => Registry): Promise<void> {
     const current = await this.read();
     await this.backup();
     const next = registrySchema.parse(transform(current));

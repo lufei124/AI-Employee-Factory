@@ -1,5 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
+import fs from 'fs-extra';
 import { AgentCtlError } from './errors.js';
 
 export interface FactoryPaths {
@@ -89,6 +90,46 @@ export function assertInside(root: string, candidate: string, label: string): st
     });
   }
   return resolvedCandidate;
+}
+
+/**
+ * 封存不变量 `assertInside` 的异步强化伴生（D-009 frozen 实现升级）。
+ * 在 `assertInside` 的路径包含语义之上，补 `fs.realpath` 解析与软链接拒绝，
+ * 抵抗「软链接逃逸」绕过。语义不变（包含校验仍由核心执行），仅升级实现。
+ * 不存在路径仅做同步包含校验（向后兼容配置期校验）。
+ */
+export async function assertInsideReal(
+  root: string,
+  candidate: string,
+  label: string,
+): Promise<string> {
+  const resolved = assertInside(root, candidate, label);
+  if (!(await fs.pathExists(root)) || !(await fs.pathExists(candidate))) {
+    return resolved;
+  }
+  const stat = await fs.lstat(candidate);
+  if (stat.isSymbolicLink()) {
+    throw new AgentCtlError('VALIDATION_ERROR', `${label} 不能是软链接。`, {
+      remediation: `请检查 ${label} 路径，移除软链接后重试。`,
+    });
+  }
+  const [rootReal, candidateReal] = await Promise.all([fs.realpath(root), fs.realpath(candidate)]);
+  const relative = path.relative(rootReal, candidateReal);
+  if (
+    relative === '' ||
+    relative.startsWith(`..${path.sep}`) ||
+    relative === '..' ||
+    path.isAbsolute(relative)
+  ) {
+    throw new AgentCtlError(
+      'VALIDATION_ERROR',
+      `${label} 必须位于 ${rootReal} 内（解析软链接后）。`,
+      {
+        remediation: `请检查 ${label} 路径与根目录配置。`,
+      },
+    );
+  }
+  return resolved;
 }
 
 export function displayPath(value: string, env: NodeJS.ProcessEnv = process.env): string {

@@ -3,7 +3,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import { atomicWriteFile } from './atomic.js';
 import { AgentCtlError } from './errors.js';
-import { assertInside } from './paths.js';
+import { assertInsideReal } from './paths.js';
 import { agentIdSchema } from '../schemas/agent-schema.js';
 import { jobConfigSchema, type JobConfig } from '../schemas/job-schema.js';
 
@@ -48,7 +48,7 @@ export class JobStore {
   }
 
   async create(input: JobConfig): Promise<JobConfig> {
-    const parsed = this.validate(input);
+    const parsed = await this.validate(input);
     await fs.ensureDir(this.jobsDir);
     const target = path.join(this.jobsDir, `${parsed.id}.yaml`);
     if (await fs.pathExists(target))
@@ -60,7 +60,7 @@ export class JobStore {
   async update(id: string, input: JobConfig): Promise<JobConfig> {
     agentIdSchema.parse(id);
     const currentFile = await this.fileFor(id);
-    const parsed = this.validate(input);
+    const parsed = await this.validate(input);
     if (parsed.id !== id) throw new AgentCtlError('VALIDATION_ERROR', '定时任务 ID 不允许修改。');
     await atomicWriteFile(currentFile, YAML.stringify(parsed), 0o644);
     return parsed;
@@ -85,15 +85,15 @@ export class JobStore {
     return this.validate(YAML.parse(await fs.readFile(file, 'utf8')));
   }
 
-  private validate(input: unknown): JobConfig {
+  private async validate(input: unknown): Promise<JobConfig> {
     const parsed = jobConfigSchema.parse(input);
     const referenced =
       parsed.execution.type === 'script'
         ? parsed.execution.script_file
         : parsed.execution.prompt_file;
-    assertInside(this.workspace, path.resolve(this.workspace, referenced), '任务文件');
+    await assertInsideReal(this.workspace, path.resolve(this.workspace, referenced), '任务文件');
     if (parsed.execution.type === 'agent' && parsed.execution.precheck) {
-      assertInside(
+      await assertInsideReal(
         this.workspace,
         path.resolve(this.workspace, parsed.execution.precheck.script_file),
         '预检脚本',

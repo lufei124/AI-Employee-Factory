@@ -7,12 +7,13 @@ import { getRegisteredAgent, loadPortableConfig } from '../core/agents.js';
 import { atomicWriteFile } from '../core/atomic.js';
 import { BackupService } from '../core/backup.js';
 import { BridgeAdapter } from '../core/bridge.js';
+import { FileLock } from '../core/locks.js';
 import { initializeFactory } from '../core/config.js';
 import { CreateAgentService, type CreateAgentInput } from '../core/create-agent.js';
 import { DoctorService } from '../core/doctor.js';
 import { AgentCtlError } from '../core/errors.js';
 import { JobRunner } from '../core/job-runner.js';
-import { assertInside, type FactoryPaths } from '../core/paths.js';
+import { assertInside, assertInsideReal, type FactoryPaths } from '../core/paths.js';
 import type { RegistryStore } from '../core/registry.js';
 import { JobStore } from '../core/scheduler.js';
 import { SkillService } from '../core/skills.js';
@@ -309,7 +310,7 @@ export class FactoryApplication {
       adapter.authorize(registry, options),
     );
     if (code === 0) {
-      await adapter.secureProfile(registry);
+      await this.secureBridgeProfile(registry);
       await this.markBridgeReady(id);
     }
     return code;
@@ -325,7 +326,10 @@ export class FactoryApplication {
       shell: false,
       reject: false,
     });
-    if (result.exitCode === 0) await this.markBridgeReady(id);
+    if (result.exitCode === 0) {
+      await this.secureBridgeProfile(registry);
+      await this.markBridgeReady(id);
+    }
     return { exitCode: result.exitCode ?? 1, output: result.stdout };
   }
 
@@ -367,7 +371,7 @@ export class FactoryApplication {
     const { registry } = await this.getAgent(id);
     await this.prepareRuntime(registry);
     const adapter = new BridgeAdapter();
-    await adapter.secureProfile(registry);
+    await this.secureBridgeProfile(registry);
     return new ProcessRunner(this.paths.logsDir).runInteractive(adapter.run(registry));
   }
 
@@ -387,7 +391,7 @@ export class FactoryApplication {
     }
     if (action === 'start' || action === 'restart') {
       await this.prepareRuntime(registry);
-      await new BridgeAdapter().secureProfile(registry);
+      await this.secureBridgeProfile(registry);
     }
     const service = bridgeLaunchdService(registry, this.paths);
     if (action === 'status') {
@@ -508,7 +512,17 @@ export class FactoryApplication {
 
   private async prepareRuntime(registry: RegistryAgent) {
     if (registry.runtime.provider !== 'claude') return undefined;
-    return syncCcSwitchClaudeProvider(registry, this.paths.userHome);
+    const summary = await syncCcSwitchClaudeProvider(
+      registry,
+      this.paths.userHome,
+      this.paths.runtimesDir,
+    );
+    if (summary.routedFieldsChanged.length > 0) {
+      console.warn(
+        `⚠️  员工 ${registry.id} 的 CC Switch 流量路由字段已变更：${summary.routedFieldsChanged.join(', ')}。请核对 CC Switch Provider 配置。`,
+      );
+    }
+    return summary;
   }
 
   async archiveJob(id: string, jobId: string): Promise<void> {
@@ -558,6 +572,12 @@ export class FactoryApplication {
     backupPath: string,
     options: { newId?: string; newName?: string; passphrase?: string; dryRun?: boolean },
   ) {
+    // R22：CLI 备份路径必须位于受管 backupsDir 内，并抵抗软链接逃逸（Web 已不暴露此入口）。
+    await assertInsideReal(
+      this.paths.backupsDir,
+      path.resolve(this.paths.backupsDir, backupPath),
+      '备份',
+    );
     return new BackupService(this.paths, this.registry).restore(backupPath, options);
   }
 
@@ -629,6 +649,14 @@ export class FactoryApplication {
     const latest = candidates.sort((left, right) => right.mtime - left.mtime)[0];
     if (!latest) throw new AgentCtlError('NOT_FOUND', '暂无日志。');
     return { root, file: latest.file };
+  }
+
+  private async secureBridgeProfile(registry: RegistryAgent): Promise<void> {
+    // R16：secureProfile 读-改-写 config.json 全程持 per-bridge 锁，防并发硬化丢失。
+    const lock = new FileLock(path.join(this.paths.locksDir, `bridge-${registry.id}.lock`));
+    await lock.withLock({ purpose: `bridge:secure:${registry.id}` }, () =>
+      new BridgeAdapter().secureProfile(registry),
+    );
   }
 
   private async markBridgeReady(id: string): Promise<void> {
