@@ -72,6 +72,43 @@ describe('FactoryApplication', () => {
     expect((await app.listAgents())[0]?.runtime).toBe('unknown');
   });
 
+  it('installAllSkillFromStore installs all skills and skips already-installed ones', async () => {
+    const { app, paths } = setup();
+    await app.initialize();
+    await app.createAgent({
+      id: 'user-operations',
+      name: '用户运营专员',
+      runtime: 'claude',
+      preset: 'user-operations',
+      feishu: 'disabled',
+    });
+    await app.addSkillStoreRepository({
+      name: 'batch',
+      url: 'https://github.com/owner/repo',
+    });
+    // 手工铺设缓存仓库（.git 标记 + 两个技能），模拟已刷新的本地缓存，避免依赖网络。
+    const cacheRoot = path.join(paths.skillStoreDir, 'cache', 'batch');
+    await fs.ensureDir(path.join(cacheRoot, '.git'));
+    for (const name of ['alpha', 'beta']) {
+      await fs.outputFile(
+        path.join(cacheRoot, 'skills', name, 'SKILL.md'),
+        `---\nname: ${name}\ndescription: ${name} skill\n---\n`,
+      );
+    }
+
+    const first = await app.installAllSkillFromStore('batch', 'user-operations', 'project');
+    expect(first.total).toBe(2);
+    expect(first.installed.map((skill) => skill.name).sort()).toEqual(['alpha', 'beta']);
+    expect(first.skipped).toEqual([]);
+    expect(first.failed).toEqual([]);
+
+    // 二次安装：两个都已存在，应全部跳过而非报错。
+    const second = await app.installAllSkillFromStore('batch', 'user-operations', 'project');
+    expect(second.installed).toEqual([]);
+    expect(second.skipped.sort()).toEqual(['alpha', 'beta']);
+    expect(second.failed).toEqual([]);
+  });
+
   it('reads and atomically updates only declared identity documents', async () => {
     const { app, paths } = setup();
     await app.initialize();

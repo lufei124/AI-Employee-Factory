@@ -29,6 +29,7 @@ vi.mock('../web/src/api.js', () => ({
     refreshSkillStoreRepository: vi.fn(),
     listSkillStoreSkills: vi.fn(),
     installSkillFromStore: vi.fn(),
+    installAllSkillFromStore: vi.fn(),
     listOperations: vi.fn(),
     operationEvents: vi.fn(),
     trashAgent: vi.fn(),
@@ -305,7 +306,7 @@ describe('Web console core flows', () => {
     expect(await screen.findByText('superpowers')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '浏览技能' }));
     expect(await screen.findByText('says hi')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '选择目标' }));
+    await user.click(screen.getByRole('button', { name: '安装' }));
     await user.click(screen.getByRole('button', { name: '确认安装' }));
 
     expect(api.installSkillFromStore).toHaveBeenCalledWith({
@@ -352,12 +353,12 @@ describe('Web console core flows', () => {
     expect(await screen.findByText('1 个技能')).toBeInTheDocument();
   });
 
-  it('one-click installs a store skill to the first agent with project scope', async () => {
+  it('one-click installs all skills of a repository to the first agent', async () => {
     vi.mocked(api.listSkillStoreRepositories).mockResolvedValue([
       {
-        name: 'superpowers',
-        url: 'https://github.com/obra/superpowers',
-        description: '社区技能',
+        name: 'larksuite-cli',
+        url: 'https://github.com/larksuite/cli',
+        description: '飞书 CLI',
         cached: true,
       },
     ]);
@@ -370,20 +371,18 @@ describe('Web console core flows', () => {
     } as never);
     vi.mocked(api.listSkillStoreSkills).mockResolvedValue([
       {
-        name: 'hello',
-        description: 'says hi',
+        name: 'lark-shared',
+        description: '共享鉴权',
         version: '1.0.0',
-        path: 'skills/hello',
-        repository: 'superpowers',
+        path: 'skills/lark-shared',
+        repository: 'larksuite-cli',
       },
-    ]);
-    vi.mocked(api.installSkillFromStore).mockResolvedValue({
-      name: 'hello',
-      version: '1.0.0',
-      source: '/cache/superpowers/skills/hello',
-      installed_at: '2026-08-04T00:00:00.000Z',
-      digest: 'ab',
-      scope: 'project',
+    ] as never);
+    vi.mocked(api.installAllSkillFromStore).mockResolvedValue({
+      total: 1,
+      installed: [{ name: 'lark-shared', version: '1.0.0', scope: 'project' }],
+      skipped: [],
+      failed: [],
     } as never);
     const user = userEvent.setup();
 
@@ -393,16 +392,15 @@ describe('Web console core flows', () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText('superpowers')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '浏览技能' }));
-    await user.click(await screen.findByRole('button', { name: '一键安装' }));
+    await user.click(await screen.findByRole('button', { name: '一键安装全部' }));
 
-    expect(api.installSkillFromStore).toHaveBeenCalledWith({
-      repoName: 'superpowers',
-      skillPath: 'skills/hello',
+    expect(api.installAllSkillFromStore).toHaveBeenCalledWith({
+      repoName: 'larksuite-cli',
       agentId: 'ops',
       scope: 'project',
     });
-    expect(await screen.findByText(/已一键安装 hello@1.0.0/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/一键安装 larksuite-cli 全部技能：成功 1\/1/),
+    ).toBeInTheDocument();
   });
 });

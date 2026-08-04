@@ -1413,12 +1413,6 @@ textarea:focus {
   display: grid;
   gap: 4px;
 }
-.store-skill-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: none;
-}
 .store-skill-main strong {
   font-size: 13px;
 }

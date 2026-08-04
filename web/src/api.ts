@@ -284,6 +284,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
+  installAllSkillFromStore: (input: { repoName: string; agentId: string; scope?: SkillScope }) =>
+    request<{ total: number; installed: SkillMetadata[]; skipped: string[]; failed: string[] }>(
+      '/skill-store/install-all',
+      { method: 'POST', body: JSON.stringify(input) },
+    ),
   latestLog: (id: string, lines = 200) =>
     request<{ file: string; content: string }>(
       `/agents/${encodeURIComponent(id)}/logs?lines=${lines}`,

@@ -509,6 +509,25 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
     return { data: installed };
   });
 
+  server.post<{
+    Body: { repoName: string; agentId: string; scope?: SkillScope };
+  }>('/api/v1/skill-store/install-all', async (request, reply) => {
+    const body = z
+      .object({
+        repoName: z.string().min(1),
+        agentId: z.string().min(1),
+        scope: skillScopeSchema.optional(),
+      })
+      .parse(request.body);
+    const result = await options.application.installAllSkillFromStore(
+      body.repoName,
+      body.agentId,
+      body.scope,
+    );
+    reply.code(201);
+    return { data: result };
+  });
+
   server.get<{ Params: { id: string }; Querystring: { lines?: string } }>(
     '/api/v1/agents/:id/logs',
     async (request) => {

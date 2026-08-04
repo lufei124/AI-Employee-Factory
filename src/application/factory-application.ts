@@ -22,7 +22,7 @@ import { JobRunner } from '../core/job-runner.js';
 import { assertInside, assertInsideReal, type FactoryPaths } from '../core/paths.js';
 import type { RegistryStore } from '../core/registry.js';
 import { JobStore } from '../core/scheduler.js';
-import { SkillService, type SkillScope } from '../core/skills.js';
+import { SkillService, type SkillMetadata, type SkillScope } from '../core/skills.js';
 import { SkillStoreService } from '../core/skill-store.js';
 import { OperationStore, type OperationSummary } from '../core/operation-store.js';
 import { PruneService, type PruneOptions, type PruneResult } from '../core/prune.js';
@@ -646,6 +646,38 @@ export class FactoryApplication {
       agent.runtime.provider,
       registry.runtime_home.path,
     ).install(source, scope);
+  }
+
+  // 一键安装仓库全部技能：逐个安装，已存在（CONFLICT）跳过，其余失败逐条记录，不中断。
+  async installAllSkillFromStore(
+    repoName: string,
+    agentId: string,
+    scope: SkillScope = 'project',
+  ): Promise<{ total: number; installed: SkillMetadata[]; skipped: string[]; failed: string[] }> {
+    const { registry, agent } = await this.getAgent(agentId);
+    const store = new SkillStoreService(this.paths);
+    const skills = await store.listSkills(repoName);
+    const service = new SkillService(
+      registry.workspace.path,
+      agent.runtime.provider,
+      registry.runtime_home.path,
+    );
+    const installed: SkillMetadata[] = [];
+    const skipped: string[] = [];
+    const failed: string[] = [];
+    for (const skill of skills) {
+      try {
+        const source = await store.resolveSkillSource(repoName, skill.path);
+        installed.push(await service.install(source, scope));
+      } catch (error) {
+        if (error instanceof AgentCtlError && error.code === 'CONFLICT') {
+          skipped.push(skill.name);
+        } else {
+          failed.push(`${skill.name}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
+    return { total: skills.length, installed, skipped, failed };
   }
 
   // OP3-A 长期：SOFT 迁移--Registry 仍为 v1（含 runtime 块）时重写磁盘为 v2，v2 无操作。
