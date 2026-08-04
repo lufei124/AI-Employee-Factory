@@ -718,44 +718,45 @@ function SkillsTab({ agentId }: { agentId: string }) {
         ))}
       </div>
       {error && <div className="notice danger">{error}</div>}
-      {skills.length === 0 ? (
-        <div className="empty-state">
-          <Store size={26} />
-          <h3>暂无 Skill</h3>
-          <p>从商店安装，或按上方选中的作用域导入本地 Skill 目录。</p>
-        </div>
-      ) : (
-        groups.map(({ scope: s, label, hint }) => {
-          const items = skills.filter((skill) => skill.scope === s);
-          if (!items.length) return null;
+      {groups.map(({ scope: s, label, hint }) => {
+        if (s !== scope) return null; // 切换生效：只显示选中的作用域
+        const items = skills.filter((skill) => skill.scope === s);
+        if (!items.length) {
           return (
-            <div className="scope-group" key={s}>
-              <div className="scope-group-head">
-                <strong>{label}</strong>
-                <span>{hint}</span>
-                <em>{items.length}</em>
-              </div>
-              <div className="data-list">
-                {items.map((skill) => (
-                  <article key={skill.name}>
-                    <div>
-                      <strong>{skill.name}</strong>
-                      <span>
-                        v{skill.version} · {skill.digest.slice(0, 12)}
-                      </span>
-                    </div>
-                    <span className={`status-badge ${s}`}>{label}</span>
-                    <button className="button ghost danger-text" onClick={() => void remove(skill)}>
-                      <Archive size={14} />
-                      归档
-                    </button>
-                  </article>
-                ))}
-              </div>
+            <div className="empty-state" key={s}>
+              <Store size={26} />
+              <h3>暂无 {label} Skill</h3>
+              <p>从商店安装，或按上方选中的作用域导入本地 Skill 目录。</p>
             </div>
           );
-        })
-      )}
+        }
+        return (
+          <div className="scope-group" key={s}>
+            <div className="scope-group-head">
+              <strong>{label}</strong>
+              <span>{hint}</span>
+              <em>{items.length}</em>
+            </div>
+            <div className="data-list">
+              {items.map((skill) => (
+                <article key={skill.name}>
+                  <div>
+                    <strong>{skill.name}</strong>
+                    <span>
+                      v{skill.version} · {skill.digest.slice(0, 12)}
+                    </span>
+                  </div>
+                  <span className={`status-badge ${s}`}>{label}</span>
+                  <button className="button ghost danger-text" onClick={() => void remove(skill)}>
+                    <Archive size={14} />
+                    归档
+                  </button>
+                </article>
+              ))}
+            </div>
+          </div>
+        );
+      })}
     </section>
   );
 }
