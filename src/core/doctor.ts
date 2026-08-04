@@ -370,6 +370,27 @@ export class DoctorService {
       status: (await fs.pathExists(agent.runtime_home.path)) ? 'pass' : 'fail',
       detail: agent.runtime_home.path,
     });
+    // OP5-B：.cc-switch.env 降级预置文件权限必须为 0600（含 secret，守 D-006）。存在但权限不符告警。
+    const ccSwitchEnv = path.join(agent.runtime_home.path, '.cc-switch.env');
+    if (await fs.pathExists(ccSwitchEnv)) {
+      const mode = (await fs.stat(ccSwitchEnv)).mode & 0o777;
+      add(
+        mode === 0o600
+          ? {
+              id: 'cc-switch-env-mode',
+              label: '.cc-switch.env 权限',
+              status: 'pass',
+              detail: '0600',
+            }
+          : {
+              id: 'cc-switch-env-mode',
+              label: '.cc-switch.env 权限',
+              status: 'fail',
+              detail: mode.toString(8),
+              remediation: `运行 chmod 600 ${ccSwitchEnv} 后重试。`,
+            },
+      );
+    }
     add({
       id: 'bridge-home',
       label: 'Bridge Home',

@@ -85,7 +85,7 @@ agentctl runtime sync user-operations
 agentctl runtime status user-operations
 ```
 
-Factory 只读取 CC Switch live `settings.json` 中经过白名单允许的 `ANTHROPIC_*` 与模型配置，并写入 `~/.ai-employees/runtimes/user-operations/claude/settings.json`。它不会复制个人 OAuth、会话、历史、MCP、主题或权限；不会修改 CC Switch 和个人 `~/.claude`。每次 chat、run、Agent Job 与 Bridge 启动前都会重新同步，因此在 CC Switch 切换 Provider 后无需官方 Claude 登录。兼容旧脚本的 `agentctl runtime login <claude-id>` 也只执行同步，不会运行 `claude auth login`。
+Factory 只读取 CC Switch live `settings.json` 中经过白名单允许的 `ANTHROPIC_*` 与模型配置，并写入 `~/.ai-employees/runtimes/user-operations/claude/settings.json`。白名单外置在 `presets/cc-switch-allowlist.json`，随 Claude Code 版本更新而不改代码。它不会复制个人 OAuth、会话、历史、MCP、主题或权限；不会修改 CC Switch 和个人 `~/.claude`。每次 chat、run、Agent Job 与 Bridge 启动前都会同步（带 mtime 缓存：源未变则跳过重写），因此在 CC Switch 切换 Provider 后无需官方 Claude 登录；若本机没有 CC Switch 配置，也可在员工 `runtime_home/.cc-switch.env`（0600）预置白名单字段作为降级来源。兼容旧脚本的 `agentctl runtime login <claude-id>` 也只执行同步，不会运行 `claude auth login`。
 
 Codex 员工仍通过 `agentctl runtime login <id>` 登录专属 `CODEX_HOME`。
 

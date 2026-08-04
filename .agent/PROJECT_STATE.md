@@ -1,9 +1,9 @@
 # 项目状态
 
-最后更新：2026-08-04 20:16 +0800
+最后更新：2026-08-04 20:45 +0800
 更新者：claude-20260803-01
-当前版本/分支：master（TASK-020 阶段4 OP1 Stage B knowledge/ 索引 + recall 已提交）
-当前阶段：TASK-020 记忆系统剩余批次合并（阶段1-4 已提交；阶段5-12 按顺序依赖后续实施）
+当前版本/分支：master（TASK-020 阶段9 OP5-B CC Switch 降级 + mtime 缓存 + 白名单外置 已提交）
+当前阶段：TASK-020 记忆系统剩余批次合并（阶段1-9 已提交；阶段10-12 按顺序依赖后续实施）
 
 ## 已完成
 
@@ -52,9 +52,11 @@
 
 - 完成 TASK-020 阶段8（OP5-A ServiceAdapterFactory + systemd 桩）：src/services/factory-services.ts 增 ServiceAdapterFactory 接口（provider/bridge/job）+createServiceFactory(provider) 按 config.yaml service_provider 分发（launchd/systemd，未知抛错）+LaunchdServiceAdapterFactory（原 bridgeLaunchdService/jobLaunchdService 保留为兼容委托，ServiceAdapter 接口不变）；src/services/systemd-service.ts(新增) SystemdServiceAdapterFactory 桩（bridge/job 返回 SystemdServiceAdapter，install/start/stop/restart/uninstall 抛 DEPENDENCY_MISSING，status 返回 error，零副作用）；src/core/doctor.ts service-platform 检查从 process.platform 改为按 config.yaml service_provider 分发（launchd pass/systemd warn 桩/其他 warn）；新增 tests/service-adapter.test.ts(+5)。ASSUMPTIONS.md 记 service_provider 分发语义、ARCHITECTURE.md 模块边界更新。npm run verify 实跑（build+221 单测全绿+lint+prettier 全绿）。未 push。
 
+- 完成 TASK-020 阶段9（OP5-B CC Switch 降级 + mtime 缓存 + 白名单外置）：presets/cc-switch-allowlist.json(新增) 外置白名单（variables 22 项 + routed_fields 3 项）；src/core/runtime.ts 删硬编码 ccSwitchClaudeProviderVariables/routedFields Set 改 loadAllowlist()（presets/ 加载+内置回退+模块缓存），新增 SyncCache 接口+createSyncCache()（isStale 对 mtime<0 源缺失恒真，防误判缓存命中），syncCcSwitchClaudeProvider 增 cache?:SyncCache（源 mtime 未变则返回 cached:true 跳过重写；源缺失时优先从 agent.runtime_home/.cc-switch.env（0600，用户预置，KEY=VALUE 仅白名单字段生效）降级读取，降级不参与 mtime 缓存），CcSwitchSyncSummary 增 cached?:boolean；src/application/factory-application.ts FactoryApplication 增 ccSwitchSyncCache 实例（prepareRuntime 传入）；src/core/doctor.ts 增 cc-switch-env-mode 检查（.cc-switch.env 存在且权限≠0600 报 fail+chmod 600 remediation）。新增 tests/runtime.test.ts(+4：SyncCache mtime 未变跳过/变更重写、.cc-switch.env 降级+白名单过滤+0600 产物、非 0600 拒绝、loadAllowlist 外置同构)；tests/doctor.test.ts(+1：.cc-switch.env 权限 fail→pass，无文件不检查)。共 226 单测。npm run verify 实跑（build+226 单测全绿+lint+prettier 全绿）。未 push。
+
 ## 进行中
 
-- TASK-020 记忆系统剩余批次合并：阶段1-8（OP2-F / CLI 结构化输出 / OP4-C / OP1 Stage B-E / OP5-A）已提交；阶段9-12（OP5-B CC Switch 降级 / OP5-C 换机调研 / OP5-D per-agent Provider / OP5-E PathLayout 收敛）按顺序依赖后续实施。
+- TASK-020 记忆系统剩余批次合并：阶段1-9（OP2-F / CLI 结构化输出 / OP4-C / OP1 Stage B-E / OP5-A / OP5-B）已提交；阶段10-12（OP5-C 换机调研 / OP5-D per-agent Provider / OP5-E PathLayout 收敛）按顺序依赖后续实施。
 
 ## 待审查
 

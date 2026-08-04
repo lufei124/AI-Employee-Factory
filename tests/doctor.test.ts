@@ -218,4 +218,48 @@ describe('DoctorService', () => {
       else process.env.HOME = originalHome;
     }
   });
+
+  it('reports .cc-switch.env permission violations (OP5-B)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-doctor-env-'));
+    roots.push(root);
+    const paths = resolveFactoryPaths({
+      HOME: root,
+      AI_EMPLOYEES_HOME: path.join(root, 'private'),
+      AI_EMPLOYEES_WORKSPACE_ROOT: path.join(root, 'agents'),
+    });
+    await initializeFactory(paths);
+    const registry = new RegistryStore(paths.registryFile);
+    await new CreateAgentService(paths, registry).create({
+      id: 'user-operations',
+      name: '用户运营专员',
+      runtime: 'claude',
+      preset: 'user-operations',
+      feishu: 'dedicated',
+    });
+    const agent = (await registry.read()).agents[0];
+    if (!agent) throw new Error('missing agent');
+
+    // 无 .cc-switch.env：无该检查项（仅显式预置时检查）。
+    let report = await new DoctorService(paths, registry).run('user-operations');
+    expect(report.checks.find((c) => c.id === 'cc-switch-env-mode')).toBeUndefined();
+
+    // 0644 -> fail，remediation 指向 chmod 600。
+    await fs.outputFile(
+      path.join(agent.runtime_home.path, '.cc-switch.env'),
+      'ANTHROPIC_AUTH_TOKEN=secret',
+      { mode: 0o644 },
+    );
+    report = await new DoctorService(paths, registry).run('user-operations');
+    let check = report.checks.find((c) => c.id === 'cc-switch-env-mode');
+    expect(check?.status).toBe('fail');
+    expect(check?.detail).toBe('644');
+    expect(check?.remediation).toContain('chmod 600');
+
+    // chmod 600 -> pass。
+    await fs.chmod(path.join(agent.runtime_home.path, '.cc-switch.env'), 0o600);
+    report = await new DoctorService(paths, registry).run('user-operations');
+    check = report.checks.find((c) => c.id === 'cc-switch-env-mode');
+    expect(check?.status).toBe('pass');
+    expect(check?.detail).toBe('0600');
+  });
 });

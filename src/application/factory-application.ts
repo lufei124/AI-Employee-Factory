@@ -39,8 +39,10 @@ import type { TranscriptSummary } from '../core/transcript.js';
 import {
   buildRuntimeEnvironment,
   buildSafeBaseEnvironment,
+  createSyncCache,
   getRuntimeAdapter,
   syncCcSwitchClaudeProvider,
+  type SyncCache,
 } from '../core/runtime.js';
 import type { AgentConfig, RuntimeProvider } from '../schemas/agent-schema.js';
 import type { JobConfig } from '../schemas/job-schema.js';
@@ -99,6 +101,9 @@ function validateDocumentKey(value: string): AgentDocumentKey {
 }
 
 export class FactoryApplication {
+  // OP5-B：CC Switch 同步的 mtime 缓存（源 settings.json 未变则跳过重写，降低 spawn 延迟与无谓 I/O）。
+  private readonly ccSwitchSyncCache: SyncCache = createSyncCache();
+
   constructor(
     readonly paths: FactoryPaths,
     readonly registry: RegistryStore,
@@ -712,6 +717,7 @@ export class FactoryApplication {
       this.paths.userHome,
       this.paths.runtimesDir,
       config.sync.sanitize_non_whitelist,
+      this.ccSwitchSyncCache,
     );
     if (summary.routedFieldsChanged.length > 0) {
       console.warn(

@@ -241,6 +241,165 @@ describe('runtime environment isolation', () => {
       await fs.remove(root);
     }
   });
+
+  it('skips rewriting when the source mtime is unchanged (OP5-B SyncCache)', async () => {
+    const runtime = (await import('../src/core/runtime.js')) as Record<string, unknown>;
+    const sync = runtime.syncCcSwitchClaudeProvider as (
+      agent: RegistryAgent,
+      runtime: AgentConfig['runtime'],
+      home: string,
+      runtimesDir: string,
+      sanitize?: boolean,
+      cache?: { isStale: (m: number) => boolean; markSynced: (m: number) => void },
+    ) => Promise<{ keys: string[]; cached?: boolean }>;
+    const createSyncCache = runtime.createSyncCache as () => {
+      isStale: (m: number) => boolean;
+      markSynced: (m: number) => void;
+    };
+    expect(sync).toBeTypeOf('function');
+    expect(createSyncCache).toBeTypeOf('function');
+    if (typeof sync !== 'function' || typeof createSyncCache !== 'function') return;
+
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-cc-switch-cache-'));
+    try {
+      const claudeAgent = {
+        ...agent('claude'),
+        runtime_home: { path: path.join(root, 'private/runtime') },
+      };
+      const sourceFile = path.join(root, '.claude/settings.json');
+      await fs.outputJson(sourceFile, { env: { ANTHROPIC_AUTH_TOKEN: 'secret' } });
+
+      const cache = createSyncCache();
+      const first = await sync(
+        claudeAgent,
+        runtimeBlock('claude'),
+        root,
+        path.join(root, 'runtimes'),
+        false,
+        cache,
+      );
+      expect(first.cached).toBeUndefined();
+      expect(first.keys).toEqual(['ANTHROPIC_AUTH_TOKEN']);
+
+      // 源未变：第二次同步命中缓存，keys 为空且 cached=true。
+      const second = await sync(
+        claudeAgent,
+        runtimeBlock('claude'),
+        root,
+        path.join(root, 'runtimes'),
+        false,
+        cache,
+      );
+      expect(second.cached).toBe(true);
+      expect(second.keys).toEqual([]);
+
+      // 源 mtime 变化：第三次同步重新写入。
+      const later = new Date(Date.now() + 60_000);
+      await fs.utimes(sourceFile, later, later);
+      const third = await sync(
+        claudeAgent,
+        runtimeBlock('claude'),
+        root,
+        path.join(root, 'runtimes'),
+        false,
+        cache,
+      );
+      expect(third.cached).toBeUndefined();
+      expect(third.keys).toEqual(['ANTHROPIC_AUTH_TOKEN']);
+    } finally {
+      await fs.remove(root);
+    }
+  });
+
+  it('degrades to .cc-switch.env when the CC Switch source is missing (OP5-B)', async () => {
+    const runtime = (await import('../src/core/runtime.js')) as Record<string, unknown>;
+    const sync = runtime.syncCcSwitchClaudeProvider as (
+      agent: RegistryAgent,
+      runtime: AgentConfig['runtime'],
+      home: string,
+      runtimesDir: string,
+    ) => Promise<{ source: string; keys: string[] }>;
+    expect(sync).toBeTypeOf('function');
+    if (typeof sync !== 'function') return;
+
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-cc-switch-env-'));
+    try {
+      const claudeAgent = {
+        ...agent('claude'),
+        runtime_home: { path: path.join(root, 'private/runtime') },
+      };
+      const envFile = path.join(claudeAgent.runtime_home.path, '.cc-switch.env');
+      await fs.outputFile(
+        envFile,
+        '# pre-provisioned\nANTHROPIC_AUTH_TOKEN=env-secret\nANTHROPIC_BASE_URL=https://env.example.test\nOPENAI_API_KEY=not-in-allowlist\n',
+        { mode: 0o600 },
+      );
+
+      // 无任何 CC Switch 源（无 ~/.claude/settings.json、无 ~/.cc-switch/settings.json）。
+      const summary = await sync(
+        claudeAgent,
+        runtimeBlock('claude'),
+        root,
+        path.join(root, 'runtimes'),
+      );
+      expect(summary.source).toBe(envFile);
+      expect(summary.keys).toEqual(['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']);
+
+      const isolated = await fs.readJson(path.join(claudeAgent.runtime_home.path, 'settings.json'));
+      expect(isolated.env).toMatchObject({
+        ANTHROPIC_AUTH_TOKEN: 'env-secret',
+        ANTHROPIC_BASE_URL: 'https://env.example.test',
+      });
+      expect(isolated.env).not.toHaveProperty('OPENAI_API_KEY');
+      expect(
+        (await fs.stat(path.join(claudeAgent.runtime_home.path, 'settings.json'))).mode & 0o777,
+      ).toBe(0o600);
+    } finally {
+      await fs.remove(root);
+    }
+  });
+
+  it('rejects a .cc-switch.env that is not 0600 (OP5-B)', async () => {
+    const runtime = (await import('../src/core/runtime.js')) as Record<string, unknown>;
+    const sync = runtime.syncCcSwitchClaudeProvider as (
+      agent: RegistryAgent,
+      runtime: AgentConfig['runtime'],
+      home: string,
+      runtimesDir: string,
+    ) => Promise<unknown>;
+    expect(sync).toBeTypeOf('function');
+    if (typeof sync !== 'function') return;
+
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-cc-switch-env-mode-'));
+    try {
+      const claudeAgent = {
+        ...agent('claude'),
+        runtime_home: { path: path.join(root, 'private/runtime') },
+      };
+      await fs.outputFile(
+        path.join(claudeAgent.runtime_home.path, '.cc-switch.env'),
+        'ANTHROPIC_AUTH_TOKEN=secret',
+        { mode: 0o644 },
+      );
+
+      await expect(
+        sync(claudeAgent, runtimeBlock('claude'), root, path.join(root, 'runtimes')),
+      ).rejects.toThrow(/0600/);
+    } finally {
+      await fs.remove(root);
+    }
+  });
+
+  it('loads the allowlist from presets/cc-switch-allowlist.json (OP5-B)', async () => {
+    const { loadAllowlist } = await import('../src/core/runtime.js');
+    const allowed = loadAllowlist();
+    // 外置白名单与内置回退同构：22 个变量 + 3 个路由字段。
+    expect(allowed.variables.size).toBe(22);
+    expect(allowed.routedFields.size).toBe(3);
+    expect(allowed.variables.has('ANTHROPIC_AUTH_TOKEN')).toBe(true);
+    expect(allowed.variables.has('OPENAI_API_KEY')).toBe(false);
+    expect(allowed.routedFields.has('ANTHROPIC_BASE_URL')).toBe(true);
+  });
 });
 
 describe('runtime adapters', () => {

@@ -1,5 +1,6 @@
 import fs from 'fs-extra';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { AgentCtlError } from './errors.js';
 import { atomicWriteFile } from './atomic.js';
 import { ClaudeRuntimeAdapter } from '../runtimes/claude-adapter.js';
@@ -24,7 +25,20 @@ const safeInheritedVariables = new Set([
   'FORCE_COLOR',
 ]);
 
-const ccSwitchClaudeProviderVariables = new Set([
+function packageRoot(): string {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+}
+
+// OP5-B：白名单外置到 presets/cc-switch-allowlist.json（便于随 Claude Code 版本更新，不改代码）。
+// 加载失败时回退内置默认（同 JSON 内容），保持向后兼容与健壮。
+interface AllowlistFile {
+  variables: string[];
+  routed_fields: string[];
+}
+
+const ALLOWLIST_FILE = path.join(packageRoot(), 'presets', 'cc-switch-allowlist.json');
+
+const FALLBACK_VARIABLES = [
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_AUTH_TOKEN',
   'ANTHROPIC_BASE_URL',
@@ -47,21 +61,66 @@ const ccSwitchClaudeProviderVariables = new Set([
   'CLAUDE_CODE_MAX_OUTPUT_TOKENS',
   'CLAUDE_CODE_SUBAGENT_MODEL',
   'CLAUDE_CODE_USE_BEDROCK',
-]);
+];
 
-// R24：流量路由字段（同步=流量重定向原语）。保留可同步（兼容中继/代理型 Provider，D-006），
-// 但在 SyncSummary.routedFieldsChanged 标记变更并告警，使路由变更可见可审计。
-const routedFields = new Set([
+const FALLBACK_ROUTED_FIELDS = [
   'ANTHROPIC_BASE_URL',
   'ANTHROPIC_CUSTOM_HEADERS',
   'CLAUDE_CODE_USE_BEDROCK',
-]);
+];
+
+let allowlistCache: { variables: Set<string>; routedFields: Set<string> } | undefined;
+
+export function loadAllowlist(): { variables: Set<string>; routedFields: Set<string> } {
+  if (allowlistCache) return allowlistCache;
+  try {
+    const raw = JSON.parse(fs.readFileSync(ALLOWLIST_FILE, 'utf8')) as AllowlistFile;
+    const variables = Array.isArray(raw.variables)
+      ? raw.variables.filter((value): value is string => typeof value === 'string')
+      : [];
+    const routedFields = Array.isArray(raw.routed_fields)
+      ? raw.routed_fields.filter((value): value is string => typeof value === 'string')
+      : [];
+    allowlistCache = {
+      variables: new Set(variables.length ? variables : FALLBACK_VARIABLES),
+      routedFields: new Set(routedFields.length ? routedFields : FALLBACK_ROUTED_FIELDS),
+    };
+  } catch {
+    allowlistCache = {
+      variables: new Set(FALLBACK_VARIABLES),
+      routedFields: new Set(FALLBACK_ROUTED_FIELDS),
+    };
+  }
+  return allowlistCache;
+}
+
+// OP5-B：mtime 缓存。源 settings.json 的 mtime 未变且已同步过则跳过重写（减少无谓 I/O 与竞态）。
+export interface SyncCache {
+  isStale(sourceMtimeMs: number): boolean;
+  markSynced(sourceMtimeMs: number): void;
+}
+
+export function createSyncCache(): SyncCache {
+  let syncedMtime = -1;
+  return {
+    isStale(sourceMtimeMs: number): boolean {
+      // mtime < 0（源缺失/不可 stat）恒为 stale：缓存命中仅对真实存在的源有效，
+      // 否则会把「源缺失」误当作已同步跳过，导致 NOT_FOUND/降级路径不触发。
+      return sourceMtimeMs < 0 || sourceMtimeMs !== syncedMtime;
+    },
+    markSynced(sourceMtimeMs: number): void {
+      syncedMtime = sourceMtimeMs;
+    },
+  };
+}
 
 export interface CcSwitchSyncSummary {
   source: string;
   destination: string;
   keys: string[];
   routedFieldsChanged: string[];
+  /** OP5-B：mtime 缓存命中，跳过重写。 */
+  cached?: boolean;
 }
 
 async function ccSwitchClaudeSettingsFile(userHome: string): Promise<string> {
@@ -91,10 +150,12 @@ export async function syncCcSwitchClaudeProvider(
   userHome: string,
   runtimesDir: string,
   sanitizeNonWhitelist = false,
+  cache?: SyncCache,
 ): Promise<CcSwitchSyncSummary> {
   if (runtime.provider !== 'claude') {
     throw new AgentCtlError('VALIDATION_ERROR', `Agent ${agent.id} 不是 Claude Runtime。`);
   }
+  const { variables: ccSwitchClaudeProviderVariables, routedFields } = loadAllowlist();
   const source = await ccSwitchClaudeSettingsFile(path.resolve(userHome));
   const destination = path.join(agent.runtime_home.path, 'settings.json');
   if (path.resolve(source) === path.resolve(destination)) {
@@ -121,7 +182,20 @@ export async function syncCcSwitchClaudeProvider(
       });
     }
   }
+  // OP5-B：mtime 缓存。源未变且已同步过则跳过重写。
+  const sourceMtime = (await fs.stat(source).catch(() => null))?.mtimeMs ?? -1;
+  if (cache && !cache.isStale(sourceMtime)) {
+    return { source, destination, keys: [], routedFieldsChanged: [], cached: true };
+  }
   if (!(await fs.pathExists(source))) {
+    // OP5-B：降级读取 agent.runtime_home/.cc-switch.env（0600，用户预置）。仅当显式存在时使用；
+    // 否则保持既有 NOT_FOUND 语义。降级来源不参与 mtime 缓存（一次性环境预置，非滚动同步源）。
+    const fallbackEnvFile = path.join(agent.runtime_home.path, '.cc-switch.env');
+    if (await fs.pathExists(fallbackEnvFile)) {
+      const degraded = await syncFromEnvFile(agent, fallbackEnvFile, destination);
+      cache?.markSynced(sourceMtime);
+      return degraded;
+    }
     throw new AgentCtlError('NOT_FOUND', `未找到 CC Switch 当前 Claude 配置：${source}`, {
       remediation: '请先在 CC Switch 中启用一个 Claude Provider，然后重新执行同步。',
     });
@@ -178,7 +252,75 @@ export async function syncCcSwitchClaudeProvider(
     `${JSON.stringify({ ...isolated, env: { ...existingEnv, ...providerEnv } }, null, 2)}\n`,
     0o600,
   );
+  cache?.markSynced(sourceMtime);
   return { source, destination, keys, routedFieldsChanged };
+}
+
+// OP5-B：从 .cc-switch.env（0600，用户预置）降级读取 Provider 配置。格式为 KEY=VALUE 行，
+// 忽略注释与空行；仅白名单字段生效。返回与正常同步一致的摘要。
+async function syncFromEnvFile(
+  agent: RegistryAgent,
+  envFile: string,
+  destination: string,
+): Promise<CcSwitchSyncSummary> {
+  const { variables: ccSwitchClaudeProviderVariables, routedFields } = loadAllowlist();
+  const mode = (await fs.stat(envFile)).mode & 0o777;
+  if (mode !== 0o600) {
+    throw new AgentCtlError(
+      'VALIDATION_ERROR',
+      `.cc-switch.env 权限必须为 0600，当前 ${mode.toString(8)}`,
+      {
+        remediation: '运行 chmod 600 后重试。',
+      },
+    );
+  }
+  const content = await fs.readFile(envFile, 'utf8');
+  const providerEnv: Record<string, string> = {};
+  for (const rawLine of content.split('\n')) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    const value = line.slice(eq + 1).trim();
+    if (ccSwitchClaudeProviderVariables.has(key)) providerEnv[key] = value;
+  }
+  const keys = Object.keys(providerEnv).sort();
+  if (!keys.length) {
+    throw new AgentCtlError(
+      'AUTH_REQUIRED',
+      `.cc-switch.env 未提供任何白名单 Claude Provider 配置。`,
+      { remediation: '在 .cc-switch.env 中填写白名单字段（如 ANTHROPIC_AUTH_TOKEN）后重试。' },
+    );
+  }
+  let isolated: Record<string, unknown> = {};
+  if (await fs.pathExists(destination)) {
+    try {
+      isolated = (await fs.readJson(destination)) as Record<string, unknown>;
+    } catch (error) {
+      throw new AgentCtlError('VALIDATION_ERROR', `员工 Claude 设置格式无效：${destination}`, {
+        cause: error,
+      });
+    }
+  }
+  const existingEnv =
+    isolated.env && typeof isolated.env === 'object' && !Array.isArray(isolated.env)
+      ? ({ ...isolated.env } as Record<string, unknown>)
+      : {};
+  const routedFieldsChanged: string[] = [];
+  for (const key of routedFields) {
+    const oldValue =
+      typeof existingEnv[key] === 'string' ? (existingEnv[key] as string) : undefined;
+    const newValue: string | undefined = providerEnv[key];
+    if (oldValue !== newValue) routedFieldsChanged.push(key);
+  }
+  for (const key of ccSwitchClaudeProviderVariables) delete existingEnv[key];
+  await atomicWriteFile(
+    destination,
+    `${JSON.stringify({ ...isolated, env: { ...existingEnv, ...providerEnv } }, null, 2)}\n`,
+    0o600,
+  );
+  return { source: envFile, destination, keys, routedFieldsChanged };
 }
 
 export function buildSafeBaseEnvironment(

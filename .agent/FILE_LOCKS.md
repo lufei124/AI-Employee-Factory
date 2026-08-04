@@ -32,6 +32,7 @@
 | `src/core/experience.ts`, `src/schemas/agent-schema.ts`, `src/application/factory-application.ts`, `tests/experience.test.ts`, `src/cli-program.ts`（仅 prettier 换行，修复 30dc9d8 引入的 gate 失败） | TASK-020 | claude-20260803-01 | master | 阶段6 OP1 Stage D ExperienceExtractor | 2026-08-04 20:27 +0800 | 2026-08-04 20:30 +0800 | RELEASED |
 | `src/core/archival.ts`, `docs/DECISIONS.md`, `docs/ARCHITECTURE.md` | TASK-020 | claude-20260803-01 | master | 阶段7 OP1 Stage E archival 前置约束 | 2026-08-04 20:32 +0800 | 2026-08-04 20:33 +0800 | RELEASED |
 | `src/services/factory-services.ts`, `src/services/systemd-service.ts`, `src/services/service-adapter.ts`, `src/core/doctor.ts`, `tests/service-adapter.test.ts`, `docs/ASSUMPTIONS.md`, `docs/ARCHITECTURE.md` | TASK-020 | claude-20260803-01 | master | 阶段8 OP5-A ServiceAdapterFactory + systemd 桩 | 2026-08-04 20:35 +0800 | 2026-08-04 20:39 +0800 | RELEASED |
+| `presets/cc-switch-allowlist.json`, `src/core/runtime.ts`, `src/application/factory-application.ts`, `src/core/doctor.ts`, `tests/runtime.test.ts`, `tests/doctor.test.ts` | TASK-020 | claude-20260803-01 | master | 阶段9 OP5-B CC Switch 降级 + mtime 缓存 + 白名单外置 | 2026-08-04 20:41 +0800 | 2026-08-04 20:44 +0800 | RELEASED |
 合法状态：`ACTIVE`、`RELEASED`、`STALE`、`TAKEOVER_PENDING`。
 
 ## 心跳与陈旧判定

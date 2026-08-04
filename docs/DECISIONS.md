@@ -67,7 +67,7 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 
 - 状态：Accepted
 - 日期：2026-08-03
-- 决定：把对外契约分两类管理。**封存不变量（frozen）**：语义对外固定，实现可经安全评审升级--典型为 `assertInside` 的「路径包含由核心执行」语义、Bridge profile `workspace/workspace` 权限不放宽、D-006「SyncSummary 只返回字段名不返回值」。frozen 实现升级须同时满足：(a) 记 ADR；(b) 对外语义不变；(c) 补回归测试；(d) 不放宽安全默认。**版本化契约（versioned）**：可经 schema 版本号 bump + 显式分派调整--典型为 env 白名单（`runtime.ts` `safeInheritedVariables`/`ccSwitchClaudeProviderVariables`）与配置 schema；调整须版本号 bump、显式分派与迁移说明，禁止静默全局改写（与红队 B2 一致）。
+- 决定：把对外契约分两类管理。**封存不变量（frozen）**：语义对外固定，实现可经安全评审升级--典型为 `assertInside` 的「路径包含由核心执行」语义、Bridge profile `workspace/workspace` 权限不放宽、D-006「SyncSummary 只返回字段名不返回值」。frozen 实现升级须同时满足：(a) 记 ADR；(b) 对外语义不变；(c) 补回归测试；(d) 不放宽安全默认。**版本化契约（versioned）**：可经 schema 版本号 bump + 显式分派调整--典型为 env 白名单（`runtime.ts` `safeInheritedVariables`，及 OP5-B 起外置到 `presets/cc-switch-allowlist.json` 的 CC Switch 白名单）与配置 schema；调整须版本号 bump、显式分派与迁移说明，禁止静默全局改写（与红队 B2 一致）。
 - 边界：本决策不改变任何既有不变量的语义，只确立其演进流程。`assertInside`（`paths.ts:77`）保持 frozen 语义，实现允许升级为 realpath 补全（OP2-B）；env 白名单从隐含 frozen 降为 versioned，为后续白名单调整铺路。
 - 原因：原 `extension-surface.md` 把上述项笼统标为「封存不变量 frozen」，但安全实现需迭代（realpath 抵抗符号链接、白名单收紧），缺乏「语义不变、实现可演进」的流程会导致要么不敢改、要么静默改坏对外契约。frozen/versioned 二分让安全实现可迭代而不破坏对外承诺。
 
