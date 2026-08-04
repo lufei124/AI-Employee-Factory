@@ -17,6 +17,7 @@ import { getRegisteredAgent } from './agents.js';
 import { assertInside, type FactoryPaths } from './paths.js';
 import type { RegistryStore } from './registry.js';
 import { FACTORY_VERSION } from './version.js';
+import { SECRET_PATTERN } from './secrets.js';
 import { agentConfigSchema, agentIdSchema } from '../schemas/agent-schema.js';
 import { backupManifestSchema, type BackupManifest } from '../schemas/backup-schema.js';
 import { registryAgentSchema } from '../schemas/registry-schema.js';
@@ -36,10 +37,6 @@ const excludedNames = new Set([
   'id_ecdsa',
 ]);
 const excludedExtensions = new Set(['.pem', '.key', '.p12', '.token', '.pfx', '.keystore']);
-
-// R27：内容扫描用 Secret 正则（AKIA AWS / sk- OpenAI·Anthropic / api_key·app_secret 赋值）
-const SECRET_PATTERN =
-  /(?:AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,}|(?:api[_-]?key|app[_-]?secret)\s*[:=]\s*[^\s]+)/i;
 
 function shouldCopy(source: string): boolean {
   const name = path.basename(source);

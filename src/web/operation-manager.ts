@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { AgentCtlError } from '../core/errors.js';
+import type { OperationStore } from '../core/operation-store.js';
 
 export type OperationState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
@@ -74,10 +75,18 @@ export class OperationManager {
   private readonly completions = new Map<string, Promise<void>>();
   private readonly maxOperations: number;
   private readonly maxEventsPerOperation: number;
+  private readonly store: OperationStore | undefined;
 
-  constructor(options: { maxOperations?: number; maxEventsPerOperation?: number } = {}) {
+  constructor(
+    options: {
+      maxOperations?: number;
+      maxEventsPerOperation?: number;
+      store?: OperationStore;
+    } = {},
+  ) {
     this.maxOperations = options.maxOperations ?? 200;
     this.maxEventsPerOperation = options.maxEventsPerOperation ?? 1000;
+    this.store = options.store;
   }
 
   start(type: string, agentId: string | undefined, task: OperationTask): OperationDto {
@@ -141,7 +150,7 @@ export class OperationManager {
 
   private async execute(operation: InternalOperation, task: OperationTask): Promise<void> {
     if (operation.controller.signal.aborted) {
-      this.finishCancelled(operation);
+      await this.finishCancelled(operation);
       return;
     }
     operation.dto.state = 'running';
@@ -158,7 +167,7 @@ export class OperationManager {
         },
       });
       if (operation.controller.signal.aborted) {
-        this.finishCancelled(operation);
+        await this.finishCancelled(operation);
         return;
       }
       const exitCode = result?.exitCode ?? 0;
@@ -178,7 +187,7 @@ export class OperationManager {
       this.emit(operation, { kind: 'state', message: operation.dto.state });
     } catch (error) {
       if (operation.controller.signal.aborted) {
-        this.finishCancelled(operation);
+        await this.finishCancelled(operation);
         return;
       }
       operation.dto.state = 'failed';
@@ -187,13 +196,35 @@ export class OperationManager {
       operation.dto.finishedAt = new Date().toISOString();
       this.emit(operation, { kind: 'state', message: 'failed' });
     }
+    await this.persist(operation);
   }
 
-  private finishCancelled(operation: InternalOperation): void {
+  private async finishCancelled(operation: InternalOperation): Promise<void> {
     operation.dto.state = 'cancelled';
     operation.dto.exitCode = 130;
     operation.dto.finishedAt = new Date().toISOString();
     this.emit(operation, { kind: 'state', message: 'cancelled' });
+    await this.persist(operation);
+  }
+
+  // OP4-A：终态 best-effort 持久化摘要到 operations.jsonl（无 store 时跳过，行为不变）。
+  private async persist(operation: InternalOperation): Promise<void> {
+    if (!this.store) return;
+    const dto = operation.dto;
+    if (!dto.startedAt || !dto.finishedAt) return;
+    try {
+      await this.store.record({
+        operation_id: dto.id,
+        ...(dto.agentId ? { agent_id: dto.agentId } : {}),
+        kind: dto.type,
+        started_at: dto.startedAt,
+        finished_at: dto.finishedAt,
+        exit_code: dto.exitCode ?? 0,
+        ...(dto.error ? { error_message: dto.error.message } : {}),
+      });
+    } catch {
+      // 持久化是 best-effort，不影响操作结果。
+    }
   }
 
   private emit(

@@ -1,5 +1,9 @@
+import fs from 'fs-extra';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { AgentCtlError } from '../src/core/errors.js';
+import { OperationStore } from '../src/core/operation-store.js';
 import { OperationManager } from '../src/web/operation-manager.js';
 
 describe('OperationManager', () => {
@@ -73,5 +77,63 @@ describe('OperationManager', () => {
       'line-5',
       'succeeded',
     ]);
+  });
+
+  it('persists terminal-state summaries to an injected OperationStore (OP4-A)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-opmgr-'));
+    try {
+      const store = new OperationStore(path.join(root, 'logs'));
+      const manager = new OperationManager({ store });
+
+      const succeeded = manager.start('chat', 'user-operations', async () => ({ exitCode: 0 }));
+      await manager.wait(succeeded.id);
+
+      const failed = manager.start('run', 'ops', async () => {
+        throw new AgentCtlError('CONFLICT', 'leaked sk-abcdefghijklmnopqrstuvwxyz0123456789XYZ');
+      });
+      await manager.wait(failed.id);
+
+      let releaseStart!: () => void;
+      const started = new Promise<void>((resolve) => {
+        releaseStart = resolve;
+      });
+      const cancelled = manager.start('doctor', undefined, async ({ signal }) => {
+        releaseStart();
+        await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve()));
+        return { exitCode: 130 };
+      });
+      await started; // 确保任务进入 running（startedAt 已写入）再取消，避免走「未启动即取消」分支
+      manager.cancelAll();
+      await manager.wait(cancelled.id);
+
+      const summaries = await store.query({ limit: 10 });
+      expect(summaries).toHaveLength(3);
+      expect(summaries.find((s) => s.operation_id === succeeded.id)).toMatchObject({
+        kind: 'chat',
+        agent_id: 'user-operations',
+        exit_code: 0,
+      });
+      expect(summaries.find((s) => s.operation_id === failed.id)).toMatchObject({
+        kind: 'run',
+        agent_id: 'ops',
+        exit_code: 4,
+      });
+      expect(summaries.find((s) => s.operation_id === failed.id)?.error_summary).not.toContain(
+        'sk-abcdef',
+      );
+      expect(summaries.find((s) => s.operation_id === cancelled.id)).toMatchObject({
+        kind: 'doctor',
+        exit_code: 130,
+      });
+    } finally {
+      await fs.remove(root);
+    }
+  });
+
+  it('does not error when no OperationStore is injected (OP4-A backward compat)', async () => {
+    const manager = new OperationManager();
+    const operation = manager.start('doctor', undefined, async () => ({ exitCode: 0 }));
+    await manager.wait(operation.id);
+    expect(manager.get(operation.id).state).toBe('succeeded');
   });
 });

@@ -57,6 +57,12 @@ export class LaunchdServiceAdapter implements ServiceAdapter {
     await fs.ensureDir(path.dirname(this.canonicalFile));
     await fs.ensureDir(path.dirname(this.installedFile));
     await fs.ensureDir(path.dirname(this.input.stdoutPath));
+    // R10：预创建 launchd stdout/stderr 日志 0o600，避免 launchd 按 umask 建 0o644
+    // 泄露运行时输出。已存在则收紧权限，不截断已有日志。
+    for (const log of [this.input.stdoutPath, this.input.stderrPath]) {
+      if (await fs.pathExists(log)) await fs.chmod(log, 0o600).catch(() => undefined);
+      else await fs.writeFile(log, '', { mode: 0o600 });
+    }
     const content = renderLaunchdPlist(this.input);
     await fs.writeFile(this.canonicalFile, content, { mode: 0o600 });
     await fs.copy(this.canonicalFile, this.installedFile, { overwrite: true });

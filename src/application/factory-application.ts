@@ -17,6 +17,7 @@ import { assertInside, assertInsideReal, type FactoryPaths } from '../core/paths
 import type { RegistryStore } from '../core/registry.js';
 import { JobStore } from '../core/scheduler.js';
 import { SkillService } from '../core/skills.js';
+import { OperationStore, type OperationSummary } from '../core/operation-store.js';
 import { TrashService, type TrashEntryDto, type TrashPreview } from '../core/trash.js';
 import { ProcessRunner, type LoggedRunOptions } from '../core/process-runner.js';
 import {
@@ -498,6 +499,19 @@ export class FactoryApplication {
     options: { force?: boolean; dryRun?: boolean } = {},
   ): Promise<{ purged: boolean; wouldPurge?: boolean }> {
     return new TrashService(this.paths, this.registry).purgeOne(trashId, options);
+  }
+
+  // OP4-A：事后审计 operations.jsonl。
+  async queryOperations(
+    filter: {
+      agentId?: string;
+      kind?: string;
+      since?: string;
+      until?: string;
+      limit?: number;
+    } = {},
+  ): Promise<OperationSummary[]> {
+    return new OperationStore(this.paths.logsDir).query(filter);
   }
 
   async setJobEnabled(id: string, jobId: string, enabled: boolean): Promise<JobConfig> {

@@ -27,6 +27,7 @@ describe('agentctl command surface', () => {
         'skill',
         'web',
         'trash',
+        'operations',
       ]),
     );
   });
@@ -52,5 +53,6 @@ describe('agentctl command surface', () => {
     );
     expect(names('skill')).toEqual(expect.arrayContaining(['list', 'install', 'remove']));
     expect(names('trash')).toEqual(expect.arrayContaining(['move', 'list', 'restore', 'purge']));
+    expect(names('operations')).toEqual(expect.arrayContaining(['query']));
   });
 });

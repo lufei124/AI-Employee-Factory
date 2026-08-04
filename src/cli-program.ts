@@ -534,4 +534,33 @@ function registerSkillCommands(program: Command): void {
       const { application } = context();
       await application.removeSkill(id, name);
     });
+
+  const operationsGroup = program.command('operations').description('操作审计日志查询');
+  operationsGroup
+    .command('query')
+    .description('查询持久化的操作摘要（logs/operations.jsonl）')
+    .option('--agent <agent-id>')
+    .option('--kind <kind>')
+    .option('--since <iso>')
+    .option('--until <iso>')
+    .option('--limit <number>', '返回最近 N 条', '100')
+    .action(
+      async (options: {
+        agent?: string;
+        kind?: string;
+        since?: string;
+        until?: string;
+        limit?: string;
+      }) => {
+        const { application } = context();
+        const summaries = await application.queryOperations({
+          ...(options.agent ? { agentId: options.agent } : {}),
+          ...(options.kind ? { kind: options.kind } : {}),
+          ...(options.since ? { since: options.since } : {}),
+          ...(options.until ? { until: options.until } : {}),
+          limit: options.limit ? Number(options.limit) : 100,
+        });
+        console.log(YAML.stringify(summaries));
+      },
+    );
 }

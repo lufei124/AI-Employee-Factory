@@ -14,6 +14,7 @@ import { AgentCtlError } from '../core/errors.js';
 import { createAgentInputSchema } from '../core/create-agent.js';
 import { jobConfigSchema } from '../schemas/job-schema.js';
 import { OperationManager } from './operation-manager.js';
+import { OperationStore } from '../core/operation-store.js';
 
 export interface BuildWebServerOptions {
   application: FactoryApplication;
@@ -91,7 +92,9 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
     bootstrapToken: options.bootstrapToken,
     exchanged: false,
   };
-  const operations = options.operationManager ?? new OperationManager();
+  const operations =
+    options.operationManager ??
+    new OperationManager({ store: new OperationStore(options.application.paths.logsDir) });
   void server.register(cookie);
   void server.register(multipart, {
     preservePath: true,

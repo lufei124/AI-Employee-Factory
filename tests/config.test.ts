@@ -67,4 +67,20 @@ describe('factory config (R5)', () => {
       }),
     ).toThrow();
   });
+
+  it('chmods logs/services/schedules/backups/workspace dirs to 0o700 on initialize (R12)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-config-'));
+    roots.push(root);
+    const paths = pathsFor(root);
+    await initializeFactory(paths);
+    for (const dir of [
+      paths.logsDir,
+      paths.servicesDir,
+      paths.schedulesDir,
+      paths.backupsDir,
+      paths.workspaceRoot,
+    ]) {
+      expect((await fs.stat(dir)).mode & 0o777).toBe(0o700);
+    }
+  });
 });

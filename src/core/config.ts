@@ -79,9 +79,14 @@ export async function initializeFactory(paths: FactoryPaths): Promise<void> {
   await new RegistryStore(paths.registryFile).initialize();
   await Promise.all([
     fs.chmod(paths.home, 0o700),
+    fs.chmod(paths.workspaceRoot, 0o700),
     fs.chmod(paths.registryDir, 0o700),
     fs.chmod(paths.runtimesDir, 0o700),
     fs.chmod(paths.bridgesDir, 0o700),
+    fs.chmod(paths.servicesDir, 0o700),
+    fs.chmod(paths.schedulesDir, 0o700),
+    fs.chmod(paths.logsDir, 0o700),
+    fs.chmod(paths.backupsDir, 0o700),
     fs.chmod(paths.trashDir, 0o700),
     fs.chmod(paths.locksDir, 0o700),
   ]);
