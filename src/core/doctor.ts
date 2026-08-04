@@ -2,7 +2,7 @@ import fs from 'fs-extra';
 import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
-import { getRegisteredAgent, loadPortableConfig } from './agents.js';
+import { computeConfigHash, getRegisteredAgent, loadPortableConfig } from './agents.js';
 import { BridgeAdapter } from './bridge.js';
 import type { FactoryPaths } from './paths.js';
 import type { RegistryStore } from './registry.js';
@@ -222,19 +222,32 @@ export class DoctorService {
       status: (await fs.pathExists(path.join(agent.workspace.path, '.git'))) ? 'pass' : 'fail',
       detail: path.join(agent.workspace.path, '.git'),
     });
-    let portableValid = false;
-    try {
-      await loadPortableConfig(agent);
-      portableValid = true;
-    } catch {
-      portableValid = false;
-    }
+    const portableConfig = await loadPortableConfig(agent).catch(() => null);
+    const portableValid = portableConfig !== null;
     add({
       id: 'agent-config',
       label: 'agent.yaml',
       status: portableValid ? 'pass' : 'fail',
       detail: portableValid ? '与 Registry 一致' : '无效或不一致',
     });
+    // OP3-A：config_hash 漂移检测--agent.yaml runtime 块为唯一真相，Registry 派生缓存须一致。
+    if (portableConfig) {
+      const actualHash = computeConfigHash(portableConfig.runtime);
+      const drift = !agent.config_hash || actualHash !== agent.config_hash;
+      add(
+        drift
+          ? {
+              id: 'config-drift',
+              label: '配置漂移',
+              status: 'warn',
+              detail: !agent.config_hash
+                ? 'Registry 缺 config_hash（旧条目，待补齐）'
+                : 'agent.yaml 与 Registry 缓存不一致',
+              remediation: `运行 agentctl repair ${agent.id} 以 agent.yaml 重建 Registry 缓存。`,
+            }
+          : { id: 'config-drift', label: '配置漂移', status: 'pass', detail: '一致' },
+      );
+    }
     add({
       id: 'runtime-lock',
       label: '运行器锁定',

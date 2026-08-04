@@ -5,6 +5,7 @@ import * as tar from 'tar';
 import YAML from 'yaml';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BackupService } from '../src/core/backup.js';
+import { computeConfigHash, loadPortableConfig } from '../src/core/agents.js';
 import { CreateAgentService } from '../src/core/create-agent.js';
 import { initializeFactory } from '../src/core/config.js';
 import { resolveFactoryPaths } from '../src/core/paths.js';
@@ -83,6 +84,16 @@ describe('BackupService', () => {
       'user-operations',
       'user-operations-copy',
     ]);
+  });
+
+  it('stores config_hash on restore matching the restored agent.yaml (OP3-A)', async () => {
+    const { registry, service } = await setup();
+    const backup = await service.backup('user-operations');
+    await service.restore(backup, { newId: 'restored-agent', newName: '恢复专员' });
+    const restored = (await registry.read()).agents.find((a) => a.id === 'restored-agent');
+    if (!restored) throw new Error('missing restored agent');
+    const config = await loadPortableConfig(restored);
+    expect(restored.config_hash).toBe(computeConfigHash(config.runtime));
   });
 
   it('excludes known secret files (R7) but keeps ssh public keys', async () => {

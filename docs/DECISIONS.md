@@ -57,6 +57,15 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 - 边界：本决策不改变任何既有不变量的语义，只确立其演进流程。`assertInside`（`paths.ts:77`）保持 frozen 语义，实现允许升级为 realpath 补全（OP2-B）；env 白名单从隐含 frozen 降为 versioned，为后续白名单调整铺路。
 - 原因：原 `extension-surface.md` 把上述项笼统标为「封存不变量 frozen」，但安全实现需迭代（realpath 抵抗符号链接、白名单收紧），缺乏「语义不变、实现可演进」的流程会导致要么不敢改、要么静默改坏对外契约。frozen/versioned 二分让安全实现可迭代而不破坏对外承诺。
 
+## D-010：agent.yaml 为 runtime 块单一可写源 + config_hash 漂移检测
+
+- 状态：Accepted
+- 日期：2026-08-04
+- 决定：`agent.yaml` 的 `runtime` 块（provider/locked/model）为唯一可写真相；Registry 的 `runtime` 块降级为派生缓存，新增 `config_hash`（runtime 块的 sha256）做漂移指纹。`RegistryStore.updateAgent` 拒绝 `model` 直改（`CONFLICT`，提示经 `agentctl repair`）；新增 `RegistryStore.resyncRuntime` 作为 repair 的受信重建路径--允许 model 从 agent.yaml 同步，但 provider/locked 不变量仍强制（违则 `CONFLICT`，不覆盖）。`agentctl repair <id>` 以 agent.yaml 重建 Registry runtime 块 + 刷新 config_hash；doctor 增 `config-drift` 检查（hash 不等或缺失 -> warn，remediation 指向 repair）。create/restore 流程在写 agent.yaml 后即记 config_hash。
+- 边界（本批非破坏性增量）：Registry `runtime` 块**不移除**（长期项，需破坏性 schema-bump + migrate，deferred）；`loadPortableConfig` **不启用** I-5 model 收紧校验（框架「待 OP3-A 长期完成 + repair 就绪」，repair 虽就绪但长期未完成）；`agentctl migrate` 命令不实现（属 OP3-B 范畴）；adapter 仍读 `RegistryAgent.runtime.model` 缓存，单源化不改读路径。
+- config_hash 取 runtime 块 sha256（非整文件）的裁定理由：精确覆盖 OP3-A 的 runtime 单源范围，避免 archive（写 lifecycle 块）/ identity 文档变更等合法 agent.yaml 改写误报漂移；框架原文「agent.yaml 的 sha256」在此细化为 runtime 块 sha256。
+- 原因：红队 B3/W5 指出 Registry 与 agent.yaml 各持 runtime 块（双真相源），`updateAgent` 允许改 model 不同步 agent.yaml -> 静默漂移；收紧校验（I-5）只会把「静默漂移」变「硬砖」而无修复路径。本决策以 agent.yaml 为唯一可写真相 + config_hash 漂移检测 + repair 重建路径，从根因消解双写，而非加校验。经核实四处 `updateAgent` 调用均不动 model、restore 用 `registry.add` 非 `updateAgent`，故 model 守卫零破坏。
+
 状态使用 Accepted、Superseded、Proposed。日期来自已验证的实现或提交；无法证明的动机不写成事实。
 
 ## D-001 - 引入多 Agent 协作骨架

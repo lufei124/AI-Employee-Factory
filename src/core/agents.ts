@@ -1,5 +1,6 @@
 import fs from 'fs-extra';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import YAML from 'yaml';
 import { AgentCtlError } from './errors.js';
 import type { RegistryStore } from './registry.js';
@@ -9,6 +10,18 @@ import {
   type AgentConfig,
 } from '../schemas/agent-schema.js';
 import type { RegistryAgent } from '../schemas/registry-schema.js';
+
+// OP3-A：计算 agent.yaml runtime 块的 sha256，作为 Registry 派生缓存的漂移指纹。
+// 哈希 runtime 块（provider/locked/model）而非整文件，精确覆盖单源范围，
+// 避免 archive（写 lifecycle 块）等合法 agent.yaml 改写误报漂移。
+export function computeConfigHash(runtime: AgentConfig['runtime']): string {
+  const canonical: { provider: string; locked: true; model?: string } = {
+    provider: runtime.provider,
+    locked: runtime.locked,
+  };
+  if (typeof runtime.model === 'string') canonical.model = runtime.model;
+  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+}
 
 export async function getRegisteredAgent(
   registry: RegistryStore,

@@ -9,6 +9,7 @@ import { DoctorService } from '../src/core/doctor.js';
 import { resolveFactoryPaths } from '../src/core/paths.js';
 import { RegistryStore } from '../src/core/registry.js';
 import { TrashService } from '../src/core/trash.js';
+import { FactoryApplication } from '../src/application/factory-application.js';
 
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => fs.remove(root))));
@@ -119,5 +120,47 @@ describe('DoctorService', () => {
     const check = report.checks.find((item) => item.id === 'disk-usage');
     expect(check?.status).toBe('warn');
     expect(check?.remediation).toContain('agentctl prune --dry-run');
+  });
+
+  it('warns on config_hash drift and passes after repair (OP3-A)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-doctor-drift-'));
+    roots.push(root);
+    const paths = resolveFactoryPaths({
+      HOME: root,
+      AI_EMPLOYEES_HOME: path.join(root, 'private'),
+      AI_EMPLOYEES_WORKSPACE_ROOT: path.join(root, 'agents'),
+    });
+    await initializeFactory(paths);
+    const registry = new RegistryStore(paths.registryFile);
+    await new CreateAgentService(paths, registry).create({
+      id: 'user-operations',
+      name: '用户运营专员',
+      runtime: 'claude',
+      preset: 'user-operations',
+      feishu: 'dedicated',
+    });
+    const agent = (await registry.read()).agents[0];
+    if (!agent) throw new Error('missing agent');
+    // 模拟漂移：手工改 agent.yaml 的 model，Registry 缓存（含 config_hash）未同步。
+    const agentYaml = path.join(agent.workspace.path, 'agent.yaml');
+    const doc = YAML.parse(await fs.readFile(agentYaml, 'utf8')) as { runtime: { model?: string } };
+    doc.runtime.model = 'opus';
+    await fs.writeFile(agentYaml, YAML.stringify(doc));
+
+    const originalHome = process.env.HOME;
+    process.env.HOME = root;
+    try {
+      const report = await new DoctorService(paths, registry).run('user-operations');
+      const drift = report.checks.find((c) => c.id === 'config-drift');
+      expect(drift?.status).toBe('warn');
+      expect(drift?.remediation).toContain('agentctl repair');
+      // repair 后漂移消除
+      await new FactoryApplication(paths, registry).repairAgent('user-operations');
+      const report2 = await new DoctorService(paths, registry).run('user-operations');
+      expect(report2.checks.find((c) => c.id === 'config-drift')?.status).toBe('pass');
+    } finally {
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+    }
   });
 });

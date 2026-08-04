@@ -55,8 +55,44 @@ export class RegistryStore {
       if (next.runtime.provider !== current.runtime.provider || next.runtime.locked !== true) {
         throw new AgentCtlError('CONFLICT', `Agent ${id} 的运行器已锁定，禁止普通修改。`);
       }
+      // OP3-A：model 经 agent.yaml 为唯一可写真相，updateAgent 拒绝直改。
+      // model 同步须经 resyncRuntime（agentctl repair），从 agent.yaml 派生。
+      if (next.runtime.model !== current.runtime.model) {
+        throw new AgentCtlError(
+          'CONFLICT',
+          `Agent ${id} 的 model 修改须经 agent.yaml + agentctl repair，Registry 不直接可写。`,
+        );
+      }
       const others = registry.agents.filter((_, agentIndex) => agentIndex !== index);
       this.assertUnique({ ...registry, agents: others }, next);
+      return { ...registry, agents: registry.agents.map((item, i) => (i === index ? next : item)) };
+    });
+  }
+
+  // OP3-A：repair 的受信重建路径--以 agent.yaml 的 runtime 块为唯一真相刷新 Registry 缓存。
+  // 允许 model 变更（从 agent.yaml 派生），但 provider/locked 不变量仍强制（违则 CONFLICT，不覆盖）。
+  async resyncRuntime(
+    id: string,
+    runtime: RegistryAgent['runtime'],
+    configHash: string,
+  ): Promise<void> {
+    await this.update((registry) => {
+      const index = registry.agents.findIndex((agent) => agent.id === id);
+      if (index < 0) throw new AgentCtlError('NOT_FOUND', `Agent 不存在：${id}`);
+      const current = registry.agents[index];
+      if (!current) throw new AgentCtlError('NOT_FOUND', `Agent 不存在：${id}`);
+      if (runtime.provider !== current.runtime.provider || runtime.locked !== true) {
+        throw new AgentCtlError(
+          'CONFLICT',
+          `Agent ${id} 的 provider/locked 不变量不允许经 repair 改变。`,
+        );
+      }
+      const next = registrySchema.shape.agents.element.parse({
+        ...current,
+        runtime,
+        config_hash: configHash,
+        updated_at: new Date().toISOString(),
+      });
       return { ...registry, agents: registry.agents.map((item, i) => (i === index ? next : item)) };
     });
   }

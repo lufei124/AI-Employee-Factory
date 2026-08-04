@@ -8,6 +8,7 @@ import { FileLock } from './locks.js';
 import { assertInside, type FactoryPaths } from './paths.js';
 import { type RegistryStore } from './registry.js';
 import { loadPreset, renderAgentWorkspace } from './templates.js';
+import { computeConfigHash } from './agents.js';
 import {
   agentConfigSchema,
   agentIdSchema,
@@ -229,6 +230,8 @@ export class CreateAgentService {
       permissions: { level: 'workspace', production_write: 'approval_required' },
       created_at: now,
       updated_at: now,
+      // OP3-A：新建即记 config_hash，与 agent.yaml runtime 块对齐（doctor 据此检漂移）。
+      config_hash: computeConfigHash(runtime),
     };
   }
 

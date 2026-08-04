@@ -21,6 +21,7 @@ describe('agentctl command surface', () => {
         'backup',
         'restore',
         'archive',
+        'repair',
         'runtime',
         'bridge',
         'job',

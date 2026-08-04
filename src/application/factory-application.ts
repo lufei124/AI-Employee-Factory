@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
 import YAML from 'yaml';
-import { getRegisteredAgent, loadPortableConfig } from '../core/agents.js';
+import { computeConfigHash, getRegisteredAgent, loadPortableConfig } from '../core/agents.js';
 import { atomicWriteFile } from '../core/atomic.js';
 import { BackupService } from '../core/backup.js';
 import { BridgeAdapter } from '../core/bridge.js';
@@ -608,6 +608,21 @@ export class FactoryApplication {
       '备份',
     );
     return new BackupService(this.paths, this.registry).restore(backupPath, options);
+  }
+
+  // OP3-A：以 agent.yaml 为唯一可写真相，重建 Registry 的 runtime 块派生缓存 + config_hash。
+  // getAgent 已经 loadPortableConfig（校验 id/provider/locked 与 Registry 一致），故 agent.runtime 可信。
+  // resyncRuntime 在 registry.lock 下刷新缓存；provider/locked 不变量违例由其抛 CONFLICT。
+  async repairAgent(id: string): Promise<{
+    id: string;
+    resynced: { model: boolean; hash: boolean };
+  }> {
+    const { registry, agent } = await this.getAgent(id);
+    const hash = computeConfigHash(agent.runtime);
+    const modelChanged = registry.runtime.model !== agent.runtime.model;
+    const hashChanged = (registry.config_hash ?? '') !== hash;
+    await this.registry.resyncRuntime(id, agent.runtime, hash);
+    return { id, resynced: { model: modelChanged, hash: hashChanged } };
   }
 
   private toSummary(agent: RegistryAgent): AgentSummary {

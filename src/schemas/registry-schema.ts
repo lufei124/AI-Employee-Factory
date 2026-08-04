@@ -26,6 +26,9 @@ export const registryAgentSchema = z.object({
   }),
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),
+  // OP3-A：agent.yaml runtime 块的 sha256（派生缓存指纹）。optional 向后兼容既有无 hash 条目；
+  // 缺失时 doctor 报 config-drift warn，agentctl repair 补齐。
+  config_hash: z.string().optional(),
 });
 
 export const registrySchema = z.object({

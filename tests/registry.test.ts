@@ -2,6 +2,7 @@ import fs from 'fs-extra';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { computeConfigHash } from '../src/core/agents.js';
 import { RegistryStore } from '../src/core/registry.js';
 import type { RegistryAgent } from '../src/schemas/registry-schema.js';
 
@@ -101,5 +102,55 @@ describe('RegistryStore', () => {
     expect(new Set(agents.map((entry) => entry.id)).size).toBe(count);
     // 锁在 finally 中释放
     expect(await fs.pathExists(path.join(locksDir, 'registry.lock'))).toBe(false);
+  });
+
+  it('stores config_hash on add (OP3-A)', async () => {
+    const root = await tempRoot();
+    const store = new RegistryStore(path.join(root, 'registry', 'agents.yaml'));
+    await store.initialize();
+    await store.add({ ...agent(root), config_hash: 'abc123' });
+    expect((await store.read()).agents[0]?.config_hash).toBe('abc123');
+  });
+
+  it('rejects model changes via updateAgent but allows status changes (OP3-A single writable source)', async () => {
+    const root = await tempRoot();
+    const store = new RegistryStore(path.join(root, 'registry', 'agents.yaml'));
+    await store.initialize();
+    await store.add(agent(root));
+    await expect(
+      store.updateAgent('user-operations', (current) => ({
+        ...current,
+        runtime: { ...current.runtime, model: 'opus' },
+      })),
+    ).rejects.toThrow('model');
+    // 非 model 字段（status）仍可改
+    await store.updateAgent('user-operations', (current) => ({ ...current, status: 'running' }));
+    expect((await store.read()).agents[0]?.status).toBe('running');
+  });
+
+  it('resyncRuntime rebuilds runtime block and config_hash from agent.yaml truth (OP3-A)', async () => {
+    const root = await tempRoot();
+    const store = new RegistryStore(path.join(root, 'registry', 'agents.yaml'));
+    await store.initialize();
+    await store.add(agent(root));
+    const runtime = { provider: 'claude' as const, locked: true as const, model: 'opus' };
+    await store.resyncRuntime('user-operations', runtime, computeConfigHash(runtime));
+    const updated = (await store.read()).agents[0];
+    expect(updated?.runtime.model).toBe('opus');
+    expect(updated?.config_hash).toBe(computeConfigHash(runtime));
+  });
+
+  it('resyncRuntime refuses provider/locked immutability violations', async () => {
+    const root = await tempRoot();
+    const store = new RegistryStore(path.join(root, 'registry', 'agents.yaml'));
+    await store.initialize();
+    await store.add(agent(root));
+    await expect(
+      store.resyncRuntime(
+        'user-operations',
+        { provider: 'codex', locked: true, model: 'sonnet' },
+        'deadbeef',
+      ),
+    ).rejects.toThrow('provider/locked');
   });
 });

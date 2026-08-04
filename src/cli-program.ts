@@ -274,6 +274,22 @@ export function createProgram(): Command {
     });
 
   program
+    .command('repair <agent-id>')
+    .description('以 agent.yaml 重建 Registry 缓存（runtime 块 + config_hash），修复配置漂移')
+    .action(async (id: string) => {
+      const { application } = context();
+      const result = await application.repairAgent(id);
+      const parts: string[] = [];
+      if (result.resynced.model) parts.push('model 已从 agent.yaml 同步');
+      if (result.resynced.hash) parts.push('config_hash 已刷新');
+      console.log(
+        chalk.green(
+          `✓ ${result.id} 已修复${parts.length ? `（${parts.join('；')}）` : '（已是最新，无变更）'}`,
+        ),
+      );
+    });
+
+  program
     .command('doctor [agent-id]')
     .description('诊断 Factory 或 Agent')
     .action(async (id?: string) => {

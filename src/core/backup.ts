@@ -13,7 +13,7 @@ import YAML from 'yaml';
 import * as tar from 'tar';
 import { execa } from 'execa';
 import { AgentCtlError } from './errors.js';
-import { getRegisteredAgent } from './agents.js';
+import { computeConfigHash, getRegisteredAgent } from './agents.js';
 import { assertInside, type FactoryPaths } from './paths.js';
 import type { RegistryStore } from './registry.js';
 import { FACTORY_VERSION } from './version.js';
@@ -287,6 +287,8 @@ export class BackupService {
             : { enabled: false, home: bridgeHome, mode: 'disabled', authorization: 'pending' },
           created_at: now,
           updated_at: now,
+          // OP3-A：恢复即记 config_hash，与恢复出的 agent.yaml runtime 块对齐。
+          config_hash: computeConfigHash(runtime),
         });
         return { id, workspace };
       } catch (error) {
