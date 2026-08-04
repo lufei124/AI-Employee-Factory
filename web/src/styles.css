@@ -1331,6 +1331,17 @@ textarea:focus {
   align-items: flex-start;
   gap: 12px;
 }
+.store-repo-badges {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex: none;
+}
+.store-count-badge {
+  color: var(--accent-dark);
+  background: var(--accent-soft);
+}
 .store-repo-title {
   display: flex;
   gap: 11px;

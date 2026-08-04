@@ -130,11 +130,13 @@ describe('Web console core flows', () => {
         id: 'ops',
         name: '运营专员',
         status: 'stopped',
-        runtime: { provider: 'claude', locked: true, model: 'sonnet' },
         runtime_home: { path: '/private/runtimes/ops/claude' },
         bridge: { enabled: true, authorization: 'pending', home: '/private/bridges/ops' },
       },
-      agent: { description: '负责用户运营' },
+      agent: {
+        description: '负责用户运营',
+        runtime: { provider: 'claude', locked: true, model: 'sonnet' },
+      },
     } as never);
     vi.mocked(api.terminalGuidance).mockResolvedValue({
       runtimeLogin: 'agentctl runtime sync ops',
@@ -168,11 +170,13 @@ describe('Web console core flows', () => {
         id: 'ops',
         name: '运营专员',
         status: 'stopped',
-        runtime: { provider: 'claude', locked: true, model: 'sonnet' },
         runtime_home: { path: '/private/runtimes/ops/claude' },
         bridge: { enabled: true, authorization: 'ready', home: '/private/bridges/ops' },
       },
-      agent: { description: '负责用户运营' },
+      agent: {
+        description: '负责用户运营',
+        runtime: { provider: 'claude', locked: true, model: 'sonnet' },
+      },
     };
     vi.mocked(api.getAgent).mockResolvedValue(detail as never);
     vi.mocked(api.terminalGuidance).mockResolvedValue({
@@ -204,11 +208,13 @@ describe('Web console core flows', () => {
         id: 'ops',
         name: '运营专员',
         status: 'stopped',
-        runtime: { provider: 'claude', locked: true },
         runtime_home: { path: '/private/runtimes/ops/claude' },
         bridge: { enabled: false, authorization: 'pending', home: '/private/bridges/ops' },
       },
-      agent: { description: '测试员工' },
+      agent: {
+        description: '测试员工',
+        runtime: { provider: 'claude', locked: true },
+      },
     } as never);
     vi.mocked(api.terminalGuidance).mockResolvedValue({
       runtimeLogin: 'agentctl runtime sync ops',
@@ -309,5 +315,40 @@ describe('Web console core flows', () => {
       scope: 'project',
     });
     expect(await screen.findByText(/已安装 hello@1.0.0/)).toBeInTheDocument();
+  });
+
+  it('shows the skill count for each cached store repository', async () => {
+    vi.mocked(api.listSkillStoreRepositories).mockResolvedValue([
+      {
+        name: 'larksuite-cli',
+        url: 'https://github.com/larksuite/cli',
+        description: '飞书 CLI',
+        cached: true,
+      },
+    ]);
+    vi.mocked(api.dashboard).mockResolvedValue({
+      total: 0,
+      running: 0,
+      pendingAuthorization: 0,
+      archived: 0,
+      agents: [],
+    } as never);
+    vi.mocked(api.listSkillStoreSkills).mockResolvedValue([
+      {
+        name: 'lark-shared',
+        description: '共享鉴权',
+        version: '1.0.0',
+        path: 'skills/lark-shared',
+        repository: 'larksuite-cli',
+      },
+    ] as never);
+
+    render(
+      <MemoryRouter initialEntries={['/skill-store']}>
+        <SkillStorePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('1 个技能')).toBeInTheDocument();
   });
 });

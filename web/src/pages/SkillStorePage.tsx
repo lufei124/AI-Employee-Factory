@@ -23,6 +23,7 @@ export function SkillStorePage() {
   const [searchParams] = useSearchParams();
   const preselectAgent = searchParams.get('agent') ?? '';
   const [repos, setRepos] = useState<StoreRepository[]>([]);
+  const [counts, setCounts] = useState<Record<string, number>>({});
   const [agents, setAgents] = useState<DashboardData['agents']>([]);
   const [expanded, setExpanded] = useState<string>();
   const [skills, setSkills] = useState<StoreSkill[]>([]);
@@ -46,6 +47,20 @@ export function SkillStorePage() {
       setRepos(repoList);
       setAgents(agentList.agents);
       setError('');
+      // 统计每个已缓存仓库的技能数量；单个仓库失败不阻塞页面。
+      const counts: Record<string, number> = {};
+      await Promise.all(
+        repoList
+          .filter((repo) => repo.cached)
+          .map(async (repo) => {
+            try {
+              counts[repo.name] = (await api.listSkillStoreSkills(repo.name)).length;
+            } catch {
+              /* 忽略单个仓库计数失败 */
+            }
+          }),
+      );
+      setCounts(counts);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -222,9 +237,16 @@ export function SkillStorePage() {
                     <span>{repo.description ?? repo.url}</span>
                   </div>
                 </div>
-                <span className={`status-badge ${repo.cached ? 'succeeded' : 'queued'}`}>
-                  {repo.cached ? '已缓存' : '未缓存'}
-                </span>
+                <div className="store-repo-badges">
+                  <span className={`status-badge ${repo.cached ? 'succeeded' : 'queued'}`}>
+                    {repo.cached ? '已缓存' : '未缓存'}
+                  </span>
+                  {counts[repo.name] != null && (
+                    <span className="status-badge store-count-badge">
+                      {counts[repo.name]} 个技能
+                    </span>
+                  )}
+                </div>
               </div>
               <a className="store-repo-url" href={repo.url} target="_blank" rel="noreferrer">
                 <ExternalLink size={12} />
@@ -254,7 +276,7 @@ export function SkillStorePage() {
           <div className="panel-heading">
             <div>
               <h2>{expanded}</h2>
-              <span>仓库技能列表</span>
+              <span>仓库技能列表{counts[expanded] != null ? ` · ${counts[expanded]} 个` : ''}</span>
             </div>
             <div className="search">
               <Search size={15} />
