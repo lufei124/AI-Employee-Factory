@@ -614,7 +614,10 @@ function registerSkillCommands(program: Command): void {
         options: { dryRun?: boolean; yes?: boolean; scope?: 'project' | 'user' },
       ) => {
         if (options.dryRun) return console.log(`将卸载 Skill ${name}（scope=${options.scope}）`);
-        await confirmDanger(`卸载 Skill ${name}（${options.scope}）？此操作不可恢复。`, options.yes === true);
+        await confirmDanger(
+          `卸载 Skill ${name}（${options.scope}）？此操作不可恢复。`,
+          options.yes === true,
+        );
         const { application } = context();
         await application.removeSkill(id, name, options.scope);
       },

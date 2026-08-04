@@ -22,6 +22,7 @@ import type {
 import { FileLock } from '../core/locks.js';
 import { initializeFactory, readConfig } from '../core/config.js';
 import { CreateAgentService, type CreateAgentInput } from '../core/create-agent.js';
+import { DefaultExperienceExtractor } from '../core/experience.js';
 import { DoctorService } from '../core/doctor.js';
 import { AgentCtlError } from '../core/errors.js';
 import { JobRunner } from '../core/job-runner.js';
@@ -34,6 +35,7 @@ import { OperationStore, type OperationSummary } from '../core/operation-store.j
 import { PruneService, type PruneOptions, type PruneResult } from '../core/prune.js';
 import { TrashService, type TrashEntryDto, type TrashPreview } from '../core/trash.js';
 import { ProcessRunner, type LoggedRunOptions } from '../core/process-runner.js';
+import type { TranscriptSummary } from '../core/transcript.js';
 import {
   buildRuntimeEnvironment,
   buildSafeBaseEnvironment,
@@ -240,6 +242,42 @@ export class FactoryApplication {
     return { relPath: path.relative(root, file), content };
   }
 
+  // OP1 Stage D：从 transcript 摘要提取经验写回 knowledge/lessons/。
+  // 硬约束：仅当 experience_extraction=true 且 transcript_persist=true（Stage C 落地）才生效；
+  // 写回复用 knowledgeWrite 的 assertInside+realpath+symlink 硬约束；best-effort，失败不阻断运行。
+  // 公开入口：runAgent/runJob 在 transcript 落盘后调用；测试可直接以 transcriptFile 驱动。
+  async extractExperience(id: string, transcriptFile: string): Promise<void> {
+    const { agent } = await this.getAgent(id);
+    await this.maybeExtractExperience(id, agent, transcriptFile);
+  }
+
+  private async maybeExtractExperience(
+    id: string,
+    agent: AgentConfig,
+    transcriptFile: string | undefined,
+  ): Promise<void> {
+    if (agent.memory.experience_extraction !== true) return;
+    if (agent.memory.transcript_persist !== true) return;
+    if (!transcriptFile) return;
+    const summary = await this.readTranscriptSummary(id, transcriptFile);
+    const assets = new DefaultExperienceExtractor({ agentId: id }).extract(summary);
+    for (const asset of assets) {
+      await this.knowledgeWrite(id, asset.relPath, asset.content);
+    }
+  }
+
+  private async readTranscriptSummary(
+    id: string,
+    transcriptFile: string,
+  ): Promise<TranscriptSummary> {
+    const lines = (await fs.readFile(transcriptFile, 'utf8')).trim().split('\n');
+    const last = lines.at(-1);
+    if (!last) throw new AgentCtlError('NOT_FOUND', `transcript 为空：${transcriptFile}`);
+    const summary = JSON.parse(last) as TranscriptSummary;
+    // 不信任 transcript 里的 agent_id（可能被改写），始终用当前 id 覆盖。
+    return { ...summary, agent_id: id };
+  }
+
   async listJobs(id: string): Promise<JobConfig[]> {
     const { registry } = await this.getAgent(id);
     return new JobStore(registry.workspace.path).list();
@@ -336,23 +374,29 @@ export class FactoryApplication {
     await this.prepareRuntime(registry, agent);
     // OP4-C：run 追加结构化输出（claude --output-format json / codex --json），
     // runLogged 解析 usage 供 gen_ai.* span 上报；best-effort，失败不阻断运行。
-    // OP1 Stage C：agent.yaml.memory.transcript_persist=true 时持久化会话摘要（0600）。
-    return new ProcessRunner(this.paths.logsDir).runLogged(
-      id,
-      getRuntimeAdapter(agent.runtime).run(
-        registry,
-        agent.runtime,
-        task,
-        timeoutSeconds * 1000,
-        true,
-      ),
-      {
-        ...options,
-        provider: agent.runtime.provider,
-        structured: true,
-        ...(agent.memory.transcript_persist === true ? { transcript: true } : {}),
-      },
-    );
+    // OP1 Stage C+D：agent.yaml.memory.transcript_persist=true 时持久化会话摘要（0600），
+    // experience_extraction=true 时提取经验写回 knowledge/lessons/（仅当 transcript_persist 已启用）。
+    return new ProcessRunner(this.paths.logsDir)
+      .runLogged(
+        id,
+        getRuntimeAdapter(agent.runtime).run(
+          registry,
+          agent.runtime,
+          task,
+          timeoutSeconds * 1000,
+          true,
+        ),
+        {
+          ...options,
+          provider: agent.runtime.provider,
+          structured: true,
+          ...(agent.memory.transcript_persist === true ? { transcript: true } : {}),
+        },
+      )
+      .then(async (result) => {
+        await this.maybeExtractExperience(id, agent, result.transcriptFile);
+        return result;
+      });
   }
 
   async chat(id: string): Promise<number> {
@@ -633,10 +677,16 @@ export class FactoryApplication {
     const { registry, agent } = await this.getAgent(id);
     const job = await new JobStore(registry.workspace.path).get(jobId);
     if (job.execution.type === 'agent') await this.prepareRuntime(registry, agent);
-    // OP1 Stage C：agent.yaml.memory.transcript_persist=true 时持久化会话摘要（经 options 透传）。
+    // OP1 Stage C+D：agent.yaml.memory.transcript_persist=true 时持久化会话摘要（经 options 透传），
+    // experience_extraction=true 时提取经验写回 knowledge/lessons/（仅当 transcript_persist 已启用）。
     const runOptions: LoggedRunOptions =
       agent.memory.transcript_persist === true ? { ...options, transcript: true } : options;
-    return new JobRunner(this.paths).run(registry, agent.runtime, job, runOptions);
+    return new JobRunner(this.paths)
+      .run(registry, agent.runtime, job, runOptions)
+      .then(async (result) => {
+        await this.maybeExtractExperience(id, agent, result.transcriptFile);
+        return result;
+      });
   }
 
   // OP1 Stage A：运行前强制校验 memory/authority_order 不变量（W1 收敛）。

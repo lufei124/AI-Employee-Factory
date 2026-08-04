@@ -48,6 +48,10 @@ export const portableMemorySchema = z.object({
   // OP1 Stage C：true 时 chat/run/job 结束后把会话摘要写入 transcript.jsonl（0600，摘要非全量原文，
   // secret 经 SECRET_PATTERN 过滤）。optional 向后兼容旧 agent.yaml（缺失视为未启用）。
   transcript_persist: z.boolean().optional(),
+  // OP1 Stage D：true 时从 transcript 摘要提取可复用经验，写回 knowledge/lessons/（复用 documentFile
+  // 的 assertInside+realpath+symlink 硬约束）。optional 向后兼容旧 agent.yaml（缺失视为未启用）。
+  // 硬约束：仅当 transcript_persist=true（Stage C 落地）时才生效，Stage D 不独立启用。
+  experience_extraction: z.boolean().optional(),
 });
 export type PortableMemorySchema = z.infer<typeof portableMemorySchema>;
 
