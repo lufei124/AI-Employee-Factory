@@ -48,9 +48,13 @@
 
 - 完成 TASK-020 阶段6（OP1 Stage D ExperienceExtractor，严格 gate on Stage C）：src/core/experience.ts(新增) MemoryAsset（targetScope:'knowledge'/relPath/content/authorityLayer）+ExperienceExtractor 接口+DefaultExperienceExtractor（从 TranscriptSummary 的 decisions/lessons 收敛为一条 lessons/<date>-<agentId>.md 经验文档，frontmatter title/summary/keywords/authority_layer/updated_at，零 I/O 纯函数）+sanitizeSlug；src/schemas/agent-schema.ts portableMemorySchema 增 experience_extraction:z.boolean().optional()（opt-in，硬约束：仅当 transcript_persist=true 即 Stage C 落地才生效）；src/application/factory-application.ts 增公开 extractExperience(id,transcriptFile)+私有 maybeExtractExperience（守卫 experience_extraction/transcript_persist/transcriptFile 三重，写回复用 knowledgeWrite 的 assertInside+realpath+symlink 硬约束，读最后一行 transcript 解析 summary 并强制覆盖 agent_id），runAgent/runJob 在 transcript 落盘后 best-effort 调用（失败不阻断）；顺带修复另一 Agent commit 30dc9d8 引入的 src/cli-program.ts prettier 超长行（纯换行 wrap，恢复 repo 级 prettier gate，零行为变更）。新增 tests/experience.test.ts(+5)。npm run verify 实跑（build+216 单测全绿+lint --max-warnings=0+prettier 全绿）。未 push。
 
+- 完成 TASK-020 阶段7（OP1 Stage E archival 前置约束，先于任何后端实现）：src/core/archival.ts(新增) 仅定义 ArchivalBackend 接口（kind:'local-sqlite'|'external'|'none'，默认 none）+ArchivalEntry/ArchivalResult 契约，不实现任何后端；docs/DECISIONS.md 增 D-014 ADR（archival 写入前须经 SECRET_PATTERN 过滤、用户显式 per-entry 授权、不得传输 runtime_home/bridge 内容、网络面/多租户威胁模型须安全评审；与既有本地归档区 PruneService.archives 区分）；docs/ARCHITECTURE.md 增 OP1 Stage E 前置约束段。纯契约+文档，无测试（按计划）。npm run verify 实跑确认。未 push。
+
+- 完成 TASK-020 阶段8（OP5-A ServiceAdapterFactory + systemd 桩）：src/services/factory-services.ts 增 ServiceAdapterFactory 接口（provider/bridge/job）+createServiceFactory(provider) 按 config.yaml service_provider 分发（launchd/systemd，未知抛错）+LaunchdServiceAdapterFactory（原 bridgeLaunchdService/jobLaunchdService 保留为兼容委托，ServiceAdapter 接口不变）；src/services/systemd-service.ts(新增) SystemdServiceAdapterFactory 桩（bridge/job 返回 SystemdServiceAdapter，install/start/stop/restart/uninstall 抛 DEPENDENCY_MISSING，status 返回 error，零副作用）；src/core/doctor.ts service-platform 检查从 process.platform 改为按 config.yaml service_provider 分发（launchd pass/systemd warn 桩/其他 warn）；新增 tests/service-adapter.test.ts(+5)。ASSUMPTIONS.md 记 service_provider 分发语义、ARCHITECTURE.md 模块边界更新。npm run verify 实跑（build+221 单测全绿+lint+prettier 全绿）。未 push。
+
 ## 进行中
 
-- TASK-020 记忆系统剩余批次合并：阶段1（OP2-F）、阶段2（CLI 结构化输出）、阶段3（OP4-C）、阶段4（OP1 Stage B knowledge/ 索引 + recall）、阶段5（OP1 Stage C chat transcript 持久化）、阶段6（OP1 Stage D ExperienceExtractor）已提交；阶段7-12（OP1 Stage E / OP5 A-E）按顺序依赖后续实施。
+- TASK-020 记忆系统剩余批次合并：阶段1-8（OP2-F / CLI 结构化输出 / OP4-C / OP1 Stage B-E / OP5-A）已提交；阶段9-12（OP5-B CC Switch 降级 / OP5-C 换机调研 / OP5-D per-agent Provider / OP5-E PathLayout 收敛）按顺序依赖后续实施。
 
 ## 待审查
 

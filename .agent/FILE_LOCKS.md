@@ -30,6 +30,8 @@
 | `src/core/knowledge.ts`, `src/core/knowledge-index.ts`, `src/core/templates.ts`, `src/application/factory-application.ts`, `src/cli-program.ts`, `src/core/doctor.ts`, `src/web/server.ts`, `tests/knowledge.test.ts`, `tests/cli-structure.test.ts`, `tests/doctor.test.ts` | TASK-020 | claude-20260803-01 | master | 阶段4 OP1 Stage B knowledge/ 索引 + recall | 2026-08-04 20:05 +0800 | 2026-08-04 20:16 +0800 | RELEASED |
 | `src/core/transcript.ts`, `src/core/process-runner.ts`, `src/schemas/agent-schema.ts`, `src/application/factory-application.ts`, `tests/transcript.test.ts` | TASK-020 | claude-20260803-01 | master | 阶段5 OP1 Stage C chat transcript 持久化 | 2026-08-04 20:20 +0800 | 2026-08-04 20:25 +0800 | RELEASED |
 | `src/core/experience.ts`, `src/schemas/agent-schema.ts`, `src/application/factory-application.ts`, `tests/experience.test.ts`, `src/cli-program.ts`（仅 prettier 换行，修复 30dc9d8 引入的 gate 失败） | TASK-020 | claude-20260803-01 | master | 阶段6 OP1 Stage D ExperienceExtractor | 2026-08-04 20:27 +0800 | 2026-08-04 20:30 +0800 | RELEASED |
+| `src/core/archival.ts`, `docs/DECISIONS.md`, `docs/ARCHITECTURE.md` | TASK-020 | claude-20260803-01 | master | 阶段7 OP1 Stage E archival 前置约束 | 2026-08-04 20:32 +0800 | 2026-08-04 20:33 +0800 | RELEASED |
+| `src/services/factory-services.ts`, `src/services/systemd-service.ts`, `src/services/service-adapter.ts`, `src/core/doctor.ts`, `tests/service-adapter.test.ts`, `docs/ASSUMPTIONS.md`, `docs/ARCHITECTURE.md` | TASK-020 | claude-20260803-01 | master | 阶段8 OP5-A ServiceAdapterFactory + systemd 桩 | 2026-08-04 20:35 +0800 | 2026-08-04 20:39 +0800 | RELEASED |
 合法状态：`ACTIVE`、`RELEASED`、`STALE`、`TAKEOVER_PENDING`。
 
 ## 心跳与陈旧判定
