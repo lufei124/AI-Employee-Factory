@@ -28,6 +28,7 @@
 | `src/core/usage.ts`, `src/core/process-runner.ts`, `src/runtimes/runtime-adapter.ts`, `src/runtimes/claude-adapter.ts`, `src/runtimes/codex-adapter.ts`, `tests/usage.test.ts`, `tests/process-runner.test.ts`, `tests/runtime.test.ts`, `.scratch/cli-structured-output.md` | TASK-020 | claude-20260803-01 | master | 阶段2 CLI 结构化输出（A2 门控通过） | 2026-08-04 19:43 +0800 | 2026-08-04 19:50 +0800 | RELEASED |
 | `src/core/observability.ts`, `src/web/operation-manager.ts`, `src/application/factory-application.ts`, `src/web/server.ts`, `tests/observability.test.ts`, `tests/operation-manager.test.ts` | TASK-020 | claude-20260803-01 | master | 阶段3 OP4-C OTel GenAI span | 2026-08-04 19:51 +0800 | 2026-08-04 20:00 +0800 | RELEASED |
 | `src/core/knowledge.ts`, `src/core/knowledge-index.ts`, `src/core/templates.ts`, `src/application/factory-application.ts`, `src/cli-program.ts`, `src/core/doctor.ts`, `src/web/server.ts`, `tests/knowledge.test.ts`, `tests/cli-structure.test.ts`, `tests/doctor.test.ts` | TASK-020 | claude-20260803-01 | master | 阶段4 OP1 Stage B knowledge/ 索引 + recall | 2026-08-04 20:05 +0800 | 2026-08-04 20:16 +0800 | RELEASED |
+| `src/core/transcript.ts`, `src/core/process-runner.ts`, `src/schemas/agent-schema.ts`, `src/application/factory-application.ts`, `tests/transcript.test.ts` | TASK-020 | claude-20260803-01 | master | 阶段5 OP1 Stage C chat transcript 持久化 | 2026-08-04 20:20 +0800 | 2026-08-04 20:25 +0800 | RELEASED |
 合法状态：`ACTIVE`、`RELEASED`、`STALE`、`TAKEOVER_PENDING`。
 
 ## 心跳与陈旧判定

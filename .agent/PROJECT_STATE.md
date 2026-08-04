@@ -44,9 +44,11 @@
 
 - 完成 TASK-020 阶段4（OP1 Stage B knowledge/ 轻量索引 + recall）：src/core/knowledge.ts(新增) KnowledgeIndex 接口（ingest/recall/compact/verifyConsistency）+KnowledgeEntry（frontmatter title/summary/keywords/updated_at/authority_layer）+defaultLayerFor（按顶层子目录推断：decisions→'decisions'、其余→'knowledge'）；src/core/knowledge-index.ts(新增) KnowledgeIndexImpl 扫描 knowledge/**\/*.md 解析 frontmatter 建关键词倒排，写派生 knowledge/.index.json（atomicWriteFile 0600，.gitignore 排除），recall 中文感知（整词+2-gram 退化+同义词扩展），verifyConsistency 检测漂移；src/core/templates.ts 增 knowledge/README.md frontmatter 约定种子+workspace .gitignore 排除 knowledge/.index.json；src/application/factory-application.ts knowledgeIngest/knowledgeCompact/knowledgeRecall/knowledgeVerify/knowledgeRead/knowledgeWrite 复用 documentFile 的 assertInside+realpath+symlink 硬约束模式，写后自动 re-ingest；src/cli-program.ts 新增 agentctl knowledge 命令组（rebuild/recall/verify）；src/core/doctor.ts 增 knowledge-index 索引漂移检查；src/web/server.ts 增 GET /api/v1/agents/:id/knowledge/recall?q= 只读 API。新增 tests/knowledge.test.ts(+8)。npm run verify 实跑（build+lint+prettier 全绿；test 4 项既有失败为并发 TASK-018 技能空预设回归，干净树复现，非本阶段引入）。未 push。
 
+- 完成 TASK-020 阶段5（OP1 Stage C chat transcript 持久化，为 Stage D 铺路）：src/core/transcript.ts(新增) TranscriptSummary（agent_id/operation/started_at/finished_at/exit_code/topics/decisions/lessons/tail）+TranscriptSink 接口+FileTranscriptSink.persist（ensureDir+append+0600+chmod）+summarizeTranscript 纯函数（TOPIC_LINE_PATTERN/DECISION_PATTERN/LESSON_PATTERN 抽取，tail/decisions/lessons 经 redactSecrets 脱敏）；src/core/process-runner.ts LoggedRunOptions 增 transcript?:boolean 与 transcriptSummary? 覆盖、LoggedRunResult 增 transcriptFile?，runLogged 在 transcript 启用时收集 stdout 行，元数据写完后 best-effort persist 摘要到 logs/<id>/runs/<slug>/transcript.jsonl（0600，失败不阻断）；src/schemas/agent-schema.ts portableMemorySchema 增 transcript_persist:z.boolean().optional()（opt-in，缺省不落盘，D-006 对齐）；src/application/factory-application.ts runAgent/runJob 在 agent.memory.transcript_persist===true 时透传 transcript:true，chat 保持 runInteractive 不落盘。新增 tests/transcript.test.ts(+6)。npm run verify 实跑（build+lint+prettier 全绿；207 测试中 206 过，唯一失败为工作区另一 Agent 未提交 skills.ts 改动——Skill remove 改彻底卸载——所致，非本阶段引入）。未 push。
+
 ## 进行中
 
-- TASK-020 记忆系统剩余批次合并：阶段1（OP2-F）、阶段2（CLI 结构化输出）、阶段3（OP4-C）、阶段4（OP1 Stage B knowledge/ 索引 + recall）已提交；阶段5-12（OP1 Stage C-E / OP5 A-E）按顺序依赖后续实施。
+- TASK-020 记忆系统剩余批次合并：阶段1（OP2-F）、阶段2（CLI 结构化输出）、阶段3（OP4-C）、阶段4（OP1 Stage B knowledge/ 索引 + recall）、阶段5（OP1 Stage C chat transcript 持久化）已提交；阶段6-12（OP1 Stage D-E / OP5 A-E）按顺序依赖后续实施。
 
 ## 待审查
 
