@@ -69,6 +69,8 @@ CC Switch Provider 同步、Codex 登录、飞书扫码/App 授权和交互聊�
 
 每个员工的 `agent/CURRENT_STATE.md` 由系统与员工共同维护：运行器登录、飞书授权、服务启停、归档/恢复等生命周期事件会自动更新状态行并单文件 git 提交；员工（AI）在工作开始/结束时按运行指南更新「工作进展」段（claude 侧已放行编辑该文件）。任务/对话完成不自动写状态。
 
+任务派发（`agentctl plan run`/`chief run`）会实时打印进度行（`规划中…/执行中…` + `N/M 完成 · 执行中 · 等待中` 摘要）。员工（AI）可在任务执行中自我进化：按运行指南在 developing 阶段更新自己的岗位（`agent/ROLE.md`）、目标（`agent/GOALS.md`）、工作系统（`agent/OPERATING_SYSTEM.md`）与规则（`agent/POLICIES.md`），或写回工作过程中的经验到 `knowledge/`——系统会自动检测并单文件 git 提交（`evolve:` 前缀），让下次执行更准确。
+
 ## 创建用户运营专员
 
 ```bash

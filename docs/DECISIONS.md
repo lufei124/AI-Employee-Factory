@@ -214,6 +214,20 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 - 边界：状态更新不落 `saveDocument` Web 通道（事件路径走同构的直接调用 + git 提交）；不加锁（与 Web 人类保存独立，atomic 替换防损坏）；员工运行中系统并发写入靠标记块边界隔离。任务完成/对话不自动写状态。
 - 原因：员工详情状态文档与实际情况脱节（登录/授权/启停/归档后仍显示「已创建」）；系统侧生命周期事件产生结构化信号但无写入通道；员工（AI）子进程跑在工作区、天然能编辑文件，缺的只是引导指令与权限。
 
+## D-026：派发进度可观测 + 员工自我进化
+
+- 状态：Accepted（已实施，TASK-029）
+- 日期：2026-08-05
+- 背景：① 任务派发（`runTaskPlan`）时 planning/developing 各跑一次 `runAgent`（数分钟），期间零进度事件，CLI/Web 只看到 `queued→running→succeeded`，用户「很久也没反馈」；② 员工是 Claude/Codex 子进程，可编辑工作区文件，但只有 `CURRENT_STATE.md` 被放行且自动提交，岗位/目标/工作系统/规则文档既无修改引导、也无权限放行、改动了也不自动提交。
+- 决定：
+  - **派发进度反馈（A+C）**：`dispatchItem` 各阶段推 progress 事件（规划中/规划完成/规划失败/执行中/执行完成/执行失败，带 `[itemId]「title」` 前缀）；`OperationDto` 新增 `summary` 字段，`dispatchPlan` 波形与 `dispatchItem` 阶段事件都携带计划级聚合摘要（`N/M 完成 · 执行中 ids · 等待中 n`）。CLI `plan run`/`chief run` 订阅 Operation 事件打印 `\r` 进度行；Web 操作中心列表/详情展示 summary。
+  - **员工自我进化**：员工可在任务执行（developing）阶段更新 `agent/ROLE.md`（岗位）、`GOALS.md`（目标）、`OPERATING_SYSTEM.md`（工作系统）、`POLICIES.md`（规则）与 `knowledge/` 知识，让下次执行更准确。两个 ENTRY.md.tmpl 追加「自我进化」引导节（只在 developing 更新，规划阶段绝不动任何文件——否则脏审计判违规→任务失败；保持文件结构；变更记录到 CURRENT_STATE.md「工作进展」；不手动 git 提交）。
+  - **权限放行**：`ensureAgentDocsAllowed(workspace, relPaths)` 参数化复用 CURRENT_STATE 放行模式，为四份自维护文档生成 `Edit/Write` 规则幂等合并；`prepareRuntime` 调用放行（存量员工自动升级）。员工不可修改 `.claude/settings.json` 扩大自身权限。
+  - **自动 git 提交**：`commitSelfEvolution` 在 `runAgent`/`runChat`/`runJob` 成功后检测四份文档变更并单文件提交（`evolve: 更新 <basename>`）；`knowledgeWrite`（含经验提取写回 `knowledge/lessons/`）提交 `evolve: 更新知识`。均 best-effort（缺 git 身份/抛错仅 console.warn 不阻断主流程），单文件提交绝不用 `add -A`。
+  - **规划门不豁免 agent/\*.md**：规划阶段改 `agent/*.md` 与改任意文件一样判违规（员工被引导只在 developing 改文档）。
+- 边界：`config_hash` 只含 runtime 块，员工改 `agent/*.md` 不触发漂移告警；Web 人工保存 `agent/*.md` 仍不自动提交（保持「Git 未提交」badge 语义）。
+- 原因：派发缺中间反馈致用户无法判断是否卡住；员工的学习成果没有持久化通道，每次执行都从默认文档重新开始，无法积累。
+
 - 状态：Accepted
 - 日期：2026-08-03
 - 背景：本项目需要被多个 AI Agent 并行编辑或在任意时刻交接，必须有持久化的事实来源替代易失的聊天上下文。

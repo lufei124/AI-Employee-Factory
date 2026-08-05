@@ -44,6 +44,8 @@ Web 仅绑定 `127.0.0.1`：启动 URL fragment 中的一次性 token 交换为 
 
 **CURRENT_STATE.md 自动更新（D-025）**：`agent/CURRENT_STATE.md` 采用「系统标记块 + 员工工作进展段」结构（`src/core/current-state.ts`）。系统侧生命周期事件（运行器登录、飞书授权、服务启停、归档/恢复）自动更新标记块内的行级 KV（状态/运行器/飞书/最近事件），只改目标 key 行、块外内容原样保留；无标记块且被人工改过则跳过并警告（永不覆盖他人成果）。更新后经 `gitCommitFile`（`src/core/git.ts`，单文件 add+commit，绝不用 `add -A`）自动提交，badge 语义变准。员工侧由 CLAUDE.md/AGENTS.md 引导维护「工作进展」段，claude 侧工作区 `.claude/settings.json` 放行编辑该文件（存量员工由 `prepareRuntime` 幂等补放行）。
 
+**派发进度可观测 + 员工自我进化（D-026）**：任务派发（`runTaskPlan`/`dispatchItem`）的各阶段（planning/developing）推 Operation progress 事件（`[itemId]「标题」规划中…/执行中…` 等），并随事件携带计划级聚合摘要 `summary`（`N/M 完成 · 执行中 ids · 等待中 n`，`OperationDto.summary`）；CLI `plan run`/`chief run` 订阅打印 `\r` 进度行，Web 操作中心展示 summary。员工（AI）可在任务执行（developing）阶段更新 `agent/ROLE.md`（岗位）、`GOALS.md`（目标）、`OPERATING_SYSTEM.md`（工作系统）、`POLICIES.md`（规则）与 `knowledge/` 知识做自我进化——`prepareRuntime` 幂等放行编辑（`ensureAgentDocsAllowed`），`runAgent`/`runChat`/`runJob` 成功后 `commitSelfEvolution` 单文件自动提交（`evolve: 更新 <basename>`），`knowledgeWrite`（含经验提取写回 `knowledge/lessons/`）提交 `evolve: 更新知识`；均 best-effort 不阻断主流程。规划门脏审计不豁免 `agent/*.md`（规划阶段改任何文件 → 任务失败）。
+
 飞书采用 `lark-coding-agent-bridge` 官方 PersonalAgent 注册与 WebSocket 长连接。Factory 保持每员工独立 `LARK_CHANNEL_HOME`，并在授权和启动边界把 profile 权限固定为 `workspace/workspace`；不使用 Bridge 自带 daemon，也不把 App Secret 放入 argv、plist 或日志。
 
 ## Chief 编排与 Todo 状态机

@@ -14,14 +14,17 @@ import { atomicWriteFile } from './atomic.js';
 export const STATE_BLOCK_BEGIN = '<!-- factory-auto:begin -->';
 export const STATE_BLOCK_END = '<!-- factory-auto:end -->';
 
-/** 放行员工编辑 CURRENT_STATE.md 所需的 Claude 权限规则（工作区级 settings.json）。 */
-const STATE_ALLOW_RULES = ['Edit(agent/CURRENT_STATE.md)', 'Write(agent/CURRENT_STATE.md)'];
+/** 从相对路径列表生成 Claude 权限放行规则（Edit/Write 各一条）。 */
+function allowRulesFor(relPaths: string[]): string[] {
+  return relPaths.flatMap((p) => [`Edit(${p})`, `Write(${p})`]);
+}
 
 /**
- * 幂等确保工作区 .claude/settings.json 含 CURRENT_STATE 放行（存量员工升级用）。
+ * 幂等确保工作区 .claude/settings.json 含指定文件的 Claude 权限放行（存量员工升级用）。
  * 保留既有 permissions（defaultMode 等）与其他顶层字段；无放行时合并写回。
+ * 非法 JSON：不覆盖，返回（员工本机运行时产物，doctor 会告警）。
  */
-export async function ensureStateEditAllowed(workspace: string): Promise<void> {
+export async function ensureAgentDocsAllowed(workspace: string, relPaths: string[]): Promise<void> {
   const settingsFile = path.join(workspace, '.claude', 'settings.json');
   let settings: Record<string, unknown> = {};
   if (await fs.pathExists(settingsFile)) {
@@ -29,7 +32,6 @@ export async function ensureStateEditAllowed(workspace: string): Promise<void> {
       const parsed = (await fs.readJson(settingsFile)) as Record<string, unknown>;
       if (parsed && typeof parsed === 'object') settings = parsed;
     } catch {
-      // 非法 JSON：不覆盖，返回（员工本机运行时产物，doctor 会告警）。
       return;
     }
   }
@@ -40,16 +42,25 @@ export async function ensureStateEditAllowed(workspace: string): Promise<void> {
       ? (settings.permissions as Record<string, unknown>)
       : {};
   const allow = Array.isArray(permissions.allow) ? (permissions.allow as unknown[]) : [];
-  if (STATE_ALLOW_RULES.every((rule) => allow.includes(rule))) return;
+  const missing = allowRulesFor(relPaths).filter((rule) => !allow.includes(rule));
+  if (missing.length === 0) return;
   await atomicWriteFile(
     settingsFile,
     `${JSON.stringify(
-      { ...settings, permissions: { ...permissions, allow: [...allow, ...STATE_ALLOW_RULES] } },
+      { ...settings, permissions: { ...permissions, allow: [...allow, ...missing] } },
       null,
       2,
     )}\n`,
     0o600,
   );
+}
+
+/**
+ * 幂等确保工作区 .claude/settings.json 含 CURRENT_STATE 放行（存量员工升级用）。
+ * 保留既有 permissions（defaultMode 等）与其他顶层字段；无放行时合并写回。
+ */
+export async function ensureStateEditAllowed(workspace: string): Promise<void> {
+  await ensureAgentDocsAllowed(workspace, ['agent/CURRENT_STATE.md']);
 }
 
 /** 旧种子模板原文（templates.ts 曾写入的初版，无标记块）——精确匹配以识别未升级文件。 */

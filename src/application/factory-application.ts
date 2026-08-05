@@ -48,6 +48,7 @@ import {
 } from '../core/git.js';
 import {
   updateCurrentState,
+  ensureAgentDocsAllowed,
   ensureStateEditAllowed,
   type StateRow,
 } from '../core/current-state.js';
@@ -452,7 +453,10 @@ export class FactoryApplication {
     await assertInsideReal(root, file, '知识文档');
     await atomicWriteFile(file, content, 0o644);
     await this.knowledgeIndex(registry).then((index) => index.ingest());
-    return { relPath: path.relative(root, file), content };
+    // TASK-029 自我进化：知识（含经验提取写回 knowledge/lessons/）一并自动单文件提交。
+    const rel = path.relative(root, file);
+    await this.commitAgentFile(registry.workspace.path, `knowledge/${rel}`, 'evolve: 更新知识');
+    return { relPath: rel, content };
   }
 
   // OP1 Stage D：从 transcript 摘要提取经验写回 knowledge/lessons/。
@@ -489,6 +493,40 @@ export class FactoryApplication {
     const summary = JSON.parse(last) as TranscriptSummary;
     // 不信任 transcript 里的 agent_id（可能被改写），始终用当前 id 覆盖。
     return { ...summary, agent_id: id };
+  }
+
+  // TASK-029 自我进化：员工可在任务执行中更新 agent/ 自维护文档（ROLE/GOALS/
+  // OPERATING_SYSTEM/POLICIES）与 knowledge/ 知识，系统自动检测并单文件 git 提交。
+  // 与 syncCurrentState 同款 best-effort 语义：缺 git 身份或提交抛错仅 console.warn，不阻断主流程。
+  private async commitAgentFile(
+    workspace: string,
+    relPath: string,
+    message: string,
+  ): Promise<void> {
+    try {
+      const committed = await gitCommitFile(workspace, relPath, message, {
+        requireIdentity: false,
+      });
+      if (!committed) {
+        console.warn(`[self-evolution] 提交 ${relPath} 失败（缺 git 身份或 git 异常），跳过。`);
+      }
+    } catch (error) {
+      console.warn(`[self-evolution] 提交 ${relPath} 失败：`, error);
+    }
+  }
+
+  /** 检测并单文件提交员工四份自维护文档的变更（runAgent/runChat/runJob 成功后调用）。 */
+  private async commitSelfEvolution(agent: AgentConfig, workspace: string): Promise<void> {
+    for (const relPath of [
+      agent.identity.role_file,
+      agent.identity.goals_file,
+      agent.identity.operating_system_file,
+      agent.identity.policies_file,
+    ]) {
+      const dirty = await gitStatusShort(workspace, relPath);
+      if (dirty.length === 0) continue;
+      await this.commitAgentFile(workspace, relPath, `evolve: 更新 ${path.basename(relPath)}`);
+    }
   }
 
   async listJobs(id: string): Promise<JobConfig[]> {
@@ -608,6 +646,8 @@ export class FactoryApplication {
       )
       .then(async (result) => {
         await this.maybeExtractExperience(id, agent, result.transcriptFile);
+        // TASK-029 自我进化：任务执行结束后检测并单文件提交员工自维护文档变更。
+        await this.commitSelfEvolution(agent, registry.workspace.path);
         return result;
       });
   }
@@ -1108,6 +1148,8 @@ export class FactoryApplication {
     // OP1 Stage D：与 runAgent 一致——experience_extraction=true 且 transcript_persist=true 时
     // 提取经验写回 knowledge/lessons/（仅当 transcriptFile 已生成）。
     await this.maybeExtractExperience(id, agent, result.transcriptFile);
+    // TASK-029 自我进化：对话结束后检测并单文件提交员工自维护文档变更。
+    await this.commitSelfEvolution(agent, registry.workspace.path);
     const raw = await fs.readFile(result.stdoutFile, 'utf8').catch(() => '');
     // 结构化 result 解析失败（非 JSON/空输出）返回 undefined，降级为原始 stdout 文本。
     const text = parseStructuredResult(agent.runtime.provider, raw) ?? raw;
@@ -1445,6 +1487,8 @@ export class FactoryApplication {
       .run(registry, agent.runtime, job, runOptions)
       .then(async (result) => {
         await this.maybeExtractExperience(id, agent, result.transcriptFile);
+        // TASK-029 自我进化：任务执行结束后检测并单文件提交员工自维护文档变更。
+        await this.commitSelfEvolution(agent, registry.workspace.path);
         return result;
       });
   }
@@ -1468,6 +1512,13 @@ export class FactoryApplication {
     // OP6-B：存量员工幂等补放行——工作区 .claude/settings.json 无 CURRENT_STATE 放行时合并写入
     // （chat/run/runJob/start 前都会调用，存量自动升级，不覆盖员工其他权限配置）。
     await ensureStateEditAllowed(registry.workspace.path);
+    // TASK-029 自我进化：员工四份自维护文档（岗位/目标/工作系统/规则）一并幂等放行。
+    await ensureAgentDocsAllowed(registry.workspace.path, [
+      agent.identity.role_file,
+      agent.identity.goals_file,
+      agent.identity.operating_system_file,
+      agent.identity.policies_file,
+    ]);
     const config = await readConfig(this.paths);
     // OP5-D：Registry 本机绑定的 Provider 名（不进便携文件），指定时按该 Provider 同步；缺省 live。
     const summary = await syncCcSwitchClaudeProvider(
