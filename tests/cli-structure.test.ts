@@ -83,39 +83,4 @@ describe('agentctl command surface', () => {
     expect(names('trash')).toEqual(expect.arrayContaining(['move', 'list', 'restore', 'purge']));
     expect(names('operations')).toEqual(expect.arrayContaining(['query']));
   });
-
-  it('registers the plan and chief orchestration command groups (spec-chief-orchestration)', () => {
-    const program = createProgram();
-    const names = (group: string) =>
-      program.commands
-        .find((command) => command.name() === group)
-        ?.commands.map((command) => command.name());
-    expect(names('plan')).toEqual(
-      expect.arrayContaining([
-        'list',
-        'create',
-        'add',
-        'get',
-        'confirm',
-        'reject',
-        'run',
-        'review',
-        'confirm-review',
-        'reject-review',
-      ]),
-    );
-    expect(names('chief')).toEqual(expect.arrayContaining(['run']));
-    // plan run 支持 --concurrency；review 支持 --chief；reject-review 支持 --note。
-    const optionFlags = (group: string, sub: string) =>
-      program.commands
-        .find((command) => command.name() === group)
-        ?.commands.find((command) => command.name() === sub)
-        ?.options.map((option) => option.flags)
-        .join(' ') ?? '';
-    expect(optionFlags('plan', 'run')).toContain('--concurrency');
-    expect(optionFlags('plan', 'reject')).toContain('--note');
-    expect(optionFlags('plan', 'review')).toContain('--chief');
-    expect(optionFlags('plan', 'reject-review')).toContain('--note');
-    expect(optionFlags('chief', 'run')).toContain('--concurrency');
-  });
 });

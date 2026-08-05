@@ -264,9 +264,8 @@ describe('local Web API security', () => {
   });
 });
 
-// TASK-027（D-024）：Web 编排写面——建计划/加任务项/派发/Chief 发起/对话。
-// 全部走既有后台 Operation 模式；runAgent 被 mock，避免真正 spawn 员工进程。
-describe('Web orchestration write surface (D-024)', () => {
+// Web 单轮对话（D-024 对话部分）：全部走既有后台 Operation 模式；runAgent 被 mock，避免真正 spawn 员工进程。
+describe('Web chat operation', () => {
   async function seededSetup() {
     const { server, application } = setup();
     const headers = await authHeaders(server);
@@ -287,79 +286,6 @@ describe('Web orchestration write surface (D-024)', () => {
     return { server, application, headers };
   }
 
-  it('creates a plan, adds items, confirms, and dispatches it (202 + OperationDto)', async () => {
-    const { server, application, headers } = await seededSetup();
-    vi.spyOn(application, 'runAgent').mockImplementation(async () => ({
-      exitCode: 0,
-      timedOut: false,
-      cancelled: false,
-      logDir: '',
-      stdoutFile: '',
-      stderrFile: '',
-      metadataFile: '',
-      startedAt: new Date().toISOString(),
-      finishedAt: new Date().toISOString(),
-    }));
-
-    const plan = await server.inject({
-      method: 'POST',
-      url: '/api/v1/agents/user-operations/task-plans',
-      headers,
-      payload: { planId: 'plan-web-1', name: '发布新版产品' },
-    });
-    expect(plan.statusCode).toBe(200);
-    expect(plan.json().data).toMatchObject({ id: 'plan-web-1', status: 'draft', items: [] });
-
-    const item = await server.inject({
-      method: 'POST',
-      url: '/api/v1/agents/user-operations/task-plans/plan-web-1/items',
-      headers,
-      payload: {
-        id: 'item-web-1',
-        title: '撰写公告',
-        agent: 'user-operations',
-        prompt: '写一篇发布公告。',
-      },
-    });
-    expect(item.statusCode).toBe(200);
-    expect(item.json().data.items).toHaveLength(1);
-
-    const confirmed = await server.inject({
-      method: 'POST',
-      url: '/api/v1/agents/user-operations/task-plans/plan-web-1/actions/confirm',
-      headers,
-    });
-    expect(confirmed.json().data.status).toBe('active');
-
-    const dispatched = await server.inject({
-      method: 'POST',
-      url: '/api/v1/agents/user-operations/task-plans/plan-web-1/actions/run',
-      headers,
-      payload: { concurrency: 2 },
-    });
-    expect(dispatched.statusCode).toBe(202);
-    expect(dispatched.json().data).toMatchObject({
-      type: 'task_plan',
-      agentId: 'user-operations',
-      state: 'queued',
-    });
-
-    // 派发主循环在后台跑完；等待终态并验证 item 离开 pending（进入 awaiting_review，交叉审查在 CLI/编排层）。
-    const operationId = dispatched.json<{ data: { id: string } }>().data.id;
-    const applicationAny = application as unknown as {
-      waitOperation: (id: string) => Promise<void>;
-      getTaskPlan: (
-        ownerId: string,
-        planId: string,
-      ) => Promise<{ items: Array<{ status: string }> }>;
-    };
-    await applicationAny.waitOperation(operationId);
-    const finalPlan = await applicationAny.getTaskPlan('user-operations', 'plan-web-1');
-    expect(['awaiting_review', 'completed'].includes(finalPlan.items[0]?.status ?? '')).toBe(true);
-
-    await server.close();
-  });
-
   it('runs a chat operation and streams progress + final output events', async () => {
     const { server, application, headers } = await seededSetup();
     vi.spyOn(application, 'runChat').mockResolvedValue({ text: '你好！我是运营专员。' });
@@ -378,10 +304,7 @@ describe('Web orchestration write surface (D-024)', () => {
     });
 
     const operationId = started.json<{ data: { id: string } }>().data.id;
-    const applicationAny = application as unknown as {
-      waitOperation: (id: string) => Promise<void>;
-    };
-    await applicationAny.waitOperation(operationId);
+    await application.operationManager.wait(operationId);
     const events = (
       await server.inject({
         method: 'GET',
@@ -396,33 +319,6 @@ describe('Web orchestration write surface (D-024)', () => {
     expect(events).toContainEqual(
       expect.objectContaining({ kind: 'output', message: '你好！我是运营专员。' }),
     );
-    await server.close();
-  });
-
-  it('validates plan create/add-item payloads', async () => {
-    const { server, headers } = await seededSetup();
-
-    const badName = await server.inject({
-      method: 'POST',
-      url: '/api/v1/agents/user-operations/task-plans',
-      headers,
-      payload: { planId: 'plan-x', name: '' },
-    });
-    expect(badName.statusCode).toBe(400);
-
-    await server.inject({
-      method: 'POST',
-      url: '/api/v1/agents/user-operations/task-plans',
-      headers,
-      payload: { planId: 'plan-x', name: '计划 X' },
-    });
-    const badItem = await server.inject({
-      method: 'POST',
-      url: '/api/v1/agents/user-operations/task-plans/plan-x/items',
-      headers,
-      payload: { id: 'i1', title: '', agent: 'user-operations', prompt: '' },
-    });
-    expect(badItem.statusCode).toBe(400);
     await server.close();
   });
 });

@@ -32,7 +32,6 @@ export interface OperationDto {
   agentId?: string;
   state: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
   progress?: number;
-  summary?: string;
   startedAt?: string;
   finishedAt?: string;
   exitCode?: number;
@@ -102,46 +101,6 @@ export interface AgentDetail {
     description: string;
     runtime: { provider: 'claude' | 'codex'; locked: true; model?: string };
   };
-}
-
-export type TaskItemState =
-  | 'pending'
-  | 'queued'
-  | 'planning'
-  | 'awaiting_confirmation'
-  | 'developing'
-  | 'awaiting_review'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
-
-export interface TaskItem {
-  id: string;
-  title: string;
-  agent: string;
-  prompt: string;
-  status: TaskItemState;
-  dependencies: string[];
-  exit_code?: number;
-  artifact?: string;
-  review?: { verdict: 'approved' | 'rejected'; note?: string };
-  created_at: string;
-  updated_at: string;
-  finished_at: string | null;
-}
-
-export type TaskPlanStatus = 'draft' | 'active' | 'completed' | 'cancelled';
-
-export interface TaskPlan {
-  schema_version: 1;
-  id: string;
-  name: string;
-  creator: string;
-  status: TaskPlanStatus;
-  note?: string;
-  items: TaskItem[];
-  created_at: string;
-  updated_at: string;
 }
 
 export type SkillScope = 'project' | 'user';
@@ -373,61 +332,6 @@ export const api = {
     request<Array<{ seq: number; kind: string; message?: string; progress?: number }>>(
       `/operations/${id}/events?after=${after}`,
     ),
-  listTaskPlans: (id: string) =>
-    request<TaskPlan[]>(`/agents/${encodeURIComponent(id)}/task-plans`),
-  getTaskPlan: (id: string, planId: string) =>
-    request<TaskPlan>(`/agents/${encodeURIComponent(id)}/task-plans/${encodeURIComponent(planId)}`),
-  confirmPlan: (id: string, planId: string) =>
-    request<TaskPlan>(
-      `/agents/${encodeURIComponent(id)}/task-plans/${encodeURIComponent(planId)}/actions/confirm`,
-      { method: 'POST' },
-    ),
-  rejectPlan: (id: string, planId: string, note?: string) =>
-    request<TaskPlan>(
-      `/agents/${encodeURIComponent(id)}/task-plans/${encodeURIComponent(planId)}/actions/reject`,
-      { method: 'POST', body: JSON.stringify(note ? { note } : {}) },
-    ),
-  confirmReview: (id: string, planId: string, itemId: string) =>
-    request<TaskPlan>(
-      `/agents/${encodeURIComponent(id)}/task-plans/${encodeURIComponent(planId)}/items/${encodeURIComponent(itemId)}/actions/confirm-review`,
-      { method: 'POST' },
-    ),
-  rejectReview: (id: string, planId: string, itemId: string, note?: string) =>
-    request<TaskPlan>(
-      `/agents/${encodeURIComponent(id)}/task-plans/${encodeURIComponent(planId)}/items/${encodeURIComponent(itemId)}/actions/reject-review`,
-      { method: 'POST', body: JSON.stringify(note ? { note } : {}) },
-    ),
-  // TASK-027（D-024）：Web 编排写面 + 单轮对话。全部返回 OperationDto（202）或更新后的计划。
-  createTaskPlan: (id: string, planId: string, name: string) =>
-    request<TaskPlan>(`/agents/${encodeURIComponent(id)}/task-plans`, {
-      method: 'POST',
-      body: JSON.stringify({ planId, name }),
-    }),
-  addTaskItem: (
-    id: string,
-    planId: string,
-    input: {
-      id: string;
-      title: string;
-      agent: string;
-      prompt: string;
-      dependencies?: string[];
-    },
-  ) =>
-    request<TaskPlan>(
-      `/agents/${encodeURIComponent(id)}/task-plans/${encodeURIComponent(planId)}/items`,
-      { method: 'POST', body: JSON.stringify(input) },
-    ),
-  runTaskPlan: (id: string, planId: string, concurrency?: number) =>
-    request<OperationDto>(
-      `/agents/${encodeURIComponent(id)}/task-plans/${encodeURIComponent(planId)}/actions/run`,
-      { method: 'POST', body: JSON.stringify(concurrency ? { concurrency } : {}) },
-    ),
-  chiefRun: (id: string, goal: string, concurrency?: number) =>
-    request<OperationDto>(`/agents/${encodeURIComponent(id)}/actions/chief-run`, {
-      method: 'POST',
-      body: JSON.stringify(concurrency ? { goal, concurrency } : { goal }),
-    }),
   chat: (id: string, prompt: string, timeoutSeconds?: number) =>
     request<OperationDto>(`/agents/${encodeURIComponent(id)}/actions/chat`, {
       method: 'POST',

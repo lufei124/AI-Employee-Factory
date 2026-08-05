@@ -69,7 +69,7 @@ CC Switch Provider 同步、Codex 登录、飞书扫码/App 授权和交互聊�
 
 每个员工的 `agent/CURRENT_STATE.md` 由系统与员工共同维护：运行器登录、飞书授权、服务启停、归档/恢复等生命周期事件会自动更新状态行并单文件 git 提交；员工（AI）在工作开始/结束时按运行指南更新「工作进展」段（claude 侧已放行编辑该文件）。任务/对话完成不自动写状态。
 
-任务派发（`agentctl plan run`/`chief run`）会实时打印进度行（`规划中…/执行中…` + `N/M 完成 · 执行中 · 等待中` 摘要）。员工（AI）可在任务执行中自我进化：按运行指南在 developing 阶段更新自己的岗位（`agent/ROLE.md`）、目标（`agent/GOALS.md`）、工作系统（`agent/OPERATING_SYSTEM.md`）与规则（`agent/POLICIES.md`），或写回工作过程中的经验到 `knowledge/`——系统会自动检测并单文件 git 提交（`evolve:` 前缀），让下次执行更准确。
+员工（AI）可在任务执行中自我进化：按运行指南更新自己的岗位（`agent/ROLE.md`）、目标（`agent/GOALS.md`）、工作系统（`agent/OPERATING_SYSTEM.md`）与规则（`agent/POLICIES.md`），或写回工作过程中的经验到 `knowledge/`——系统会自动检测并单文件 git 提交（`evolve:` 前缀），让下次执行更准确。
 
 ## 创建用户运营专员
 
@@ -273,7 +273,7 @@ agentctl archive user-operations
 
 ## 当前限制与 Roadmap
 
-v1 不包含常驻 Web 服务、局域网/远程访问、账号系统、浏览器内终端、多 Agent 共享机器人 Router、Agent 自由互聊、云端多租户、Skill 市场、生产数据写入、知识图谱或 systemd 实现。已落地：Chief 主管编排（拆解→计划确认门→波次派发→交叉审查单向搬运→人工合并）与 MCP 接入（`POST /mcp`，静态 bearer，13 个读 + 编排写工具，可让 Claude Code / Cursor / VS Code 驱动编排）。后续优先项是 systemd adapter、显式 runtime 迁移工作流、可选的加密 Secret provider、Web Todo 视图与 MCP 增强路径（请求内 SSE progress / 推送订阅）。
+v1 不包含常驻 Web 服务、局域网/远程访问、账号系统、浏览器内终端、多 Agent 共享机器人 Router、Agent 自由互聊、云端多租户、Skill 市场、生产数据写入、知识图谱或 systemd 实现。核心模型是「单一 AI 员工 + 定时 Job + Web 单轮对话」；Chief 编排、Todo 状态机与 MCP 接入已于 TASK-030（D-027）移除。后续优先项是 systemd adapter、显式 runtime 迁移工作流、可选的加密 Secret provider、任务完成自动写状态、飞书入站。
 
 ## 开发验证
 

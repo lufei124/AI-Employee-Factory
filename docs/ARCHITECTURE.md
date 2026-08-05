@@ -44,19 +44,15 @@ Web 仅绑定 `127.0.0.1`：启动 URL fragment 中的一次性 token 交换为 
 
 **CURRENT_STATE.md 自动更新（D-025）**：`agent/CURRENT_STATE.md` 采用「系统标记块 + 员工工作进展段」结构（`src/core/current-state.ts`）。系统侧生命周期事件（运行器登录、飞书授权、服务启停、归档/恢复）自动更新标记块内的行级 KV（状态/运行器/飞书/最近事件），只改目标 key 行、块外内容原样保留；无标记块且被人工改过则跳过并警告（永不覆盖他人成果）。更新后经 `gitCommitFile`（`src/core/git.ts`，单文件 add+commit，绝不用 `add -A`）自动提交，badge 语义变准。员工侧由 CLAUDE.md/AGENTS.md 引导维护「工作进展」段，claude 侧工作区 `.claude/settings.json` 放行编辑该文件（存量员工由 `prepareRuntime` 幂等补放行）。
 
-**派发进度可观测 + 员工自我进化（D-026）**：任务派发（`runTaskPlan`/`dispatchItem`）的各阶段（planning/developing）推 Operation progress 事件（`[itemId]「标题」规划中…/执行中…` 等），并随事件携带计划级聚合摘要 `summary`（`N/M 完成 · 执行中 ids · 等待中 n`，`OperationDto.summary`）；CLI `plan run`/`chief run` 订阅打印 `\r` 进度行，Web 操作中心展示 summary。员工（AI）可在任务执行（developing）阶段更新 `agent/ROLE.md`（岗位）、`GOALS.md`（目标）、`OPERATING_SYSTEM.md`（工作系统）、`POLICIES.md`（规则）与 `knowledge/` 知识做自我进化——`prepareRuntime` 幂等放行编辑（`ensureAgentDocsAllowed`），`runAgent`/`runChat`/`runJob` 成功后 `commitSelfEvolution` 单文件自动提交（`evolve: 更新 <basename>`），`knowledgeWrite`（含经验提取写回 `knowledge/lessons/`）提交 `evolve: 更新知识`；均 best-effort 不阻断主流程。规划门脏审计不豁免 `agent/*.md`（规划阶段改任何文件 → 任务失败）。
+**员工自我进化（D-026）**：员工（AI）可在任务执行阶段更新 `agent/ROLE.md`（岗位）、`GOALS.md`（目标）、`OPERATING_SYSTEM.md`（工作系统）、`POLICIES.md`（规则）与 `knowledge/` 知识做自我进化——`prepareRuntime` 幂等放行编辑（`ensureAgentDocsAllowed`），`runAgent`/`runChat`/`runJob` 成功后 `commitSelfEvolution` 单文件自动提交（`evolve: 更新 <basename>`），`knowledgeWrite`（含经验提取写回 `knowledge/lessons/`）提交 `evolve: 更新知识`；均 best-effort 不阻断主流程。员工不可修改 `.claude/settings.json` 扩大自身权限，单文件提交绝不用 `add -A`。
 
 飞书采用 `lark-coding-agent-bridge` 官方 PersonalAgent 注册与 WebSocket 长连接。Factory 保持每员工独立 `LARK_CHANNEL_HOME`，并在授权和启动边界把 profile 权限固定为 `workspace/workspace`；不使用 Bridge 自带 daemon，也不把 App Secret 放入 argv、plist 或日志。
 
-## Chief 编排与 Todo 状态机
+## Web 单轮对话（D-024 对话部分）
 
-`role` 为 `chief` 的员工可编排多名 `worker`，顶层一句话闭环：拆解 → 计划确认门 → 波次派发 → Chief 交叉审查单向搬运 → 人工合并。计划按「创建者」落在其自有 workspace 的 `tasks/plans/`（`TaskStore`），不跨员工共享实时目录。
+员工详情页「对话」标签（所有员工）：单轮问答（`claude -p` / `codex exec` 非交互），走 `runChat` + `runLogged`（复用 transcript/experience 管线，`transcript_persist` opt-in），Operation 完成时把最终回答作为 output 事件写入，前端轮询读回。
 
-- **计划级状态机** `draft → [active, cancelled]`：`draft` 是人工确认门（`confirmPlan` 确认可派发 / `rejectPlan` 驳回可附 note）；`active` 可派发，`completed/cancelled` 为终态。
-- **任务项状态机**（7+2）：`pending → queued → planning → awaiting_confirmation → developing → awaiting_review → completed`，外加终止态 `failed/cancelled`。`runTaskPlan` 波次派发：依赖阻塞、失败不阻塞同级、已成功跳过、可选并发（1–8）；中断孤儿项经 `reconcile` 标记失败。
-- **审查门（D-017 单向搬运）**：`reviewTaskPlan` 由编排器读 worker 的 `diff.patch` 与 `logs/<worker>/runs/<slug>/stdout.log`，经 `redactSecrets` 脱敏后喂 Chief，Chief 返回结构化 `verdict+note` 写入 `item.review`；item 停留 `awaiting_review` 待人工确认合并（`confirmReview`→completed）或驳回返工（`rejectReview`→developing）。Chief 全程零 worker 文件系统访问，D-003 隔离不变。
-- **Web 视图（D-024 起可编排）**：员工详情页「Todo 任务」标签（与「任务」= 定时 Job 区分）按 2 秒轮询展示计划与任务项状态；`draft` 计划提供确认/驳回门，`awaiting_review` 项渲染审查结论并提供确认合并/驳回返工；**可新建计划**（planId 由前端生成 `plan-<8hex>`）、**draft 计划展开可加任务项**、`active` 计划可「派发执行」——全部写操作返回 202 + OperationDto，前端轮询操作中心（D-024）。**Chief 编排视图**（仅 `role=chief` 员工显示）：把 Chief 拥有的每个目标（plan）渲染成一条流水线卡片——阶段条（拆解 → 计划确认 → 执行 → 审查 → 结果，按派生状态点亮）+ 聚合整体进度（如 `2/3 完成 · 1 待审查`），展开复用任务项渲染与两种闸门；顶部「发起目标」表单走 `chief-run`（拆解在后台 Operation 跑，完成停在 draft 等确认）。**对话标签**（所有员工）：单轮问答（`claude -p` / `codex exec` 非交互），走 `runChat` + `runLogged`（复用 transcript/experience 管线，`transcript_persist` opt-in），Operation 完成时把最终回答作为 output 事件写入，前端轮询读回。
-- **MCP**：`POST/GET /mcp` 以静态 bearer 认证注册 13 个工具（读 8 + 编排写 5），薄适配器穿过 `FactoryApplication` 单一 seam，与 Web/CLI 共享行为与脱敏约束（D-018/D-021）。
+> 注：Chief 编排、Todo 状态机与 MCP 接入已于 TASK-030（D-027）整体移除，详见 [DECISIONS.md](DECISIONS.md)。
 
 ## OP1 Stage E：archival 后端前置约束
 

@@ -2,56 +2,62 @@
 
 ## 身份
 
-Task ID: TASK-029
+Task ID: TASK-030
 
-Task title: 派发进度反馈（A+C）+ 员工自我进化（岗位/目标/工作系统/规则 + knowledge 自动提交）
+Task title: 移除 Chief 编排 / Todo 状态机 / MCP 接入（D-027）
 
 Outgoing/current agent: claude-20260803-01
 
-Intended next role/agent: 用户或后续维护者（TASK-029 已实施并提交；后续增强：任务完成自动写状态、飞书入站等单独立项）
+Intended next role/agent: 用户或后续维护者（TASK-030 已实施并提交；后续增强：任务完成自动写状态、飞书入站等其他立项）
 
 Branch/worktree: main
 
-Status: 已完成 Phase 1 + Phase 2 + /code-review 双轴（修复后全量验证通过，已提交 main）
+Status: 三块移除 + 文档 + /code-review 双轴（修复后验证全绿），已提交 main
 
-更新时间：2026-08-05 18:00 +0800
+更新时间：2026-08-05 21:00 +0800
 
 ## 已完成
 
-- **Phase 1（commit df9a7a6）派发进度反馈 A+C**：
-  - `OperationDto`/`OperationEvent` 加 `summary?: string`；execute 的 emit 包装同步 `dto.summary`。
-  - `dispatchItem` 加第 8 参 `emit?: DispatchEmit`，6 阶段 progress 事件（`[t1]「任务一」规划中…/规划完成/规划失败/执行中…/执行完成/执行失败（exit=N）`）；抽 `progressOf`/`summaryOf` 纯函数（`N/M 完成 · 执行中 ids · 等待中 n`）。
-  - `dispatchPlan` 波形两处 emit 带 summary，wave.map 传 emit。
-  - `orchestrate()` 加 `onProgress?: (summary) => void`（订阅 Operation 事件）；CLI `plan run`/`chief run` 打印 `\r` 进度行。
-  - Web：api.ts OperationDto + OperationsDrawer 列表/详情展示 summary + styles.css。
-  - tests/orchestration.test.ts +3（progress 事件序列 / 终态 summary / 多 item 中间态 summary）。
+- **删除文件**（git rm）：
+  - `src/schemas/task-schema.ts`、`src/core/task-store.ts`（Todo 状态机）
+  - `src/mcp/mcp-server.ts`（MCP 整块）
+  - `tests/orchestration.test.ts`、`tests/task-store.test.ts`、`tests/mcp.test.ts`、`tests/web-mcp.test.ts`
 
-- **Phase 2（未提交）员工自我进化**：
-  - 两个 ENTRY.md.tmpl 追加「自我进化」节（只在 developing 更新、规划阶段绝不动文件、保持结构、记录工作进展、不手动 git 提交；claude 侧附「不可改 settings.json 扩大权限」）。
-  - `current-state.ts`：`ensureStateEditAllowed` 重构为 `ensureAgentDocsAllowed(workspace, relPaths)` 的薄封装（参数化 Edit/Write 幂等合并，非法 JSON 返回不覆盖）。
-  - `factory-application.ts`：`prepareRuntime` 调用 `ensureAgentDocsAllowed(workspace, [四文档路径])`；新增 `commitAgentFile`（best-effort 单文件提交）+ `commitSelfEvolution`（遍历四文档 gitStatusShort 有变更则 `evolve: 更新 <basename>`）；挂载 runAgent/runChat/runJob 三处 `.then()`；`knowledgeWrite` 内原子写+ingest 后提交 `evolve: 更新知识`。
-  - tests/self-evolution.test.ts（新，4 用例）：runAgent 后 ROLE.md 单文件提交（mock ProcessRunner.runLogged 走真实后处理链）/ 规划门不豁免 agent/*.md / ensureAgentDocsAllowed 幂等 / knowledgeWrite 提交。GIT_CONFIG_GLOBAL + .cc-switch.env 0600 预置凭据基建。
+- **`src/application/factory-application.ts`**：移除全部 plan/编排方法与私有辅助（createTaskPlan/list/get/addItem/confirm/reject/runTaskPlan/review/confirmReview/rejectReview/planWithChief/startPlanWithChief/orchestrate/waitOperation + plans()/withPlanLock/findItem/dispatchPlan/dispatchItem/planningPrompt/reviewPrompt/decomposePrompt/parseReview/parseDecompose/isDone/progressOf/summaryOf/DispatchEmit/DecomposedTask + planLocks 字段 + 相关 import）。`runAgent` 的 `commitSelfEvolution` 改为**无条件**调用（去掉 read-only 探针的 skipSelfEvolution 守卫）。
 
-- **文档**：docs/DECISIONS.md D-026、docs/ARCHITECTURE.md（D-026 段）、README.md（自我进化 + 进度行）、.agent/TASK_BOARD.md（TASK-029 登记）、.agent/FILE_LOCKS.md（TASK-028 释放 + TASK-029 锁）。
+- **`src/core/process-runner.ts`**：`LoggedRunOptions` 移除 `skipSelfEvolution` 字段。
 
-- **/code-review 双轴（已完结）**：Standards 0 硬违规、3 判断性气味（progressOf/summaryOf 重复终态判定、四文档数组重复、CLI 直取 operationManager 而非 orchestrate seam）→ 已修复重复判定（抽 `isDone`）；CLI seam 系计划明确指定、保留。Spec 2 轻微缺陷 → 已修复：① 只读探针（planning/review/decompose）加 `skipSelfEvolution:true`，规划门违规改动不再被 commitSelfEvolution 当作合法 `evolve:` 提交（+回归测试）；② knowledgeWrite 加 gitStatusShort 变更守卫，内容相同不再产生空 `evolve:` 提交。
+- **`src/core/operation-manager.ts`**：`OperationDto`/`OperationEvent` 移除 `summary?: string`；execute 的 emit 包装删掉 `dto.summary` 同步行。
+
+- **`src/cli-program.ts`**：删除 `plan` 命令组 + `chief` 命令组 + `plan run`/`chief run` 的 `\r` 进度订阅；`web` 命令删 `--mcp` 选项。
+
+- **`src/web/server.ts`**：删 `enableMcp`/`mcpToken` 选项、`mcpAuthorized`、`POST/GET /mcp` 路由 + onClose、task-plans 路由 + chief-run 路由。
+
+- **`src/web/start.ts`**：删 `enableMcp`/`mcpToken` 透传与 token 生成；返回改 `{ server, origin, url }`。
+
+- **`package.json`**：移除 `@modelcontextprotocol/sdk` 依赖（已 `npm install` 清理 71 个包）。
+
+- **Web 前端**：`api.ts` 删 `summary` + TaskItem/TaskPlan 类型与 plan/chief 方法；`AgentDetailPage.tsx` 删 TodoTab/ChiefPipelineTab/PlanActionButtons/useTaskPlansPolling/TaskItemCard；`OperationsDrawer.tsx` 删 summary 展示；`styles.css` 删 `.operation-summary`。
+
+- **测试裁剪**：`self-evolution.test.ts`（删跳过规划门 + skipSelfEvolution 用例，保留 3 核心）、`web-ui.test.tsx`（删 plan/chief 约 9 用例）、`web-server.test.ts`（删 2 plan 用例，chat 用 `application.operationManager.wait` 替换去掉的 `waitOperation`）、`cli-structure.test.ts`（删 plan/chief 组断言）。
+
+- **文档**：`docs/DECISIONS.md` D-027 ADR + 改写 D-026（只留自我进化半）+ 标记 D-017/D-018/D-021/D-022/D-023/D-024 废弃；`docs/ARCHITECTURE.md` 删 Chief/Todo/MCP + D-026 派发进度半；`README.md` 删进度行 + roadmap；`docs/GLOSSARY.md` 删 Chief/编排/计划确认门/MCP/静态 bearer。
+
+- **/code-review 双轴（已完结）**：Standards 0 硬违规、1 判断性气味（`git.ts` 遗留死导出 `gitDiff`/`snapshotWorkspaceHash`，唯一消费者为已删编排 helper）→ 已删除两函数 + 私有 helper（collectFiles/WorkspaceFile/isIgnoredTemp）+ 不再需要的 path/createHash/fs-extra import + 对应 3 个测试用例；`AgentRole`/role 保留系 D-027 明确记录的 deliberate forward-compat（判断性，保留）。Spec 0 缺陷、0 越删；cosmetic 修复：`web-server.test.ts` 描述块由「Web orchestration write surface (D-024)」改名「Web chat operation」（D-024 编排写面已删，仅剩对话测试）。
 
 ## 验证
 
-| 命令/检查                                     | 结果   | 相关输出                                                       |
-| --------------------------------------------- | ------ | -------------------------------------------------------------- |
-| `npx tsc --noEmit`                            | 通过   | 全绿                                                           |
-| `npm run lint`（eslint+prettier）             | 通过   | 全绿                                                           |
-| `npm test`                                    | 343 过 | 44 文件全绿（+5 self-evolution +3 orchestration）              |
-| `npx vitest run tests/self-evolution.test.ts` | 5 过   | 提交/skipSelfEvolution 不提交/规划门不豁免/幂等/knowledge 提交 |
-| `/code-review`                                | 完成   | Standards 0 硬违规 / Spec 缺陷已修复                           |
+| 命令/检查                                                                                                                                                                                                                              | 结果   | 相关输出                                                    |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ----------------------------------------------------------- |
+| `npx tsc --noEmit`（tsconfig.json + tsconfig.web.json）                                                                                                                                                                                | 通过   | 全绿                                                        |
+| `npm run lint`（eslint+prettier）                                                                                                                                                                                                      | 通过   | 全绿                                                        |
+| `npm test`                                                                                                                                                                                                                             | 272 过 | 40 文件全绿（自 343 降至 272，含 review 删除 3 死导出测试） |
+| 孤儿引用 grep（task-schema/task-store/createTaskPlan/runTaskPlan/summaryOf/progressOf/skipSelfEvolution/createMcpEndpoint/enableMcp/mcpToken/@modelcontextprotocol/chief-run/orchestrate/waitOperation/gitDiff/snapshotWorkspaceHash） | 无残留 | 保留 `chief` 仅 role 字段/--role 选项/角色传播测试，均合法  |
+| `/code-review`                                                                                                                                                                                                                         | 完成   | Standards 0 硬违规 / Spec 0 缺陷；修复已应用并复验          |
 
 ## 安全边界与限制
 
-- **单文件 git 提交**：`commitAgentFile`/`commitSelfEvolution`/`knowledgeWrite` 均只 `git add -- <relPath>`，绝不用 `add -A`。
-- **best-effort**：缺 git 身份或提交抛错仅 console.warn，不阻断 runAgent/runChat/runJob 主流程。
-- **规划门不豁免 agent/\*.md**：规划阶段改 `agent/*.md` 与改任意文件一样判违规→任务失败（用户拍板）。
-- **员工不可扩大自身权限**：claude 侧引导明确「不可改 `.claude/settings.json`」。
-- **config_hash 只含 runtime 块**：员工改 `agent/*.md` 不触发漂移。
-- **只读探针不提交自我进化**：仅 real runAgent/runChat/runJob 触发 commitSelfEvolution；planning/review/decompose 探针（skipSelfEvolution:true）不提交，规划门违规改动保持 dirty 暴露。
-- 已提交 Phase 1（df9a7a6）、Phase 2（57c1fe4）、review 修复（待提交）；未 push，按用户常驻规则等待明确要求。
+- **共享基础设施原样保留**：OperationManager/OperationStore/OperationDto/OperationEvent、runAgent/runChat/runJob、commitSelfEvolution/prepareRuntime、knowledge/skills/backup/trash/prune/doctor、Web「任务」tab（= 定时 Job）、AgentRole/role 字段（前向兼容）均未删。
+- **单文件 git 提交**：自我进化提交仍只 `git add -- <relPath>`，绝不用 `add -A`。
+- **MCP 依赖已彻底移除**：`@modelcontextprotocol/sdk` 从 package.json + lockfile 清除，无残留导入。
+- 未 push，按用户常驻规则等待明确要求。

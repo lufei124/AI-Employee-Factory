@@ -16,7 +16,6 @@ import { jobConfigSchema } from '../schemas/job-schema.js';
 import type { SkillScope } from '../core/skills.js';
 import { OperationManager } from '../core/operation-manager.js';
 import { OperationStore } from '../core/operation-store.js';
-import { createMcpEndpoint } from '../mcp/mcp-server.js';
 
 const skillScopeSchema = z.enum(['project', 'user']);
 
@@ -25,10 +24,6 @@ export interface BuildWebServerOptions {
   bootstrapToken: string;
   operationManager?: OperationManager;
   publicDir?: string;
-  // T11（D-018）：启用 MCP Streamable HTTP 端点（POST/GET /mcp），静态 bearer 认证。
-  // mcpToken 随服务启动生成并打印；无/错 token 的 /mcp 请求被 401 拒绝。
-  enableMcp?: boolean;
-  mcpToken?: string;
 }
 
 interface SessionState {
@@ -90,15 +85,6 @@ function authenticated(request: FastifyRequest, state: SessionState): boolean {
   return Boolean(cookieValue && state.sessionToken && secureEqual(cookieValue, state.sessionToken));
 }
 
-// T11（D-018）：MCP 静态 bearer 认证。请求须带 `Authorization: Bearer <token>`，
-// 与启动时生成的 mcpToken 恒定时间比较；缺失/错误 → 401。
-function mcpAuthorized(request: FastifyRequest, token: string): boolean {
-  const header = request.headers.authorization;
-  if (!header || typeof header !== 'string') return false;
-  const match = /^Bearer\s+(.+)$/i.exec(header);
-  return Boolean(match?.[1] && secureEqual(match[1], token));
-}
-
 export function buildWebServer(options: BuildWebServerOptions): FastifyInstance {
   const server = Fastify({
     logger: false,
@@ -112,11 +98,6 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
   const operations =
     options.operationManager ??
     new OperationManager({ store: new OperationStore(options.application.paths.logsDir) });
-  // T11（D-018）：MCP 端点共享进程生命周期。启用时生成/取用静态 bearer token，挂 POST/GET /mcp。
-  const mcpToken = options.enableMcp
-    ? (options.mcpToken ?? randomBytes(32).toString('base64url'))
-    : undefined;
-  const mcp = options.enableMcp ? createMcpEndpoint(options.application) : undefined;
   void server.register(cookie);
   void server.register(multipart, {
     preservePath: true,
@@ -133,8 +114,6 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
 
   server.addHook('onClose', async () => {
     operations.cancelAll();
-    // T11：MCP 端点随进程关闭，避免 SSE 连接悬空。
-    await mcp?.transport.close().catch(() => undefined);
   });
 
   server.addHook('onSend', async (request, reply, payload) => {
@@ -219,20 +198,6 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
   server.get('/api/v1/session', async () => ({
     data: { csrfToken: state.csrfToken as string },
   }));
-
-  // T11（D-018）：MCP Streamable HTTP 端点。POST=JSON-RPC，GET=SSE。静态 bearer 认证，
-  // 复用全局 onRequest 的 127.0.0.1 校验；非 /api/v1/* 天然绕过 CSRF/会话校验，由本处独立把关。
-  if (mcp && mcpToken) {
-    const mcpHandler = async (request: FastifyRequest, reply: FastifyReply) => {
-      if (!mcpAuthorized(request, mcpToken)) {
-        return apiError(reply, 401, 'AUTH_REQUIRED', 'MCP 请求缺少或携带无效的 bearer token。');
-      }
-      await mcp.handle(request, reply);
-      return reply;
-    };
-    server.post('/mcp', mcpHandler);
-    server.get('/mcp', mcpHandler);
-  }
 
   server.get('/api/v1/factory/status', async () => ({
     data: await options.application.factoryStatus(),
@@ -628,135 +593,6 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
       const query = request.query.q?.trim() ?? '';
       if (!query) throw new AgentCtlError('VALIDATION_ERROR', '缺少查询参数 q。');
       return { data: await options.application.knowledgeRecall(request.params.id, query) };
-    },
-  );
-
-  // Web Todo 视图（spec-chief-todo-mcp issue 07）：计划列表 + 计划级确认/驳回门 + 审查门人工合并/驳回。
-  server.get<{ Params: { id: string } }>('/api/v1/agents/:id/task-plans', async (request) => ({
-    data: await options.application.listTaskPlans(request.params.id),
-  }));
-
-  server.get<{ Params: { id: string; planId: string } }>(
-    '/api/v1/agents/:id/task-plans/:planId',
-    async (request) => ({
-      data: await options.application.getTaskPlan(request.params.id, request.params.planId),
-    }),
-  );
-
-  server.post<{ Params: { id: string; planId: string } }>(
-    '/api/v1/agents/:id/task-plans/:planId/actions/confirm',
-    async (request) => ({
-      data: await options.application.confirmPlan(request.params.id, request.params.planId),
-    }),
-  );
-
-  server.post<{ Params: { id: string; planId: string } }>(
-    '/api/v1/agents/:id/task-plans/:planId/actions/reject',
-    async (request) => {
-      const body = z.object({ note: z.string().optional() }).parse(request.body);
-      return {
-        data: await options.application.rejectPlan(
-          request.params.id,
-          request.params.planId,
-          body.note,
-        ),
-      };
-    },
-  );
-
-  server.post<{ Params: { id: string; planId: string; itemId: string } }>(
-    '/api/v1/agents/:id/task-plans/:planId/items/:itemId/actions/confirm-review',
-    async (request) => ({
-      data: await options.application.confirmReview(
-        request.params.id,
-        request.params.planId,
-        request.params.itemId,
-      ),
-    }),
-  );
-
-  server.post<{ Params: { id: string; planId: string; itemId: string } }>(
-    '/api/v1/agents/:id/task-plans/:planId/items/:itemId/actions/reject-review',
-    async (request) => {
-      const body = z.object({ note: z.string().optional() }).parse(request.body);
-      return {
-        data: await options.application.rejectReview(
-          request.params.id,
-          request.params.planId,
-          request.params.itemId,
-          body.note,
-        ),
-      };
-    },
-  );
-
-  // TASK-027（D-024）：Web 编排写面——建计划/加任务项/派发/Chief 发起/对话。
-  // 全部走既有 operations.start 后台 Operation 模式（202 + OperationDto，前端轮询 events）。
-  server.post<{ Params: { id: string } }>('/api/v1/agents/:id/task-plans', async (request) => {
-    const body = z
-      .object({ planId: z.string().min(1), name: z.string().min(1) })
-      .parse(request.body);
-    return {
-      data: await options.application.createTaskPlan(request.params.id, {
-        id: body.planId,
-        name: body.name,
-      }),
-    };
-  });
-
-  server.post<{ Params: { id: string; planId: string } }>(
-    '/api/v1/agents/:id/task-plans/:planId/items',
-    async (request) => {
-      const body = z
-        .object({
-          id: z.string().min(1),
-          title: z.string().min(1),
-          agent: z.string().min(1),
-          prompt: z.string().min(1),
-          dependencies: z.array(z.string()).optional(),
-        })
-        .parse(request.body);
-      return {
-        data: await options.application.addTaskItem(request.params.id, request.params.planId, {
-          id: body.id,
-          title: body.title,
-          agent: body.agent,
-          prompt: body.prompt,
-          ...(body.dependencies ? { dependencies: body.dependencies } : {}),
-        }),
-      };
-    },
-  );
-
-  server.post<{ Params: { id: string; planId: string } }>(
-    '/api/v1/agents/:id/task-plans/:planId/actions/run',
-    async (request, reply) => {
-      const body = z
-        .object({ concurrency: z.number().int().min(1).max(8).optional() })
-        .parse(request.body ?? {});
-      const operation = await options.application.runTaskPlan(
-        request.params.id,
-        request.params.planId,
-        { ...(body.concurrency ? { concurrency: body.concurrency } : {}) },
-      );
-      reply.code(202);
-      return { data: operation };
-    },
-  );
-
-  // Chief 发起：goal 在后台 Operation 中拆解（planWithChief 阻塞几十秒），返回 202 + OperationDto，
-  // 前端轮询 operations events 后刷新计划列表。
-  server.post<{ Params: { id: string } }>(
-    '/api/v1/agents/:id/actions/chief-run',
-    async (request, reply) => {
-      const body = z
-        .object({ goal: z.string().min(1), concurrency: z.number().int().min(1).max(8).optional() })
-        .parse(request.body);
-      const operation = await options.application.startPlanWithChief(request.params.id, body.goal, {
-        ...(body.concurrency ? { concurrency: body.concurrency } : {}),
-      });
-      reply.code(202);
-      return { data: operation };
     },
   );
 

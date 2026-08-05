@@ -149,6 +149,8 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 
 ## D-017：Chief 交叉审查用编排器单向搬运，不放开 D-003
 
+> **⚠️ 已废弃（D-027）**：Chief 编排与 Todo 状态机已整体移除，本决策不再适用。
+
 - 状态：Accepted（grilling 待实施）
 - 日期：2026-08-05
 - 决定：Todo/Chief 的「等待审查」态由 Chief 交叉审查，但 Chief **不直接读写任一 worker 的 workspace**。Node 编排器读 worker 的 `diff.patch`（受控工件）+ `logs/<workerId>/runs/<slug>/stdout.log`，经 `redactSecrets` 脱敏后拼进 Chief 的 REVIEW_PROMPT，Chief 返回评审结论。编排器单向搬运文本，Chief 自始至终零 worker 文件系统访问。
@@ -157,6 +159,8 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 
 ## D-018：MCP 认证——MVP 用静态 bearer，OAuth AS 自建降级为后续阶段
 
+> **⚠️ 已废弃（D-027）**：MCP 接入已整体移除，本决策不再适用。
+
 - 状态：Accepted（已实施，T11）
 - 日期：2026-08-05
 - 决定：MCP 接入挂到现有 Fastify `POST/GET /mcp`，MVP 认证用**静态 bearer token**（随 `startWebConsole` 生成并打印，客户端用 `Authorization: Bearer <token>` 连接）。实现采用 `@modelcontextprotocol/sdk@^1.30.0` 的 `StreamableHTTPServerTransport`，经 `request.raw`/`reply.raw` 直接接到既有 Fastify 实例（共享进程生命周期）；认证为手写 `mcpAuthorized`（`Bearer` 正则 + `crypto.timingSafeEqual` 恒定时间比较）；loopback 边界复用既有全局 `onRequest` 的 127.0.0.1 校验。自建 OAuth Authorization Server（token 签发 + DCR + 授权码/设备流程）降级为后续阶段。
@@ -164,6 +168,8 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 - 原因：用户最初倾向「OAuth 2.1 为主」，但经逐包核实，`@modelcontextprotocol/server@2.0.0` 只提供 **Resource Server（token 校验）侧**（`OAuthTokenVerifier` 接口、`verifyBearerToken`、RFC 9728 metadata），**不含 Authorization Server**——无 token 签发、无 DCR、无授权码流程，且 `@modelcontextprotocol/oauth` 包不存在（404）。「OAuth 为主」意味着从零自建 AS，远超 MCP 最小切片。Static bearer 是 MCP 三端（Claude Code/Cursor/VS Code）共同支持的最低公分母，先把能力接通。实现时另核实 `@modelcontextprotocol/fastify@2.0.0` 的 `createMcpFastifyApp` 会自建独立 Fastify 实例（无法挂进既有 /api/v1 控制台），且 `@modelcontextprotocol/server` 的 bearer 校验叠加非必要 OAuth 依赖链，故以 `@modelcontextprotocol/sdk` 的 StreamableHTTP transport + 手写恒定时间 bearer 落地（D-018 决定行据此于实施期修订）。OAuth AS 留作独立后续阶段。
 
 ## D-021：MCP 工具集——读 + 编排写，单一应用 seam，JSON 主路径响应
+
+> **⚠️ 已废弃（D-027）**：MCP 接入已整体移除，本决策不再适用。
 
 - 状态：Accepted（已实施，T12/T13）
 - 日期：2026-08-05
@@ -174,6 +180,8 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 
 ## D-022：Web Todo 视图渲染审查结论，不持久化原始 diff
 
+> **⚠️ 已废弃（D-027）**：Web Todo 视图随 Chief 编排/Todo 移除，本决策不再适用。
+
 - 状态：Accepted（已实施，issue 07）
 - 日期：2026-08-05
 - 决定：Web 员工详情页「Todo」标签渲染**已存储的审查结论** `item.review { verdict, note }`（verdict 本地化为已通过/已驳回），**不展示原始 diff**。原因：按 D-017，`reviewTaskPlan` 由编排器从 worker workspace **实时读取** `diff.patch` 与运行日志、脱敏后喂 Chief，原始 diff **不写回计划文件**——计划文件只持久化 Chief 返回的结构化 verdict+note。因此 Web 无从读取 diff（它只读计划文件），展示 verdict+note 是唯一不新增网面的选择。
@@ -181,6 +189,8 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 - 原因：避免 scope creep（派发是 CLI 范畴）与避免为展示 diff 而放开隔离语义/新增读面；保持 Web 只读 + 两种闸门（计划级确认/驳回、审查级合并/驳回）的最小网面。
 
 ## D-024：Web 编排写面开放——创建/派发/Chief 发起/单轮对话，全部后台 Operation
+
+> **⚠️ 已废弃（D-027）**：Web 编排写面（建计划/加任务项/派发/Chief 发起）随 Chief 编排/Todo 移除；「单轮对话」部分保留（`/actions/chat`，D-024 的对话语义不变）。
 
 - 状态：Accepted（已实施，TASK-027）
 - 日期：2026-08-05
@@ -193,6 +203,8 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 - 原因：用户要求「相关功能可以在 Web 使用、以及与 agent 对话生效」。后端编排方法全齐（MCP 写工具已直连，D-021），Web 只缺写端点与按钮；运行时本就支持非交互单轮（`claude -p`/`codex exec`），无新 adapter 面。飞书入站是全新网络面 + 安全评审，超本任务范围。
 
 ## D-023：Chief Web 编排流水线视图——派生状态，不新增写面
+
+> **⚠️ 已废弃（D-027）**：Chief 编排视图随 Chief 编排/Todo 移除，本决策不再适用。
 
 - 状态：Accepted（已实施，issue 10）
 - 日期：2026-08-05
@@ -214,19 +226,18 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 - 边界：状态更新不落 `saveDocument` Web 通道（事件路径走同构的直接调用 + git 提交）；不加锁（与 Web 人类保存独立，atomic 替换防损坏）；员工运行中系统并发写入靠标记块边界隔离。任务完成/对话不自动写状态。
 - 原因：员工详情状态文档与实际情况脱节（登录/授权/启停/归档后仍显示「已创建」）；系统侧生命周期事件产生结构化信号但无写入通道；员工（AI）子进程跑在工作区、天然能编辑文件，缺的只是引导指令与权限。
 
-## D-026：派发进度可观测 + 员工自我进化
+## D-026：员工自我进化——岗位/目标/工作系统/规则 + knowledge 自动提交
 
 - 状态：Accepted（已实施，TASK-029）
 - 日期：2026-08-05
-- 背景：① 任务派发（`runTaskPlan`）时 planning/developing 各跑一次 `runAgent`（数分钟），期间零进度事件，CLI/Web 只看到 `queued→running→succeeded`，用户「很久也没反馈」；② 员工是 Claude/Codex 子进程，可编辑工作区文件，但只有 `CURRENT_STATE.md` 被放行且自动提交，岗位/目标/工作系统/规则文档既无修改引导、也无权限放行、改动了也不自动提交。
+- 背景：员工是 Claude/Codex 子进程，可编辑工作区文件，但只有 `CURRENT_STATE.md` 被放行且自动提交，岗位/目标/工作系统/规则文档既无修改引导、也无权限放行、改动了也不自动提交；员工的学习成果没有持久化通道，每次执行都从默认文档重新开始，无法积累。
 - 决定：
-  - **派发进度反馈（A+C）**：`dispatchItem` 各阶段推 progress 事件（规划中/规划完成/规划失败/执行中/执行完成/执行失败，带 `[itemId]「title」` 前缀）；`OperationDto` 新增 `summary` 字段，`dispatchPlan` 波形与 `dispatchItem` 阶段事件都携带计划级聚合摘要（`N/M 完成 · 执行中 ids · 等待中 n`）。CLI `plan run`/`chief run` 订阅 Operation 事件打印 `\r` 进度行；Web 操作中心列表/详情展示 summary。
-  - **员工自我进化**：员工可在任务执行（developing）阶段更新 `agent/ROLE.md`（岗位）、`GOALS.md`（目标）、`OPERATING_SYSTEM.md`（工作系统）、`POLICIES.md`（规则）与 `knowledge/` 知识，让下次执行更准确。两个 ENTRY.md.tmpl 追加「自我进化」引导节（只在 developing 更新，规划阶段绝不动任何文件——否则脏审计判违规→任务失败；保持文件结构；变更记录到 CURRENT_STATE.md「工作进展」；不手动 git 提交）。
+  - **员工自我进化**：员工可在任务执行（developing）阶段更新 `agent/ROLE.md`（岗位）、`GOALS.md`（目标）、`OPERATING_SYSTEM.md`（工作系统）、`POLICIES.md`（规则）与 `knowledge/` 知识，让下次执行更准确。两个 ENTRY.md.tmpl 追加「自我进化」引导节（只在 developing 更新，保持文件结构；变更记录到 CURRENT_STATE.md「工作进展」；不手动 git 提交）。
   - **权限放行**：`ensureAgentDocsAllowed(workspace, relPaths)` 参数化复用 CURRENT_STATE 放行模式，为四份自维护文档生成 `Edit/Write` 规则幂等合并；`prepareRuntime` 调用放行（存量员工自动升级）。员工不可修改 `.claude/settings.json` 扩大自身权限。
   - **自动 git 提交**：`commitSelfEvolution` 在 `runAgent`/`runChat`/`runJob` 成功后检测四份文档变更并单文件提交（`evolve: 更新 <basename>`）；`knowledgeWrite`（含经验提取写回 `knowledge/lessons/`）提交 `evolve: 更新知识`。均 best-effort（缺 git 身份/抛错仅 console.warn 不阻断主流程），单文件提交绝不用 `add -A`。
-  - **规划门不豁免 agent/\*.md**：规划阶段改 `agent/*.md` 与改任意文件一样判违规（员工被引导只在 developing 改文档）。
 - 边界：`config_hash` 只含 runtime 块，员工改 `agent/*.md` 不触发漂移告警；Web 人工保存 `agent/*.md` 仍不自动提交（保持「Git 未提交」badge 语义）。
-- 原因：派发缺中间反馈致用户无法判断是否卡住；员工的学习成果没有持久化通道，每次执行都从默认文档重新开始，无法积累。
+- 原因：员工的学习成果没有持久化通道，每次执行都从默认文档重新开始，无法积累。
+- 注：本决策原含「派发进度可观测」半（`OperationDto.summary` + CLI 进度行），该半随 Chief 编排/Todo 移除而一并移除，见 D-027。
 
 - 状态：Accepted
 - 日期：2026-08-03
@@ -236,6 +247,20 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 - 选择原因：仓库是持久事实来源；簿记层让无聊天记录的 Agent 也能接手；文档体系让规则与代码不漂移。
 - 影响范围：项目根、`docs/`、`skills/`、`.agent/`、`.github/workflows/ci.yml`、`.gitignore`。
 - 后续注意：`.agent/` 必须提交到仓库；平台适配文件只指向 AGENTS.md，不复制规则。
+
+## D-027：移除 Chief 编排 / Todo 状态机 / MCP 接入
+
+- 状态：Accepted（已实施，TASK-030）
+- 日期：2026-08-05
+- 背景：用户经使用后明确判断「Chief 编排 + Todo 状态机 + MCP 接入都去掉，没啥用，不是我想要的东西」。这三块是此前按 spec-chief-orchestration / spec-chief-todo-mcp 逐步加进来的协作编排层，复杂且非目标。
+- 决定：
+  - **移除 Todo 状态机 + Chief 编排（合并）**：删除 `task-schema.ts`/`task-store.ts` 与全部 plan/编排方法（`createTaskPlan`/`runTaskPlan`/`orchestrate`/`reviewTaskPlan`/`planWithChief`/`waitOperation` 等）及私有辅助（派发/审查/拆解提示词、`parseReview`/`parseDecompose`、`isDone`/`progressOf`/`summaryOf`、`withPlanLock`）。`runAgent` 的 `commitSelfEvolution` 改无条件调用（去掉 `skipSelfEvolution` 守卫）。
+  - **移除 MCP 接入（整块）**：删除 `mcp-server.ts`、`POST/GET /mcp` 路由、`enableMcp`/`mcpToken` 选项、`web --mcp` 与 `@modelcontextprotocol/sdk` 依赖。
+  - **移除派发进度反馈（D-026 半，用户拍板一并移除）**：`OperationDto`/`OperationEvent` 去掉 `summary` 字段，CLI 进度行一并删除。
+  - **保留**：`OperationManager`/`OperationStore`/`OperationDto` 共享基础设施（run/chat/job/backup/doctor/restore 与 Web 操作中心依赖）；`runAgent`/`runChat`/`runJob`、`commitSelfEvolution`、knowledge/skills/backup/trash/prune/doctor、Web「任务」标签（= 定时 Job）。`AgentRole`/`role` 字段（worker/chief）保留 schema 位（前向兼容），不再有 Chief 编排/UI/CLI 特殊化。
+- 边界：只删上述三块及其直接依赖；共享基础设施原样保留。删除后 `OperationDto.summary` 无消费方。
+- 原因：用户明确判断这三块复杂且非目标；回退到「单一 AI 员工 + 定时 Job + 对话」的核心模型，聚焦用户真正想要的东西。
+- 影响：废弃 D-017、D-018、D-021、D-022、D-023、D-024（已标注）；D-026 改写为仅保留「员工自我进化」半。
 
 ---
 
