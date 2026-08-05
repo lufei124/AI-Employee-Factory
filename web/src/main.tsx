@@ -17,7 +17,7 @@ try {
   root.render(
     <main className="fatal-screen">
       <div>
-        <span>SESSION ERROR</span>
+        <span>会话异常</span>
         <h1>无法进入本地控制台</h1>
         <p>{error instanceof Error ? error.message : String(error)}</p>
         <p>

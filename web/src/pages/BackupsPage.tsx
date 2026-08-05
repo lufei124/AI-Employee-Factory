@@ -53,7 +53,7 @@ export function BackupsPage() {
     <div className="page-stack">
       <header className="page-heading">
         <div>
-          <p className="eyebrow">PORTABLE RECOVERY</p>
+          <p className="eyebrow">便携备份</p>
           <h1>备份与恢复</h1>
           <p>管理包含 Workspace、Git 和正式记忆的可迁移备份。</p>
         </div>

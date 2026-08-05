@@ -108,7 +108,7 @@ export function CreateAgentPage() {
         <div className="success-mark">
           <Check size={34} />
         </div>
-        <p className="eyebrow">READY FOR ONBOARDING</p>
+        <p className="eyebrow">准备就绪</p>
         <h1>员工创建完成</h1>
         <p>{created.id} 的基础目录已创建，但还需在本机终端完成下面的初始化步骤。</p>
         <div className="command-list">
@@ -157,7 +157,7 @@ export function CreateAgentPage() {
     <div className="wizard-layout">
       <header className="page-heading">
         <div>
-          <p className="eyebrow">EMPLOYEE BLUEPRINT</p>
+          <p className="eyebrow">员工蓝图</p>
           <h1>创建 AI 员工</h1>
           <p>用一句话描述员工用法，AI 生成可编辑蓝图；生成可迁移、可诊断且身份隔离的本地员工。</p>
         </div>

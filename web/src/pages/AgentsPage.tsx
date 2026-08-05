@@ -26,7 +26,7 @@ export function AgentsPage() {
     <div className="page-stack">
       <header className="page-heading">
         <div>
-          <p className="eyebrow">EMPLOYEE DIRECTORY</p>
+          <p className="eyebrow">员工目录</p>
           <h1>AI 员工</h1>
           <p>查看每位员工的隔离运行环境与生命周期状态。</p>
         </div>

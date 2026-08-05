@@ -216,7 +216,7 @@ export function SkillStorePage() {
     <div className="page-stack">
       <header className="page-heading store-heading">
         <div>
-          <p className="eyebrow">SKILL STORE</p>
+          <p className="eyebrow">技能市场</p>
           <h1>Skill 商店</h1>
           <p>浏览远端 GitHub 仓库源并安装技能，不影响已有安装方式。</p>
         </div>

@@ -42,7 +42,7 @@ export function DashboardPage() {
         <div className="welcome-icon">
           <Bot size={36} />
         </div>
-        <p className="eyebrow">LOCAL-FIRST AGENT OPERATIONS</p>
+        <p className="eyebrow">本地运营</p>
         <h1>欢迎来到 AI Employee Factory</h1>
         <p>先初始化本机控制面，然后通过向导创建第一个完全隔离的 AI 员工。</p>
         <button className="button primary" onClick={() => void initialize()} disabled={busy}>
@@ -62,8 +62,8 @@ export function DashboardPage() {
     <div className="page-stack">
       <header className="page-heading">
         <div>
-          <p className="eyebrow">CONTROL ROOM</p>
-          <h1>运行总览</h1>
+          <p className="eyebrow">运行总览</p>
+          <h1>本地控制面</h1>
           <p>集中查看员工健康度、授权状态与最近活动。</p>
         </div>
         <a className="button primary" href="#/create">
@@ -71,10 +71,10 @@ export function DashboardPage() {
         </a>
       </header>
       <section className="metric-grid">
-        {metrics.map(({ label, value, icon: Icon, tone }) => (
-          <article className="metric-card" key={label}>
+        {metrics.map(({ label, value, icon: Icon, tone }, i) => (
+          <article className={`metric-card ${i === 0 ? 'hero' : ''}`} key={label}>
             <div className={`metric-icon ${tone}`}>
-              <Icon size={20} />
+              <Icon size={i === 0 ? 26 : 20} />
             </div>
             <span>{label}</span>
             <strong>{value}</strong>

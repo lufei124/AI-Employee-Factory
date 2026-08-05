@@ -16,7 +16,7 @@ export function DoctorPage() {
     <div className="page-stack">
       <header className="page-heading">
         <div>
-          <p className="eyebrow">SYSTEM HEALTH</p>
+          <p className="eyebrow">系统健康</p>
           <h1>系统诊断</h1>
           <p>检查 Node、Registry、目录权限和本机工具能力，不做静默修改。</p>
         </div>
