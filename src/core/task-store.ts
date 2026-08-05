@@ -7,6 +7,7 @@ import { assertInside } from './paths.js';
 import { agentIdSchema } from '../schemas/agent-schema.js';
 import {
   canTransition,
+  taskItemSchema,
   taskPlanSchema,
   type TaskItem,
   type TaskItemState,
@@ -97,6 +98,114 @@ export class TaskStore {
     const archiveDir = path.join(this.plansDir, '.archive');
     await fs.ensureDir(archiveDir);
     await fs.move(file, path.join(archiveDir, `${id}-${Date.now()}.yaml`));
+  }
+
+  // 计划级状态转移表（confirm/reject/cancel 显式门控）。completed 只由 derivePlanStatus 派生，
+  // 不在此表内——避免「completed 可直接设置」破坏「完成态由任务项派生」的不变量。
+  static readonly PLAN_STATUS_TRANSITIONS: Record<
+    TaskPlan['status'],
+    readonly TaskPlan['status'][]
+  > = {
+    draft: ['active', 'cancelled'],
+    active: ['cancelled'],
+    completed: [],
+    cancelled: [],
+  };
+
+  // 往计划追加一个任务项（新项 status pending，时间戳由本方法补齐）。冲突 id 抛 CONFLICT。
+  async addItem(
+    planId: string,
+    input: {
+      id: string;
+      title: string;
+      agent: string;
+      prompt: string;
+      dependencies?: string[];
+    },
+  ): Promise<TaskPlan> {
+    const file = await this.fileFor(planId);
+    const current = taskPlanSchema.parse(YAML.parse(await fs.readFile(file, 'utf8')));
+    if (current.items.some((item) => item.id === input.id))
+      throw new AgentCtlError('CONFLICT', `任务项已存在：${input.id}`);
+    const now = new Date().toISOString();
+    const item: TaskItem = taskItemSchema.parse({
+      id: input.id,
+      title: input.title,
+      agent: input.agent,
+      prompt: input.prompt,
+      status: 'pending',
+      dependencies: input.dependencies ?? [],
+      created_at: now,
+      updated_at: now,
+      finished_at: null,
+    });
+    const next: TaskPlan = { ...current, items: [...current.items, item], updated_at: now };
+    await atomicWriteFile(file, YAML.stringify(next), 0o644);
+    return next;
+  }
+
+  // 编辑一个非终态任务项的可编辑字段（title/prompt/agent/dependencies/review/exit_code/artifact）。
+  // 不改变 status（状态转移走 transitionItem）；终态项拒绝编辑。审查门写 review 亦经此（item 停留 awaiting_review）。
+  async updateItem(
+    planId: string,
+    itemId: string,
+    patch: Partial<
+      Pick<
+        TaskItem,
+        'title' | 'prompt' | 'agent' | 'dependencies' | 'review' | 'exit_code' | 'artifact'
+      >
+    >,
+  ): Promise<TaskPlan> {
+    const file = await this.fileFor(planId);
+    const current = taskPlanSchema.parse(YAML.parse(await fs.readFile(file, 'utf8')));
+    const item = current.items.find((candidate) => candidate.id === itemId);
+    if (!item) throw new AgentCtlError('NOT_FOUND', `任务项不存在：${itemId}`);
+    if (['completed', 'failed', 'cancelled'].includes(item.status))
+      throw new AgentCtlError('CONFLICT', `任务项已终态（${item.status}），不可编辑。`);
+    const now = new Date().toISOString();
+    const nextItem: TaskItem = taskItemSchema.parse({
+      ...item,
+      ...(patch.title !== undefined ? { title: patch.title } : {}),
+      ...(patch.prompt !== undefined ? { prompt: patch.prompt } : {}),
+      ...(patch.agent !== undefined ? { agent: patch.agent } : {}),
+      ...(patch.dependencies !== undefined ? { dependencies: patch.dependencies } : {}),
+      ...(patch.review !== undefined ? { review: patch.review } : {}),
+      ...(patch.exit_code !== undefined ? { exit_code: patch.exit_code } : {}),
+      ...(patch.artifact !== undefined ? { artifact: patch.artifact } : {}),
+      updated_at: now,
+    });
+    const nextItems = current.items.map((candidate) =>
+      candidate.id === itemId ? nextItem : candidate,
+    );
+    const next: TaskPlan = { ...current, items: nextItems, updated_at: now };
+    await atomicWriteFile(file, YAML.stringify(next), 0o644);
+    return next;
+  }
+
+  // 显式计划级状态转移（draft→active 确认 / draft→cancelled 否决 / active→cancelled 取消）。
+  // 可选 note 记录驳回/取消反馈（写入计划级 note 字段）。
+  async setPlanStatus(
+    planId: string,
+    status: TaskPlan['status'],
+    note?: string,
+  ): Promise<TaskPlan> {
+    const file = await this.fileFor(planId);
+    const current = taskPlanSchema.parse(YAML.parse(await fs.readFile(file, 'utf8')));
+    if (!TaskStore.PLAN_STATUS_TRANSITIONS[current.status].includes(status)) {
+      throw new AgentCtlError(
+        'VALIDATION_ERROR',
+        `非法计划状态转移：${current.status} → ${status}。`,
+      );
+    }
+    const now = new Date().toISOString();
+    const next: TaskPlan = {
+      ...current,
+      status,
+      ...(note !== undefined ? { note } : {}),
+      updated_at: now,
+    };
+    await atomicWriteFile(file, YAML.stringify(next), 0o644);
+    return next;
   }
 
   // 重启后孤儿 reconcile：在途（planning/developing）任务项没有活着的父操作（编排器随进程

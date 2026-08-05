@@ -73,6 +73,8 @@ export const taskPlanSchema = z.object({
   creator: agentIdSchema,
   // 计划级状态：draft（草稿，未派发）/ active（已派发）/ completed / cancelled。
   status: z.enum(['draft', 'active', 'completed', 'cancelled']).default('draft'),
+  // 计划级驳回/取消反馈（rejectPlan 附带；可选，非终态门控）。
+  note: z.string().optional(),
   items: z.array(taskItemSchema),
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),

@@ -36,6 +36,7 @@
 | `.scratch/op5-c-migration.md`, `docs/DECISIONS.md`, `README.md` | TASK-020 | claude-20260803-01 | master | 阶段10 OP5-C 换机重授权成本（调研+文档） | 2026-08-04 20:47 +0800 | 2026-08-04 20:50 +0800 | RELEASED |
 | `src/schemas/registry-schema.ts`, `src/core/runtime.ts`, `src/application/factory-application.ts`, `src/cli-program.ts`, `src/core/doctor.ts`, `tests/runtime.test.ts`, `tests/registry.test.ts`, `tests/doctor.test.ts`, `tests/cli-structure.test.ts`, `docs/DECISIONS.md`, `README.md` | TASK-020 | claude-20260803-01 | master | 阶段11 OP5-D per-agent Provider 绑定（Registry 本机侧）+ sqlite3 CLI 读库 | 2026-08-04 21:00 +0800 | 2026-08-04 21:20 +0800 | RELEASED |
 | `src/core/paths.ts`, `docs/ARCHITECTURE.md`, `tests/paths.test.ts` | TASK-020 | claude-20260803-01 | master | 阶段12 OP5-E PathLayout 收敛 + 外置卷策略 | 2026-08-04 21:22 +0800 | 2026-08-04 21:30 +0800 | RELEASED |
+| `src/core/task-store.ts`, `src/application/factory-application.ts`, `src/cli-program.ts`, `tests/orchestration.test.ts`(新增), `tests/cli-structure.test.ts`, `.agent/TASK_BOARD.md`, `.agent/TASK_HANDOFF.md`, `.agent/FILE_LOCKS.md` | TASK-022 | claude-20260803-01 | main | Chief 编排核心闭环（spec-chief-orchestration 4 票） | 2026-08-05 12:13 +0800 | 2026-08-05 12:35 +0800 | RELEASED |
 合法状态：`ACTIVE`、`RELEASED`、`STALE`、`TAKEOVER_PENDING`。
 
 ## 心跳与陈旧判定

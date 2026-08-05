@@ -27,6 +27,24 @@ Coordinator: codex-20260803-01
 | TASK-019 | OP3-A 长期：移除 Registry runtime 块 + I-5 model 收紧 + migrate                                                                                  | claude-20260803-01 | DONE        | master (TASK-019 commit)           | registry-schema/registry/agents/runtime/bridge/job-runner/services/application/cli-program/doctor/web/create-agent/backup 与测试 + DECISIONS ADR                                                                                                                     | TASK-016、用户批准的三项设计决策(HARD config_hash/SOFT migrate/N+1 list)                                           | 2026-08-04 19:16 +0800 |
 | TASK-020 | 记忆系统剩余批次合并（OP2-F + CLI 结构化输出 + OP4-C + OP1 Stage B-E + OP5 A-E）                                                                 | claude-20260803-01 | IN_PROGRESS | master (TASK-020 commit(s))        | 12 阶段（extensions/backup/paths/agent-schema/process-runner/observability/operation-manager/knowledge/templates/transcript/experience/archival/service-adapter/factory-services/systemd-service/runtime/doctor/application/cli-program/web 与测试 + DECISIONS ADR） | TASK-019、用户批准的统一合并计划（12 阶段顺序依赖）                                                                | 2026-08-04 21:20 +0800 |
 | TASK-021 | Chief/Todo/MCP 骨架（前端票：T01 git 基础 + T02 结构化 result + T03 取消单操作 + T04 Todo 领域核心 + T08 Chief 角色 + T11 MCP 传输+静态 bearer） | claude-20260803-01 | DONE         | main (56bcef6)                     | git.ts/usage.ts/operation-manager/task-schema/task-store/agent-schema/registry-schema/create-agent/cli-program/factory-application/templates/mcp-server/web-server 与测试 + DECISIONS ADR                                                                            | 用户批准的多 Agent 协作骨架 spec（.scratch/spec-chief-todo-mcp.md）与 13 票计划（.scratch/chief-todo-mcp/issues/） | 2026-08-05 11:50 +0800 |
+| TASK-022 | Chief 编排核心闭环（spec-chief-orchestration 4 票：01 计划+派发 + 02 规划门脏审计 + 03 审查门单向搬运 + 04 拆解回落与 orchestrate） | claude-20260803-01 | DONE         | main (TASK-022 commit)             | task-store 扩展/factory-application 编排动作/cli-program plan+chief 命令组/orchestration.test.ts/cli-structure.test.ts + .agent 簿记 + docs/DECISIONS.md ADR(可选)                                                                                                  | 用户批准的 spec-chief-orchestration 与 4 票计划（.scratch/chief-orchestration/issues/） | 2026-08-05 12:35 +0800 |
+
+## TASK-022 详情
+
+```text
+Task ID: TASK-022
+Title: Chief 编排核心闭环（spec-chief-orchestration 4 票：01 计划+派发 + 02 规划门脏审计 + 03 审查门单向搬运 + 04 拆解回落与 orchestrate）
+Owner agent: claude-20260803-01
+Status: DONE
+Branch/worktree: main
+Allowed scope: task-store.ts(addItem/updateItem/setPlanStatus)/factory-application.ts(编排方法+计划锁)/cli-program.ts(plan 组+chief run)/tests(orchestration.test.ts+cli-structure.test.ts) + .agent 簿记
+Forbidden scope: 破坏既有隔离/D-003、编排器读 worker workspace 直连（守 D-017 单向搬运）、推送
+Dependencies: TASK-021（前端 6 票底座）、用户批准的 spec-chief-orchestration 与 4 票计划
+Expected output: 顶层一句话闭环——planWithChief 拆解回落 + runTaskPlan 波次派发（依赖阻塞/失败不阻塞/跳过已完成/并发可选）+ 规划门脏审计 + reviewTaskPlan 单向搬运审查 + confirm/reject 人工合并 + CLI plan 组与 chief run
+Acceptance criteria: npm run build + tsc 全绿；单测全绿（290/291，唯一失败为既有 date-sensitive experience.test.ts）；/code-review（Standards+Spec 双轴）通过；任务完成即 commit（不 push）。
+Started at: 2026-08-05 12:13 +0800
+Updated at: 2026-08-05 12:35 +0800
+```
 
 ## TASK-021 详情
 

@@ -1,6 +1,7 @@
 import fs from 'fs-extra';
 import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { execa } from 'execa';
 import YAML from 'yaml';
 import {
@@ -35,7 +36,17 @@ import { OperationStore, type OperationSummary } from '../core/operation-store.j
 import { PruneService, type PruneOptions, type PruneResult } from '../core/prune.js';
 import { TrashService, type TrashEntryDto, type TrashPreview } from '../core/trash.js';
 import { ProcessRunner, type LoggedRunOptions } from '../core/process-runner.js';
+import { redactSecrets } from '../core/secrets.js';
+import { TaskStore } from '../core/task-store.js';
+import {
+  gitDiff,
+  gitStatusShort,
+  snapshotWorkspaceHash,
+  type GitStatusEntry,
+} from '../core/git.js';
+import { parseStructuredResult } from '../core/usage.js';
 import type { TranscriptSummary } from '../core/transcript.js';
+import type { TaskItem, TaskPlan } from '../schemas/task-schema.js';
 import {
   buildRuntimeEnvironment,
   buildSafeBaseEnvironment,
@@ -102,9 +113,135 @@ function validateDocumentKey(value: string): AgentDocumentKey {
   return value as AgentDocumentKey;
 }
 
+// ===== Chief 编排核心闭环：提示词与结构化解析（纯函数，零 I/O）=====
+
+function planningPrompt(item: TaskItem): string {
+  return (
+    `你是任务「${item.title}」的规划阶段。请只用纯文本简述你计划如何完成该任务（步骤/产出）。\n` +
+    `严格约束：不要创建、修改或删除工作区任何文件（规划阶段只出计划）。\n` +
+    `任务提示词：\n${item.prompt}`
+  );
+}
+
+function reviewPrompt(plan: TaskPlan, item: TaskItem, diff: string, stdout: string): string {
+  return (
+    `你是主管 Chief。请对下列工人任务的开发产物做交叉审查（跨 worker 只读评审）。\n` +
+    `目标（计划）：${plan.name}\n` +
+    `任务：${item.title}\n` +
+    `任务提示词：${item.prompt}\n` +
+    `--- 工人工作区 git diff ---\n` +
+    `${diff || '（无变更）'}\n` +
+    `--- 工人输出 ---\n` +
+    `${stdout || '（无输出）'}\n` +
+    `请只输出纯 JSON（不要其它文字）：{"verdict":"approved"|"rejected","note":"一句话评审结论"}`
+  );
+}
+
+function decomposePrompt(goal: string, agentIds: string): string {
+  return (
+    `你是主管 Chief。请把下列目标拆解为若干可交给不同 AI 员工（worker）执行的任务。\n` +
+    `当前可用员工：${agentIds || '（未知，请用合理的 agent id 占位）'}\n` +
+    `目标：${goal}\n` +
+    `为每个任务指定执行员工 id（agent，须从可用员工中选）。数组中第 N 个任务（从 1 开始）的 id 固定为 "item-N"\n` +
+    `（如第 1 个是 "item-1"、第 2 个是 "item-2"），任务依赖用该 id 引用前面的任务。只输出纯 JSON 数组（不要其它文字）：\n` +
+    `[{"title":"任务标题","agent":"员工id","prompt":"给该员工的完整执行指令","dependencies":["item-N",...]（无依赖则省略）}]`
+  );
+}
+
+export interface DecomposedTask {
+  title: string;
+  agent: string;
+  prompt: string;
+  dependencies?: string[];
+}
+
+// 解析 Chief 拆解输出；任何结构不符即返回空数组（调用方回落可编辑空计划）。
+function parseDecompose(text: string | undefined): DecomposedTask[] {
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed)) return [];
+    const items: DecomposedTask[] = [];
+    for (const raw of parsed) {
+      if (
+        typeof raw?.title !== 'string' ||
+        typeof raw?.agent !== 'string' ||
+        typeof raw?.prompt !== 'string'
+      ) {
+        return [];
+      }
+      items.push({
+        title: raw.title,
+        agent: raw.agent,
+        prompt: raw.prompt,
+        dependencies: Array.isArray(raw.dependencies)
+          ? raw.dependencies.filter((dep: unknown): dep is string => typeof dep === 'string')
+          : [],
+      });
+    }
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+// 解析 Chief 评审输出；解析失败回落为「驳回待人工」。
+function parseReview(text: string | undefined): TaskItem['review'] {
+  if (!text) return { verdict: 'rejected', note: '评审输出解析失败（无输出），待人工确认。' };
+  try {
+    const parsed = JSON.parse(text) as { verdict?: unknown; note?: unknown };
+    if (parsed.verdict === 'approved' || parsed.verdict === 'rejected') {
+      return {
+        verdict: parsed.verdict,
+        note: typeof parsed.note === 'string' ? parsed.note : undefined,
+      };
+    }
+  } catch {
+    // fallthrough
+  }
+  return { verdict: 'rejected', note: '评审输出解析失败，待人工确认。' };
+}
+
+// gitStatusShort 前后比对（忽略顺序，按 path 排序后比较）。
+function gitStateEqual(a: GitStatusEntry[], b: GitStatusEntry[]): boolean {
+  const key = (entries: GitStatusEntry[]) =>
+    JSON.stringify([...entries].sort((x, y) => x.path.localeCompare(y.path)));
+  return key(a) === key(b);
+}
+
 export class FactoryApplication {
   // OP5-B：CC Switch 同步的 mtime 缓存（源 settings.json 未变则跳过重写，降低 spawn 延迟与无谓 I/O）。
   private readonly ccSwitchSyncCache: SyncCache = createSyncCache();
+  // 计划文件并发互斥：runTaskPlan 波次并发派发时，多个 dispatchItem 会对同一计划 YAML 做
+  // 读改写。若不加锁，丢失更新会把其它任务项的状态回滚（触发非法转移）。用 in-process
+  // promise 链按「计划文件路径」串行化对计划状态机的全部变更（worker 执行仍可各自并发）。
+  private readonly planLocks = new Map<string, Promise<unknown>>();
+
+  // 按计划路径串行执行 fn：前一个计划变更落定后才跑下一个，保证对同一 plan 文件的读改写原子。
+  // 成功/失败两路都释放 gate——否则 fn 抛错会让后续排队者永久挂起（死锁）。
+  private async withPlanLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.planLocks.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    void new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = prev.then(fn).then(
+      (value) => {
+        release();
+        return value;
+      },
+      (error) => {
+        release();
+        throw error;
+      },
+    );
+    this.planLocks.set(key, tail);
+    try {
+      return await tail;
+    } finally {
+      if (this.planLocks.get(key) === tail) this.planLocks.delete(key);
+    }
+  }
 
   constructor(
     readonly paths: FactoryPaths,
@@ -404,6 +541,331 @@ export class FactoryApplication {
         await this.maybeExtractExperience(id, agent, result.transcriptFile);
         return result;
       });
+  }
+
+  // ===== Chief 编排核心闭环（spec-chief-orchestration）=====
+  // 计划归属：计划文件存于「owner agent」的工作区 workspace/tasks/plans（编排时 owner=Chief）。
+  // 所有编排方法显式传 ownerId——runTaskPlan 派发 item.agent 到各 worker 自己的工作区执行。
+  // Cross-review 守 D-017：编排器读 worker 的受控产物（git diff + 计划目录内 result 文件），
+  // redactSecrets 脱敏后喂给 Chief；Chief 自始至终零 worker 文件系统访问。
+  // 唯一 seam = FactoryApplication（worker/Chief 跑真实 runAgent，测试注入 mock）。
+
+  private async plans(ownerId: string): Promise<TaskStore> {
+    const { registry } = await this.getAgent(ownerId);
+    return new TaskStore(registry.workspace.path);
+  }
+
+  async createTaskPlan(ownerId: string, input: { id: string; name: string }): Promise<TaskPlan> {
+    if (!input.id.trim() || !input.name.trim())
+      throw new AgentCtlError('VALIDATION_ERROR', '计划 id 与 name 不能为空。');
+    const now = new Date().toISOString();
+    return (await this.plans(ownerId)).create({
+      schema_version: 1,
+      id: input.id,
+      name: input.name,
+      creator: ownerId,
+      status: 'draft',
+      items: [],
+      created_at: now,
+      updated_at: now,
+    });
+  }
+
+  async listTaskPlans(ownerId: string): Promise<TaskPlan[]> {
+    return (await this.plans(ownerId)).list();
+  }
+
+  async getTaskPlan(ownerId: string, planId: string): Promise<TaskPlan> {
+    return (await this.plans(ownerId)).get(planId);
+  }
+
+  async addTaskItem(
+    ownerId: string,
+    planId: string,
+    input: {
+      id: string;
+      title: string;
+      agent: string;
+      prompt: string;
+      dependencies?: string[];
+    },
+  ): Promise<TaskPlan> {
+    if (!input.title.trim() || !input.prompt.trim())
+      throw new AgentCtlError('VALIDATION_ERROR', '任务标题与提示词不能为空。');
+    await this.getAgent(input.agent); // 校验执行员工存在
+    return (await this.plans(ownerId)).addItem(planId, input);
+  }
+
+  // 计划确认门：draft→active（可派发）。驳回→cancelled（draft→cancelled 否决，可附反馈 note）。
+  async confirmPlan(ownerId: string, planId: string): Promise<TaskPlan> {
+    return (await this.plans(ownerId)).setPlanStatus(planId, 'active');
+  }
+
+  async rejectPlan(ownerId: string, planId: string, note?: string): Promise<TaskPlan> {
+    return (await this.plans(ownerId)).setPlanStatus(planId, 'cancelled', note);
+  }
+
+  // 派发计划：串行（可选并发）、依赖阻塞、失败不阻塞同级、已成功跳过、终态项跳过。
+  // 每项依次 pending→queued→planning（规划门脏审计）→awaiting_confirmation（计划级已确认故自动推进）
+  // →developing（worker 实际执行）→awaiting_review / failed。deps 依赖仅 completed 才放行。
+  async runTaskPlan(
+    ownerId: string,
+    planId: string,
+    options: { concurrency?: number; timeoutSeconds?: number } = {},
+  ): Promise<TaskPlan> {
+    const concurrency = Math.max(1, Math.min(8, Math.floor(options.concurrency ?? 1)));
+    const timeout = options.timeoutSeconds ?? 900;
+    const store = await this.plans(ownerId);
+    // 重启恢复（user story 17）：编排器中断后遗留的 planning/developing 孤儿项标记失败，
+    // 避免父操作悬空欺骗 UI。runTaskPlan 是派发入口，重跑前先 reconcile 一次。
+    await store.reconcile();
+    let plan = await store.get(planId);
+    if (plan.status !== 'active')
+      throw new AgentCtlError(
+        'CONFLICT',
+        `计划未确认（当前 ${plan.status}），请先 confirm 后 run。`,
+      );
+    for (const item of plan.items) await this.getAgent(item.agent); // 校验全部执行员工存在
+
+    const runnable = (item: TaskItem) =>
+      item.status !== 'completed' &&
+      item.status !== 'awaiting_review' &&
+      item.status !== 'failed' &&
+      item.status !== 'cancelled';
+    const depsDone = (item: TaskItem) =>
+      item.dependencies.every((dep) => {
+        const depItem = plan.items.find((candidate) => candidate.id === dep);
+        return depItem?.status === 'completed';
+      });
+
+    // 波次调度：每波启动最多 concurrency 个「依赖已齐且未启动」的项，全部完成后进入下一波。
+    // dispatchItem 内部只用短锁串行化计划文件的状态机读改写，worker 执行阶段不加锁——故同波
+    // 内互不依赖的任务项可真正并发执行（--concurrency 生效）。
+    const started = new Set<string>();
+    for (;;) {
+      plan = await store.get(planId);
+      const wave = plan.items
+        .filter((item) => runnable(item) && depsDone(item) && !started.has(item.id))
+        .slice(0, concurrency);
+      if (wave.length === 0) break; // 无可启动项（全部结束或被失败依赖阻塞）
+      for (const item of wave) started.add(item.id);
+      await Promise.all(wave.map((item) => this.dispatchItem(store, planId, item.id, timeout)));
+    }
+    return store.get(planId);
+  }
+
+  // 派发单任务项：推进状态 + 规划门脏审计 + worker 执行。可安全续跑（处理 pending/queued/planning/
+  // awaiting_confirmation/developing 各态），供重跑时跳过已完成的项。
+  // 并发正确性：仅「计划文件状态机读改写」用 withPlanLock 短锁串行化；worker 执行（planning/
+  // developing 的 runAgent）在锁外运行，故同波互不依赖的任务可真正并行。
+  private async dispatchItem(
+    store: TaskStore,
+    planId: string,
+    itemId: string,
+    timeoutSeconds: number,
+  ): Promise<void> {
+    const operationId = randomUUID();
+    const traceId = randomUUID();
+    const lockKey = `${store.plansDir}/${planId}`;
+
+    // 阶段 1（锁内）：pending→queued→planning，返回该 item 推进后的状态。
+    let status = await this.withPlanLock(lockKey, async () => {
+      let plan = await store.get(planId);
+      let item = this.findItem(plan, itemId);
+      if (item.status === 'pending') {
+        plan = await store.transitionItem(planId, itemId, 'queued');
+        item = this.findItem(plan, itemId);
+      }
+      if (item.status === 'queued') {
+        plan = await store.transitionItem(planId, itemId, 'planning');
+        item = this.findItem(plan, itemId);
+      }
+      return item.status; // planning | awaiting_confirmation | developing（重跑）
+    });
+
+    // 规划门脏审计（T02）：仅本次进入 planning 才做。worker 被指示「只出计划不改文件」，
+    // 前后快照硬兜底——违背只读指示则 planning→failed。
+    if (status === 'planning') {
+      const item = this.findItem(await store.get(planId), itemId);
+      const { registry } = await this.getAgent(item.agent);
+      const workspace = registry.workspace.path;
+      const beforeHash = await snapshotWorkspaceHash(workspace);
+      const beforeGit = await gitStatusShort(workspace);
+      const planning = await this.runAgent(item.agent, planningPrompt(item), timeoutSeconds, {
+        operationId,
+        traceId,
+      });
+      const afterHash = await snapshotWorkspaceHash(workspace);
+      const afterGit = await gitStatusShort(workspace);
+      const dirty =
+        planning.exitCode !== 0 || beforeHash !== afterHash || !gitStateEqual(beforeGit, afterGit);
+      // 阶段 2（锁内）：提交规划结果——脏/失败→failed；干净→awaiting_confirmation→developing。
+      status = await this.withPlanLock(lockKey, async () => {
+        if (dirty) {
+          await store.transitionItem(planId, itemId, 'failed', {
+            exit_code: planning.exitCode,
+            review: { verdict: 'rejected', note: '规划阶段违背只读指示（脏审计）或规划失败。' },
+          });
+          return 'failed';
+        }
+        await store.transitionItem(planId, itemId, 'awaiting_confirmation');
+        await store.transitionItem(planId, itemId, 'developing');
+        return 'developing';
+      });
+    }
+
+    if (status === 'failed') return;
+    if (status === 'awaiting_confirmation') {
+      // 重跑：计划级确认门已在 confirmPlan 完成，故 item 级 awaiting_confirmation 自动推进到 developing。
+      status = await this.withPlanLock(lockKey, async () => {
+        const item = this.findItem(await store.get(planId), itemId);
+        if (item.status === 'awaiting_confirmation') {
+          await store.transitionItem(planId, itemId, 'developing');
+          return 'developing';
+        }
+        return item.status;
+      });
+    }
+
+    // 阶段 3（锁外）：worker 实际执行（并发窗口）。此刻 item.status === 'developing'。
+    const item = this.findItem(await store.get(planId), itemId);
+    const dev = await this.runAgent(item.agent, item.prompt, timeoutSeconds, {
+      operationId,
+      traceId,
+    });
+
+    // 阶段 4（锁内）：提交执行结果——成功后记录 worker stdout（供审查门单向搬运）→awaiting_review。
+    await this.withPlanLock(lockKey, async () => {
+      if (this.findItem(await store.get(planId), itemId).status !== 'developing') return;
+      if (dev.exitCode === 0) {
+        // worker 工作区保持只读给编排器；stdout 记到计划目录供审查门读取。
+        const resultFile = path.join(store.plansDir, planId, `${itemId}.result`);
+        await fs.ensureDir(path.dirname(resultFile));
+        await fs.writeFile(resultFile, await fs.readFile(dev.stdoutFile, 'utf8').catch(() => ''), {
+          mode: 0o600,
+        });
+        await store.transitionItem(planId, itemId, 'awaiting_review', { exit_code: 0 });
+      } else {
+        await store.transitionItem(planId, itemId, 'failed', { exit_code: dev.exitCode });
+      }
+    });
+  }
+
+  // 从计划中取任务项助手；缺失抛 NOT_FOUND（替代散落的 `!` 非空断言）。
+  private findItem(plan: TaskPlan, itemId: string): TaskItem {
+    const item = plan.items.find((candidate) => candidate.id === itemId);
+    if (!item) throw new AgentCtlError('NOT_FOUND', `任务项不存在：${itemId}`);
+    return item;
+  }
+
+  // 审查门（D-017 单向搬运）：对 awaiting_review 项读 worker 的 git diff + result 文件，脱敏后喂 Chief
+  // 取回结构化 verdict+note，写入 item.review（item 停留 awaiting_review 待人工确认合并）。
+  async reviewTaskPlan(ownerId: string, chiefId: string, planId: string): Promise<TaskPlan> {
+    const store = await this.plans(ownerId);
+    let plan = await store.get(planId);
+    const { agent: chiefAgent } = await this.getAgent(chiefId);
+    const awaiting = plan.items.filter((item) => item.status === 'awaiting_review');
+    for (const item of awaiting) {
+      const { registry } = await this.getAgent(item.agent);
+      const diff = redactSecrets(await gitDiff(registry.workspace.path));
+      const stdout = redactSecrets(
+        await fs
+          .readFile(path.join(store.plansDir, planId, `${item.id}.result`), 'utf8')
+          .catch(() => ''),
+      );
+      const result = await this.runAgent(chiefId, reviewPrompt(plan, item, diff, stdout), 900, {
+        operationId: randomUUID(),
+        traceId: randomUUID(),
+      });
+      const text = parseStructuredResult(
+        chiefAgent.runtime.provider,
+        await fs.readFile(result.stdoutFile, 'utf8').catch(() => ''),
+      );
+      await store.updateItem(planId, item.id, { review: parseReview(text) });
+    }
+    return store.get(planId);
+  }
+
+  // 审查门人工合并：确认合并→completed；驳回→developing（返工，可附 note）。
+  async confirmReview(ownerId: string, planId: string, itemId: string): Promise<TaskPlan> {
+    return (await this.plans(ownerId)).transitionItem(planId, itemId, 'completed');
+  }
+
+  async rejectReview(
+    ownerId: string,
+    planId: string,
+    itemId: string,
+    note?: string,
+  ): Promise<TaskPlan> {
+    const store = await this.plans(ownerId);
+    let plan = await store.transitionItem(planId, itemId, 'developing');
+    if (note) {
+      plan = await store.updateItem(planId, itemId, { review: { verdict: 'rejected', note } });
+    }
+    return plan;
+  }
+
+  // Chief 拆解：跑 Chief 读取目标产出结构化任务列表。解析失败回落为可编辑空计划（不抛错）。
+  async planWithChief(
+    chiefId: string,
+    goal: string,
+  ): Promise<{ plan: TaskPlan; source: 'chief' | 'manual-fallback' }> {
+    if (!goal.trim()) throw new AgentCtlError('VALIDATION_ERROR', '目标不能为空。');
+    const planId = `plan-${randomUUID().slice(0, 8)}`;
+    const plan = await this.createTaskPlan(chiefId, {
+      id: planId,
+      name: goal.trim().slice(0, 60),
+    });
+    const { agent } = await this.getAgent(chiefId);
+    const agents = await this.listAgents();
+    const agentIds = agents.map((a) => `${a.id}(${a.role})`).join(', ');
+    const result = await this.runAgent(chiefId, decomposePrompt(goal, agentIds), 900, {
+      operationId: randomUUID(),
+      traceId: randomUUID(),
+    });
+    const text = parseStructuredResult(
+      agent.runtime.provider,
+      await fs.readFile(result.stdoutFile, 'utf8').catch(() => ''),
+    );
+    const items = parseDecompose(text);
+    if (items.length === 0) return { plan, source: 'manual-fallback' };
+    let current = plan;
+    let index = 0;
+    for (const item of items) {
+      index += 1;
+      const exists = await this.getAgent(item.agent)
+        .then(() => true)
+        .catch(() => false);
+      if (!exists) continue; // 未知员工跳过该项
+      current = await this.addTaskItem(chiefId, planId, {
+        id: `item-${index}`,
+        title: item.title,
+        agent: item.agent,
+        prompt: item.prompt,
+        ...(item.dependencies && item.dependencies.length > 0
+          ? { dependencies: item.dependencies }
+          : {}),
+      });
+    }
+    return { plan: current, source: 'chief' };
+  }
+
+  // 顶层一句话闭环：planWithChief → 等确认（confirm 回调）→ 派发 → 交叉审查。审查合并留给调用方。
+  async orchestrate(
+    chiefId: string,
+    goal: string,
+    options: { concurrency?: number; confirm?: (plan: TaskPlan) => Promise<boolean> } = {},
+  ): Promise<{ plan: TaskPlan; source: 'chief' | 'manual-fallback'; confirmed: boolean }> {
+    const { plan, source } = await this.planWithChief(chiefId, goal);
+    const confirm = options.confirm ?? (async () => true);
+    const ok = await confirm(plan);
+    if (!ok) return { plan, source, confirmed: false };
+    await this.confirmPlan(chiefId, plan.id);
+    await this.runTaskPlan(chiefId, plan.id, {
+      ...(options.concurrency !== undefined ? { concurrency: options.concurrency } : {}),
+    });
+    await this.reviewTaskPlan(chiefId, chiefId, plan.id);
+    return { plan: await this.getTaskPlan(chiefId, plan.id), source, confirmed: true };
   }
 
   async chat(id: string): Promise<number> {

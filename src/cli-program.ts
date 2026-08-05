@@ -209,6 +209,146 @@ export function createProgram(): Command {
       process.exitCode = result.exitCode;
     });
 
+  // ===== Chief 编排核心闭环（spec-chief-orchestration）：plan 命令组 + chief run =====
+  const plan = program.command('plan').description('Todo 任务计划编排（Chief 编排核心闭环）');
+  plan
+    .command('list <owner-id>')
+    .description('列出该员工工作区下的任务计划')
+    .action(async (ownerId: string) => {
+      const { application } = context();
+      const plans = await application.listTaskPlans(ownerId);
+      if (!plans.length) return console.log('尚无任务计划。');
+      for (const p of plans)
+        console.log(`${p.id}\t${p.status}\t${p.name}\titems=${p.items.length}`);
+    });
+  plan
+    .command('create <owner-id> <plan-id> <name>')
+    .description('新建一个空任务计划（draft）')
+    .action(async (ownerId: string, planId: string, name: string) => {
+      const { application } = context();
+      const created = await application.createTaskPlan(ownerId, { id: planId, name });
+      console.log(chalk.green(`✓ 已创建计划 ${created.id}（状态 ${created.status}）`));
+    });
+  plan
+    .command('add <owner-id> <plan-id> <item-id> <agent> <prompt>')
+    .description('往计划追加一个任务项（执行员工 + 提示词）')
+    .option('--depends <id...>', '依赖的任务项 id')
+    .action(
+      async (
+        ownerId: string,
+        planId: string,
+        itemId: string,
+        agent: string,
+        prompt: string,
+        options: { depends?: string[] },
+      ) => {
+        const { application } = context();
+        const updated = await application.addTaskItem(ownerId, planId, {
+          id: itemId,
+          title: itemId,
+          agent,
+          prompt,
+          ...(options.depends && options.depends.length ? { dependencies: options.depends } : {}),
+        });
+        console.log(
+          chalk.green(`✓ 已追加任务项 ${itemId}（计划 ${planId}，共 ${updated.items.length} 项）`),
+        );
+      },
+    );
+  plan
+    .command('get <owner-id> <plan-id>')
+    .description('查看计划详情（每项状态/员工/依赖/审查）')
+    .action(async (ownerId: string, planId: string) => {
+      const { application } = context();
+      const p = await application.getTaskPlan(ownerId, planId);
+      console.log(YAML.stringify(p));
+    });
+  plan
+    .command('confirm <owner-id> <plan-id>')
+    .description('确认计划（draft→active，可派发）')
+    .action(async (ownerId: string, planId: string) => {
+      const { application } = context();
+      const p = await application.confirmPlan(ownerId, planId);
+      console.log(chalk.green(`✓ 计划 ${p.id} 已确认（${p.status}）`));
+    });
+  plan
+    .command('reject <owner-id> <plan-id>')
+    .description('驳回计划（draft→cancelled，可附反馈）')
+    .option('-n, --note <text>', '驳回反馈')
+    .action(async (ownerId: string, planId: string, options: { note?: string }) => {
+      const { application } = context();
+      const p = await application.rejectPlan(ownerId, planId, options.note);
+      console.log(chalk.yellow(`计划 ${p.id} 已驳回（${p.status}）${p.note ? `：${p.note}` : ''}`));
+    });
+  plan
+    .command('run <owner-id> <plan-id>')
+    .description('派发已确认计划（默认串行，--concurrency 可选并发）')
+    .option('--concurrency <n>', '并发数', '1')
+    .action(async (ownerId: string, planId: string, options: { concurrency?: string }) => {
+      const { application } = context();
+      const p = await application.runTaskPlan(ownerId, planId, {
+        ...(options.concurrency ? { concurrency: Number(options.concurrency) } : {}),
+      });
+      for (const item of p.items)
+        console.log(
+          `${item.id}\t${item.status}${item.exit_code !== undefined ? `\texit=${item.exit_code}` : ''}`,
+        );
+    });
+  plan
+    .command('review <owner-id> <plan-id>')
+    .description('对等待审查的任务项做 Chief 交叉审查（D-017 单向搬运）')
+    .option('--chief <chief-id>', '执行审查的 Chief 员工 id（默认 owner）')
+    .action(async (ownerId: string, planId: string, options: { chief?: string }) => {
+      const { application } = context();
+      const chiefId = options.chief ?? ownerId;
+      const p = await application.reviewTaskPlan(ownerId, chiefId, planId);
+      for (const item of p.items)
+        if (item.review)
+          console.log(`${item.id}\t${item.review.verdict}\t${item.review.note ?? ''}`);
+    });
+  plan
+    .command('confirm-review <owner-id> <plan-id> <item-id>')
+    .description('人工确认合并某任务项（awaiting_review→completed）')
+    .action(async (ownerId: string, planId: string, itemId: string) => {
+      const { application } = context();
+      const p = await application.confirmReview(ownerId, planId, itemId);
+      console.log(chalk.green(`✓ 任务项 ${itemId} 已合并（计划 ${p.id}）`));
+    });
+  plan
+    .command('reject-review <owner-id> <plan-id> <item-id>')
+    .description('人工驳回某任务项返工（awaiting_review→developing）')
+    .option('-n, --note <text>', '驳回反馈')
+    .action(async (ownerId: string, planId: string, itemId: string, options: { note?: string }) => {
+      const { application } = context();
+      const p = await application.rejectReview(ownerId, planId, itemId, options.note);
+      console.log(chalk.yellow(`任务项 ${itemId} 已驳回返工（计划 ${p.id}）`));
+    });
+
+  const chiefGroup = program.command('chief').description('Chief 编排');
+  chiefGroup
+    .command('run <chief-id> <goal>')
+    .description('一句话把目标交给 Chief 走完整条流水线（拆解→确认→派发→审查）')
+    .option('--concurrency <n>', '并发数', '1')
+    .action(async (chiefId: string, goal: string, options: { concurrency?: string }) => {
+      const { application } = context();
+      const result = await application.orchestrate(chiefId, goal, {
+        ...(options.concurrency ? { concurrency: Number(options.concurrency) } : {}),
+        confirm: async (plan) => {
+          console.log(
+            chalk.cyan(`\nChief 拆解出计划「${plan.name}」（${plan.items.length} 个任务）`),
+          );
+          for (const item of plan.items)
+            console.log(
+              `  ${item.id}\t${item.agent}\t${item.title}${item.dependencies.length ? `\tdepends=${item.dependencies.join(',')}` : ''}\n    ${item.prompt}`,
+            );
+          const ok = await confirm({ message: '确认派发该计划？', default: true });
+          return ok;
+        },
+      });
+      if (!result.confirmed) return console.log(chalk.yellow('计划未确认，已取消。'));
+      console.log(YAML.stringify(result.plan.items));
+    });
+
   program
     .command('logs <agent-id>')
     .description('查看 Agent 最新日志')
