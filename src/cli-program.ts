@@ -290,7 +290,17 @@ export function createProgram(): Command {
         ...(options.concurrency ? { concurrency: Number(options.concurrency) } : {}),
       });
       console.log(chalk.cyan(`操作 ${operation.id} 已启动（${operation.state}），等待派发完成…`));
-      await application.waitOperation(operation.id);
+      // 派发期间打印进度行（summary 聚合：N/M 完成 · 执行中 …）。
+      const unsubscribe = application.operationManager.subscribe(operation.id, (event) => {
+        if (typeof event.summary === 'string')
+          process.stdout.write(`\r${chalk.dim(event.summary.padEnd(60))}`);
+      });
+      try {
+        await application.waitOperation(operation.id);
+        process.stdout.write('\n');
+      } finally {
+        unsubscribe();
+      }
       const p = await application.getTaskPlan(ownerId, planId);
       for (const item of p.items)
         console.log(
@@ -347,6 +357,8 @@ export function createProgram(): Command {
           const ok = await confirm({ message: '确认派发该计划？', default: true });
           return ok;
         },
+        // 派发期间打印进度行（\r 覆写，保持同步等终态语义）。
+        onProgress: (summary) => process.stdout.write(`\r${chalk.dim(summary.padEnd(60))}`),
       });
       if (!result.confirmed) return console.log(chalk.yellow('计划未确认，已取消。'));
       if (result.operation)

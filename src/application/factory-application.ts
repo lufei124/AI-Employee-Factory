@@ -130,6 +130,51 @@ function planningPrompt(item: TaskItem): string {
   );
 }
 
+/** 计划派发进度事件（Operation 事件流）；summary 为计划级聚合摘要。 */
+type DispatchEmit = (event: {
+  kind: 'progress';
+  progress: number;
+  message: string;
+  summary?: string;
+}) => void;
+
+/** 终态项占比（0-100），与 dispatchPlan 的 pct 计算一致。 */
+function progressOf(plan: TaskPlan): number {
+  const total = plan.items.length;
+  if (total === 0) return 100;
+  const done = plan.items.filter(
+    (item) =>
+      item.status === 'completed' ||
+      item.status === 'awaiting_review' ||
+      item.status === 'failed' ||
+      item.status === 'cancelled',
+  ).length;
+  return Math.round((done / total) * 100);
+}
+
+/** 从计划任务项状态聚合一行摘要（「N/M 完成 · 执行中 t1,t2 · 等待中 1」），供 OperationDto.summary。 */
+function summaryOf(plan: TaskPlan): string {
+  const total = plan.items.length;
+  const done = plan.items.filter(
+    (item) =>
+      item.status === 'completed' ||
+      item.status === 'awaiting_review' ||
+      item.status === 'failed' ||
+      item.status === 'cancelled',
+  ).length;
+  const active = plan.items
+    .filter((item) => item.status === 'developing' || item.status === 'planning')
+    .map((item) => item.id);
+  const waiting = plan.items.filter(
+    (item) => item.status === 'pending' || item.status === 'queued',
+  ).length;
+  const parts = [`${done}/${total} 完成`];
+  if (active.length > 0)
+    parts.push(`执行中 ${active.slice(0, 3).join(',')}${active.length > 3 ? ',…' : ''}`);
+  if (waiting > 0) parts.push(`等待中 ${waiting}`);
+  return parts.join(' · ');
+}
+
 function reviewPrompt(plan: TaskPlan, item: TaskItem, diff: string, stdout: string): string {
   return (
     `你是主管 Chief。请对下列工人任务的开发产物做交叉审查（跨 worker 只读评审）。\n` +
@@ -676,13 +721,12 @@ export class FactoryApplication {
     concurrency: number,
     timeout: number,
     signal: AbortSignal | undefined,
-    emit: (event: { kind: 'progress'; progress: number; message: string }) => void,
+    emit: DispatchEmit,
     parentTraceId: string,
   ): Promise<TaskPlan> {
     const store = await this.plans(ownerId);
     let plan = await store.get(planId);
     const total = plan.items.length;
-    const pct = (done: number) => (total > 0 ? Math.round((done / total) * 100) : 100);
     const runnable = (item: TaskItem) =>
       item.status !== 'completed' &&
       item.status !== 'awaiting_review' &&
@@ -713,19 +757,21 @@ export class FactoryApplication {
       for (const item of wave) started.add(item.id);
       emit({
         kind: 'progress',
-        progress: pct(doneCount(plan)),
+        progress: progressOf(plan),
         message: `开始执行 ${wave.map((w) => w.id).join(', ')}`,
+        summary: summaryOf(plan),
       });
       await Promise.all(
         wave.map((item) =>
-          this.dispatchItem(store, planId, item.id, timeout, signal, parentTraceId),
+          this.dispatchItem(store, planId, item.id, timeout, signal, parentTraceId, emit),
         ),
       );
       plan = await store.get(planId);
       emit({
         kind: 'progress',
-        progress: pct(doneCount(plan)),
+        progress: progressOf(plan),
         message: `已完成 ${doneCount(plan)}/${total} 项`,
+        summary: summaryOf(plan),
       });
     }
     return store.get(planId);
@@ -755,11 +801,15 @@ export class FactoryApplication {
     timeoutSeconds: number,
     signal: AbortSignal | undefined,
     parentTraceId: string,
+    emit?: DispatchEmit,
   ): Promise<void> {
     const operationId = randomUUID();
     // 无父操作（直接调用）时退化为每条目独立 trace；编排派发时沿用父 task_plan 的 trace 关联。
     const traceId = parentTraceId || randomUUID();
     const lockKey = `${store.plansDir}/${planId}`;
+    // 阶段进度事件（OP6-C）：带 item 标识，progress 统一按计划终态项占比（progressOf）。
+    const stageEmit = (plan: TaskPlan, message: string) =>
+      emit?.({ kind: 'progress', progress: progressOf(plan), message, summary: summaryOf(plan) });
 
     // 阶段 1（锁内）：pending→queued→planning，返回该 item 推进后的状态。
     let status = await this.withPlanLock(lockKey, async () => {
@@ -780,6 +830,7 @@ export class FactoryApplication {
     // 前后快照硬兜底——违背只读指示则 planning→failed。
     if (status === 'planning') {
       const item = this.findItem(await store.get(planId), itemId);
+      stageEmit(await store.get(planId), `[${item.id}]「${item.title}」规划中…`);
       const { registry } = await this.getAgent(item.agent);
       const workspace = registry.workspace.path;
       const beforeHash = await snapshotWorkspaceHash(workspace);
@@ -800,10 +851,15 @@ export class FactoryApplication {
             exit_code: planning.exitCode,
             review: { verdict: 'rejected', note: '规划阶段违背只读指示（脏审计）或规划失败。' },
           });
+          stageEmit(
+            await store.get(planId),
+            `[${item.id}]「${item.title}」规划失败（脏审计：规划阶段改动了文件）`,
+          );
           return 'failed';
         }
         await store.transitionItem(planId, itemId, 'awaiting_confirmation');
         await store.transitionItem(planId, itemId, 'developing');
+        stageEmit(await store.get(planId), `[${item.id}]「${item.title}」规划完成，进入执行`);
         return 'developing';
       });
     }
@@ -823,6 +879,7 @@ export class FactoryApplication {
 
     // 阶段 3（锁外）：worker 实际执行（并发窗口）。此刻 item.status === 'developing'。
     const item = this.findItem(await store.get(planId), itemId);
+    stageEmit(await store.get(planId), `[${item.id}]「${item.title}」执行中…`);
     const dev = await this.runAgent(item.agent, item.prompt, timeoutSeconds, {
       operationId,
       traceId,
@@ -840,8 +897,13 @@ export class FactoryApplication {
           mode: 0o600,
         });
         await store.transitionItem(planId, itemId, 'awaiting_review', { exit_code: 0 });
+        stageEmit(await store.get(planId), `[${item.id}]「${item.title}」执行完成`);
       } else {
         await store.transitionItem(planId, itemId, 'failed', { exit_code: dev.exitCode });
+        stageEmit(
+          await store.get(planId),
+          `[${item.id}]「${item.title}」执行失败（exit=${dev.exitCode}）`,
+        );
       }
     });
   }
@@ -961,11 +1023,16 @@ export class FactoryApplication {
 
   // 顶层一句话闭环：planWithChief → 等确认（confirm 回调）→ 派发 → 交叉审查。审查合并留给调用方。
   // 派发以后台 Operation 执行；orchestrate 自身保持同步（交互确认门），内部 await 派发终态后返回
-  // 最终计划并附 operation（OperationDto，供进度/取消观测）。
+  // 最终计划并附 operation（OperationDto，供进度/取消观测）。onProgress 在派发期间逐进度回调
+  // （summary 字符串），供 CLI 打印进度行。
   async orchestrate(
     chiefId: string,
     goal: string,
-    options: { concurrency?: number; confirm?: (plan: TaskPlan) => Promise<boolean> } = {},
+    options: {
+      concurrency?: number;
+      confirm?: (plan: TaskPlan) => Promise<boolean>;
+      onProgress?: (summary: string) => void;
+    } = {},
   ): Promise<{
     plan: TaskPlan;
     source: 'chief' | 'manual-fallback';
@@ -980,7 +1047,15 @@ export class FactoryApplication {
     const operation = await this.runTaskPlan(chiefId, plan.id, {
       ...(options.concurrency !== undefined ? { concurrency: options.concurrency } : {}),
     });
-    await this.waitOperation(operation.id);
+    // 订阅派发进度（summary）回调，终态后取消。
+    const unsubscribe = this.operationManager.subscribe(operation.id, (event) => {
+      if (typeof event.summary === 'string') options.onProgress?.(event.summary);
+    });
+    try {
+      await this.waitOperation(operation.id);
+    } finally {
+      unsubscribe();
+    }
     // 取 live 终态 DTO（runTaskPlan 返回的只是排队态快照）
     const finalOperation = this.operationManager.get(operation.id);
     await this.reviewTaskPlan(chiefId, chiefId, plan.id);

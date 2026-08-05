@@ -32,6 +32,7 @@ export interface OperationDto {
   agentId?: string;
   state: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
   progress?: number;
+  summary?: string;
   startedAt?: string;
   finishedAt?: string;
   exitCode?: number;

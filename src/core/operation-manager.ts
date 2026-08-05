@@ -25,6 +25,7 @@ export interface OperationDto {
   agentId?: string;
   state: OperationState;
   progress?: number;
+  summary?: string;
   startedAt?: string;
   finishedAt?: string;
   exitCode?: number;
@@ -39,6 +40,8 @@ export interface OperationEvent {
   progress?: number;
   message?: string;
   stream?: 'stdout' | 'stderr';
+  /** 计划派发等操作的聚合摘要（如「2/3 完成 · 执行中 t1」）。 */
+  summary?: string;
 }
 
 export interface OperationTaskContext {
@@ -198,6 +201,8 @@ export class OperationManager {
             if (event.kind === 'progress' && event.progress !== undefined) {
               operation.dto.progress = Math.max(0, Math.min(100, event.progress));
             }
+            // 聚合摘要（计划派发等）随事件同步到 DTO，供列表/进度行展示。
+            if (typeof event.summary === 'string') operation.dto.summary = event.summary;
             this.emit(operation, event);
           },
           operationId: operation.dto.id,

@@ -88,6 +88,7 @@ export function OperationsDrawer({
             <p>
               {selected.agentId ?? 'Factory 全局'} · {selected.id}
             </p>
+            {selected.summary && <p className="operation-summary">{selected.summary}</p>}
             <div className="progress-track">
               <span style={{ width: `${selected.progress ?? 0}%` }} />
             </div>
@@ -111,6 +112,7 @@ export function OperationsDrawer({
                   <strong>{operation.type}</strong>
                   <small>
                     {operation.agentId ?? 'Factory'} · {operation.state}
+                    {operation.summary ? ` · ${operation.summary}` : ''}
                   </small>
                 </div>
                 <ChevronRight size={16} />

@@ -1351,6 +1351,12 @@ textarea:focus {
   display: flex;
   justify-content: space-between;
 }
+.operation-summary {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
 .operation-detail > p {
   color: var(--muted);
   font-size: 10px;

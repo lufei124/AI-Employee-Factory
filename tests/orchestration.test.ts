@@ -680,4 +680,76 @@ describe('编排 Operation 可观测性 (spec user story 16)', () => {
     await expect(app.waitOperation(operation.id)).rejects.toThrow('已取消');
     expect(app.operationManager.get(operation.id).state).toBe('cancelled');
   });
+
+  it('派发过程推送 planning/developing 阶段 progress 事件（OP6-C）', async () => {
+    const { app } = await setupApp();
+    mockRunAgent(app);
+    const planId = await makeActivePlan(app, [
+      { id: 't1', title: '任务一', agent: 'worker-a', prompt: '执行', status: 'pending' as const },
+    ]);
+    const operation = await app.runTaskPlan('chief', planId);
+    await app.waitOperation(operation.id);
+
+    const messages = app.operationManager
+      .events(operation.id)
+      .filter((event) => event.kind === 'progress')
+      .map((event) => event.message ?? '');
+    // 每个 item 的 planning 与 developing 阶段都有带 item 标识的进度事件。
+    const planMsgs = messages.filter((m) => m.includes('[t1]'));
+    expect(planMsgs.some((m) => m.includes('规划中'))).toBe(true);
+    expect(planMsgs.some((m) => m.includes('规划完成'))).toBe(true);
+    expect(planMsgs.some((m) => m.includes('执行中'))).toBe(true);
+    expect(planMsgs.some((m) => m.includes('执行完成'))).toBe(true);
+    // 顺序：规划 → 执行。
+    const planIdx = planMsgs.findIndex((m) => m.includes('规划中'));
+    const devIdx = planMsgs.findIndex((m) => m.includes('执行中'));
+    expect(planIdx).toBeGreaterThanOrEqual(0);
+    expect(devIdx).toBeGreaterThan(planIdx);
+  });
+
+  it('OperationDto.summary 聚合计划完成比例（OP6-C）', async () => {
+    const { app } = await setupApp();
+    mockRunAgent(app);
+    const planId = await makeActivePlan(app, [
+      { id: 't1', title: '任务一', agent: 'worker-a', prompt: '执行', status: 'pending' as const },
+      { id: 't2', title: '任务二', agent: 'worker-b', prompt: '执行', status: 'pending' as const },
+    ]);
+    const operation = await app.runTaskPlan('chief', planId);
+    await app.waitOperation(operation.id);
+
+    // 终态：2 项全部完成（awaiting_review 计入 done）。
+    const after = app.operationManager.get(operation.id);
+    expect(after.summary).toMatch(/2\/2 完成/);
+    expect(after.summary).not.toContain('执行中');
+  });
+
+  it('summary 在中间态包含执行中项（并发窗口）', async () => {
+    const { app } = await setupApp();
+    let releaseAll!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseAll = resolve;
+    });
+    vi.spyOn(app, 'runAgent').mockImplementation(async (id, task) => {
+      if (task.includes('规划阶段')) return fakeResult('计划');
+      await gate; // 阻塞 developing，抓中间态 summary
+      return { ...fakeResult('完成。'), exitCode: 0 };
+    });
+    const planId = await makeActivePlan(app, [
+      { id: 't1', title: '任务一', agent: 'worker-a', prompt: '执行', status: 'pending' as const },
+      { id: 't2', title: '任务二', agent: 'worker-b', prompt: '执行', status: 'pending' as const },
+    ]);
+    const operation = await app.runTaskPlan('chief', planId);
+    await vi.waitFor(() => expect(app.operationManager.get(operation.id).state).toBe('running'), {
+      timeout: 5000,
+    });
+    // 中间态 summary：0/2 完成，执行中 t1,t2。
+    await vi.waitFor(() => {
+      const summary = app.operationManager.get(operation.id).summary;
+      expect(summary).toBeDefined();
+      expect(summary).toContain('0/2 完成');
+      expect(summary).toContain('执行中');
+    });
+    releaseAll();
+    await app.waitOperation(operation.id);
+  });
 });
