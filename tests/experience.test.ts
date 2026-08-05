@@ -1,7 +1,7 @@
 import fs from 'fs-extra';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FactoryApplication } from '../src/application/factory-application.js';
 import { CreateAgentService } from '../src/core/create-agent.js';
 import { initializeFactory } from '../src/core/config.js';
@@ -14,11 +14,12 @@ const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => fs.remove(root))));
 
 function summary(overrides: Partial<TranscriptSummary> = {}): TranscriptSummary {
+  const today = new Date().toISOString().slice(0, 10);
   return {
     agent_id: 'user-operations',
     operation: 'run',
-    started_at: '2026-08-04T00:00:00Z',
-    finished_at: '2026-08-04T00:01:00Z',
+    started_at: `${today}T00:00:00Z`,
+    finished_at: `${today}T00:01:00Z`,
     exit_code: 0,
     topics: ['接入飞书'],
     decisions: ['结论：采用 PersonalAgent'],
@@ -49,7 +50,7 @@ describe('DefaultExperienceExtractor (OP1 Stage D)', () => {
     const asset = assets[0]!;
     expect(asset.targetScope).toBe('knowledge');
     expect(asset.authorityLayer).toBe('knowledge');
-    expect(asset.relPath).toMatch(/^lessons\/2026-08-04-user-operations\.md$/);
+    expect(asset.relPath).toMatch(/^lessons\/\d{4}-\d{2}-\d{2}-user-operations\.md$/);
     expect(asset.content).toContain('title: 会话经验摘要');
     expect(asset.content).toContain('## 决策');
     expect(asset.content).toContain('- 结论：采用 PersonalAgent');
@@ -83,6 +84,13 @@ describe('FactoryApplication experience extraction (OP1 Stage D)', () => {
     parsed.memory.transcript_persist = true;
     parsed.memory.experience_extraction = enableExtraction;
     await fs.writeFile(agentYaml, YAML.stringify(parsed));
+    // 预置 0600 降级凭据（OP5-B）：无 CC Switch 源时 prepareRuntime 读它，避免真实 CLI 依赖。
+    const runtimeHome = path.join(paths.runtimesDir, 'user-operations', 'claude');
+    await fs.outputFile(
+      path.join(runtimeHome, '.cc-switch.env'),
+      'ANTHROPIC_AUTH_TOKEN=test-token\n',
+      { mode: 0o600 },
+    );
     const application = new FactoryApplication(paths, registry);
     return { root, paths, registry, application, agentId: 'user-operations' };
   }
@@ -110,7 +118,9 @@ describe('FactoryApplication experience extraction (OP1 Stage D)', () => {
     );
     expect(result.transcriptFile).toBeDefined();
     await application.extractExperience(agentId, result.transcriptFile!);
-    const lessonFile = path.join(lessonsDir(application, agentId), '2026-08-04-user-operations.md');
+    // 提取出的 lesson 文件名带运行日期（来自 transcript 的 finished_at），动态匹配。
+    const today = new Date().toISOString().slice(0, 10);
+    const lessonFile = path.join(lessonsDir(application, agentId), `${today}-user-operations.md`);
     expect(await fs.pathExists(lessonFile)).toBe(true);
     const content = await fs.readFile(lessonFile, 'utf8');
     expect(content).toContain('结论：采用 PersonalAgent');
@@ -141,5 +151,56 @@ describe('FactoryApplication experience extraction (OP1 Stage D)', () => {
     // lessons/ 目录由 workspace 模板种子预建，但 experience_extraction=false 时不产生任何经验文件。
     const files = await fs.readdir(lessonsDir(application, agentId));
     expect(files.filter((name) => name.endsWith('.md'))).toEqual([]);
+  });
+
+  // D-024：Web 单轮对话（runChat）与 runAgent 共用 transcript/experience 管线——
+  // transcript_persist + experience_extraction 双开时，chat 结束应自动提取经验写回。
+  it('runChat extracts experience when transcript + extraction are enabled', async () => {
+    const { application, agentId } = await setup(true);
+    // 不 spawn 真实 CLI：mock runLogged 注入 transcriptFile，只测 runChat 的提取路径。
+    const runner = (await import('../src/core/process-runner.js')).ProcessRunner;
+    const runLogged = vi.spyOn(runner.prototype, 'runLogged').mockImplementation(async () => {
+      const transcriptFile = path.join(application.paths.logsDir, agentId, 'transcript-test.json');
+      await fs.ensureDir(path.dirname(transcriptFile));
+      await fs.writeFile(
+        transcriptFile,
+        `${JSON.stringify({
+          agent_id: agentId,
+          operation: 'chat',
+          started_at: '2026-08-05T00:00:00.000Z',
+          finished_at: '2026-08-05T00:00:00.000Z',
+          exit_code: 0,
+          topics: ['方案'],
+          decisions: [],
+          lessons: ['下次优先考虑 PersonalAgent'],
+          tail: [],
+        })}\n`,
+      );
+      return {
+        exitCode: 0,
+        timedOut: false,
+        cancelled: false,
+        logDir: path.dirname(transcriptFile),
+        stdoutFile: path.join(path.dirname(transcriptFile), 'stdout.log'),
+        stderrFile: path.join(path.dirname(transcriptFile), 'stderr.log'),
+        metadataFile: path.join(path.dirname(transcriptFile), 'metadata.json'),
+        transcriptFile,
+        startedAt: '2026-08-05T00:00:00.000Z',
+        finishedAt: '2026-08-05T00:00:00.000Z',
+      };
+    });
+    try {
+      await application.runChat(agentId, '结论：采用 PersonalAgent 方案', 60);
+      expect(runLogged).toHaveBeenCalledOnce();
+      const lessonFile = path.join(
+        lessonsDir(application, agentId),
+        '2026-08-05-user-operations.md',
+      );
+      expect(await fs.pathExists(lessonFile)).toBe(true);
+      const content = await fs.readFile(lessonFile, 'utf8');
+      expect(content).toContain('下次优先考虑 PersonalAgent');
+    } finally {
+      runLogged.mockRestore();
+    }
   });
 });

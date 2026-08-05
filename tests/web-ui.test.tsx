@@ -43,6 +43,13 @@ vi.mock('../web/src/api.js', () => ({
     rejectPlan: vi.fn(),
     confirmReview: vi.fn(),
     rejectReview: vi.fn(),
+    createTaskPlan: vi.fn(),
+    addTaskItem: vi.fn(),
+    runTaskPlan: vi.fn(),
+    chiefRun: vi.fn(),
+    chat: vi.fn(),
+    operation: vi.fn(),
+    listAgents: vi.fn(),
   },
 }));
 
@@ -1005,5 +1012,209 @@ describe('Web console core flows', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('Todo 标签可新建计划、添加任务项并派发执行（D-024 写面）', async () => {
+    vi.mocked(api.getAgent).mockResolvedValue({
+      registry: {
+        id: 'ops',
+        name: '运营专员',
+        status: 'stopped',
+        runtime_home: { path: '/private/runtimes/ops/claude' },
+        bridge: { enabled: true, authorization: 'ready', home: '/private/bridges/ops' },
+      },
+      agent: { description: '负责用户运营', runtime: { provider: 'claude', locked: true } },
+    } as never);
+    vi.mocked(api.terminalGuidance).mockResolvedValue({
+      runtimeLogin: 'agentctl runtime sync ops',
+      bridgeAuthorize: 'agentctl bridge authorize ops',
+      chat: 'agentctl chat ops',
+    });
+    vi.mocked(api.listAgents).mockResolvedValue([
+      {
+        id: 'ops',
+        name: '运营专员',
+        status: 'stopped',
+        archived: false,
+        runtime: 'claude',
+        bridgeEnabled: true,
+        bridgeAuthorization: 'ready',
+        updatedAt: '2026-08-05T00:00:00.000Z',
+      },
+    ]);
+    const draft: TaskPlan = {
+      schema_version: 1,
+      id: 'plan-web',
+      name: '发布新版产品',
+      creator: 'ops',
+      status: 'draft',
+      items: [],
+      created_at: '2026-08-05T00:00:00.000Z',
+      updated_at: '2026-08-05T00:00:00.000Z',
+    };
+    vi.mocked(api.listTaskPlans).mockResolvedValue([draft]);
+    vi.mocked(api.createTaskPlan).mockResolvedValue(draft);
+    vi.mocked(api.addTaskItem).mockResolvedValue({
+      ...draft,
+      items: [
+        {
+          id: 'item-web',
+          title: '撰写公告',
+          agent: 'ops',
+          prompt: '写一篇发布公告。',
+          status: 'pending',
+          dependencies: [],
+          created_at: '2026-08-05T00:00:00.000Z',
+          updated_at: '2026-08-05T00:00:00.000Z',
+          finished_at: null,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+
+    render(<AgentDetailPage agentId="ops" />);
+    await user.click(await screen.findByRole('button', { name: 'Todo' }));
+
+    // 新建计划
+    await user.click(screen.getByRole('button', { name: '新建计划' }));
+    await user.type(screen.getByPlaceholderText('例如：发布新版产品'), '发布新版产品');
+    await user.click(screen.getByRole('button', { name: '创建计划' }));
+    expect(api.createTaskPlan).toHaveBeenCalledWith(
+      'ops',
+      expect.stringMatching(/^plan-[0-9a-f]{8}$/),
+      '发布新版产品',
+    );
+    expect(await screen.findByText('已创建计划 发布新版产品。')).toBeInTheDocument();
+
+    // 展开 draft 计划 → 添加任务项
+    await user.click(screen.getByText('发布新版产品'));
+    await user.type(screen.getByPlaceholderText('例如：撰写发布公告'), '撰写公告');
+    await user.selectOptions(screen.getByRole('combobox'), 'ops');
+    await user.type(screen.getByPlaceholderText('交给该员工的完整任务描述…'), '写一篇发布公告。');
+    await user.click(screen.getByRole('button', { name: '添加任务项' }));
+    expect(api.addTaskItem).toHaveBeenCalledWith(
+      'ops',
+      'plan-web',
+      expect.objectContaining({ title: '撰写公告', agent: 'ops', prompt: '写一篇发布公告。' }),
+    );
+    expect(await screen.findByText('已添加任务项 撰写公告。')).toBeInTheDocument();
+
+    // 确认计划 → 派发执行（202 OperationDto）
+    vi.mocked(api.confirmPlan).mockResolvedValue({ ...draft, status: 'active' });
+    vi.mocked(api.listTaskPlans).mockResolvedValue([
+      {
+        ...draft,
+        status: 'active',
+        items: [
+          {
+            id: 'item-web',
+            title: '撰写公告',
+            agent: 'ops',
+            prompt: '写一篇发布公告。',
+            status: 'pending',
+            dependencies: [],
+            created_at: '2026-08-05T00:00:00.000Z',
+            updated_at: '2026-08-05T00:00:00.000Z',
+            finished_at: null,
+          },
+        ],
+      },
+    ]);
+    vi.mocked(api.runTaskPlan).mockResolvedValue({
+      id: 'op-1',
+      type: 'task_plan',
+      agentId: 'ops',
+      state: 'queued',
+    });
+    await user.click(screen.getByRole('button', { name: '确认计划' }));
+    expect(await screen.findByText('已确认计划 plan-web，可派发执行。')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '派发执行' }));
+    expect(api.runTaskPlan).toHaveBeenCalledWith('ops', 'plan-web');
+    expect(
+      await screen.findByText('已派发计划 plan-web，可到操作中心查看进度。'),
+    ).toBeInTheDocument();
+  });
+
+  it('Chief 编排标签可发起目标（后台拆解 Operation）（D-024 写面）', async () => {
+    vi.mocked(api.getAgent).mockResolvedValue({
+      registry: {
+        id: 'chief-1',
+        name: '首席工程师',
+        role: 'chief',
+        status: 'running',
+        runtime_home: { path: '/private/runtimes/chief-1/claude' },
+        bridge: { enabled: false, authorization: 'ready', home: '/private/bridges/chief-1' },
+      },
+      agent: { description: '负责拆解与审查', runtime: { provider: 'claude', locked: true } },
+    } as never);
+    vi.mocked(api.terminalGuidance).mockResolvedValue({
+      runtimeLogin: 'agentctl runtime sync chief-1',
+      bridgeAuthorize: 'agentctl bridge authorize chief-1',
+      chat: 'agentctl chat chief-1',
+    });
+    vi.mocked(api.listTaskPlans).mockResolvedValue([]);
+    vi.mocked(api.chiefRun).mockResolvedValue({
+      id: 'op-chief',
+      type: 'task_plan',
+      agentId: 'chief-1',
+      state: 'queued',
+    });
+    const user = userEvent.setup();
+
+    render(<AgentDetailPage agentId="chief-1" />);
+    await user.click(await screen.findByRole('button', { name: 'Chief 编排' }));
+    await user.type(screen.getByPlaceholderText('例如：发布新版产品上线'), '发布新版产品上线');
+    await user.click(screen.getByRole('button', { name: '发起目标' }));
+    expect(api.chiefRun).toHaveBeenCalledWith('chief-1', '发布新版产品上线', undefined);
+    expect(
+      await screen.findByText('已发起目标编排，Chief 正在后台拆解，稍后刷新查看流水线。'),
+    ).toBeInTheDocument();
+  });
+
+  it('对话标签发送消息并轮询读回回答（D-024 单轮对话）', async () => {
+    vi.mocked(api.getAgent).mockResolvedValue({
+      registry: {
+        id: 'ops',
+        name: '运营专员',
+        status: 'stopped',
+        runtime_home: { path: '/private/runtimes/ops/claude' },
+        bridge: { enabled: true, authorization: 'ready', home: '/private/bridges/ops' },
+      },
+      agent: { description: '负责用户运营', runtime: { provider: 'claude', locked: true } },
+    } as never);
+    vi.mocked(api.terminalGuidance).mockResolvedValue({
+      runtimeLogin: 'agentctl runtime sync ops',
+      bridgeAuthorize: 'agentctl bridge authorize ops',
+      chat: 'agentctl chat ops',
+    });
+    vi.mocked(api.chat).mockResolvedValue({
+      id: 'op-chat',
+      type: 'chat',
+      agentId: 'ops',
+      state: 'queued',
+    });
+    // 轮询（1s 间隔，真实 timer）第一次返回输出事件；operation 立即终态 succeeded。
+    vi.mocked(api.operationEvents).mockResolvedValue([
+      { seq: 1, kind: 'output', message: '你好！我是运营专员。' },
+    ]);
+    vi.mocked(api.operation).mockResolvedValue({
+      id: 'op-chat',
+      type: 'chat',
+      agentId: 'ops',
+      state: 'succeeded',
+    });
+    const user = userEvent.setup();
+
+    render(<AgentDetailPage agentId="ops" />);
+    await user.click(await screen.findByRole('button', { name: '对话' }));
+
+    await user.type(screen.getByPlaceholderText('输入消息，Enter 发送'), '你好');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+    expect(api.chat).toHaveBeenCalledWith('ops', '你好');
+    // 后台轮询约 1s 后读到最终回答。
+    expect(
+      await screen.findByText('你好！我是运营专员。', undefined, { timeout: 5000 }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('你好')).toBeInTheDocument();
   });
 });

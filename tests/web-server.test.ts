@@ -1,7 +1,7 @@
 import fs from 'fs-extra';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FactoryApplication } from '../src/application/factory-application.js';
 import { resolveFactoryPaths } from '../src/core/paths.js';
 import { RegistryStore } from '../src/core/registry.js';
@@ -18,12 +18,37 @@ function setup(operationManager?: OperationManager) {
     AI_EMPLOYEES_HOME: path.join(root, 'private'),
     AI_EMPLOYEES_WORKSPACE_ROOT: path.join(root, 'agents'),
   });
-  const application = new FactoryApplication(paths, new RegistryStore(paths.registryFile));
-  return buildWebServer({
-    application,
-    bootstrapToken: 'bootstrap-secret',
-    ...(operationManager ? { operationManager } : {}),
+  const manager = operationManager ?? new OperationManager();
+  const application = new FactoryApplication(paths, new RegistryStore(paths.registryFile), {
+    operationManager: manager,
   });
+  return {
+    server: buildWebServer({
+      application,
+      bootstrapToken: 'bootstrap-secret',
+      operationManager: manager,
+    }),
+    application,
+    operationManager: manager,
+  };
+}
+
+// 交换 bootstrap token，返回带 cookie + CSRF 的已认证请求头。
+async function authHeaders(server: ReturnType<typeof buildWebServer>) {
+  const exchange = await server.inject({
+    method: 'POST',
+    url: '/api/v1/session',
+    headers: { host: '127.0.0.1:48123' },
+    payload: { token: 'bootstrap-secret' },
+  });
+  const cookie = exchange.headers['set-cookie']?.split(';')[0];
+  const csrf = exchange.json<{ data: { csrfToken: string } }>().data.csrfToken;
+  return {
+    host: '127.0.0.1:48123',
+    origin: 'http://127.0.0.1:48123',
+    cookie,
+    'x-csrf-token': csrf,
+  };
 }
 
 afterEach(async () => {
@@ -32,7 +57,7 @@ afterEach(async () => {
 
 describe('local Web API security', () => {
   it('exchanges the bootstrap token once and requires its session cookie', async () => {
-    const server = setup();
+    const { server } = setup();
 
     expect(
       (
@@ -97,7 +122,7 @@ describe('local Web API security', () => {
   });
 
   it('rejects invalid Host, Origin, and CSRF before mutations', async () => {
-    const server = setup();
+    const { server } = setup();
     const exchange = await server.inject({
       method: 'POST',
       url: '/api/v1/session',
@@ -129,7 +154,7 @@ describe('local Web API security', () => {
   });
 
   it('initializes and creates an Agent through validated application APIs', async () => {
-    const server = setup();
+    const { server } = setup();
     const exchange = await server.inject({
       method: 'POST',
       url: '/api/v1/session',
@@ -171,7 +196,7 @@ describe('local Web API security', () => {
   });
 
   it('manages skill-store repositories through the API', async () => {
-    const server = setup();
+    const { server } = setup();
     const exchange = await server.inject({
       method: 'POST',
       url: '/api/v1/session',
@@ -226,7 +251,7 @@ describe('local Web API security', () => {
 
   it('cancels unfinished Web operations when the server closes', async () => {
     const operations = new OperationManager();
-    const server = setup(operations);
+    const { server } = setup(operations);
     const operation = operations.start('run', 'user-operations', async ({ signal }) => {
       await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve()));
     });
@@ -236,5 +261,168 @@ describe('local Web API security', () => {
     await operations.wait(operation.id);
 
     expect(operations.get(operation.id).state).toBe('cancelled');
+  });
+});
+
+// TASK-027（D-024）：Web 编排写面——建计划/加任务项/派发/Chief 发起/对话。
+// 全部走既有后台 Operation 模式；runAgent 被 mock，避免真正 spawn 员工进程。
+describe('Web orchestration write surface (D-024)', () => {
+  async function seededSetup() {
+    const { server, application } = setup();
+    const headers = await authHeaders(server);
+    await server.inject({ method: 'POST', url: '/api/v1/factory/init', headers });
+    const created = await server.inject({
+      method: 'POST',
+      url: '/api/v1/agents',
+      headers,
+      payload: {
+        id: 'user-operations',
+        name: '用户运营专员',
+        runtime: 'claude',
+        preset: 'user-operations',
+        feishu: 'disabled',
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    return { server, application, headers };
+  }
+
+  it('creates a plan, adds items, confirms, and dispatches it (202 + OperationDto)', async () => {
+    const { server, application, headers } = await seededSetup();
+    vi.spyOn(application, 'runAgent').mockImplementation(async () => ({
+      exitCode: 0,
+      timedOut: false,
+      cancelled: false,
+      logDir: '',
+      stdoutFile: '',
+      stderrFile: '',
+      metadataFile: '',
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+    }));
+
+    const plan = await server.inject({
+      method: 'POST',
+      url: '/api/v1/agents/user-operations/task-plans',
+      headers,
+      payload: { planId: 'plan-web-1', name: '发布新版产品' },
+    });
+    expect(plan.statusCode).toBe(200);
+    expect(plan.json().data).toMatchObject({ id: 'plan-web-1', status: 'draft', items: [] });
+
+    const item = await server.inject({
+      method: 'POST',
+      url: '/api/v1/agents/user-operations/task-plans/plan-web-1/items',
+      headers,
+      payload: {
+        id: 'item-web-1',
+        title: '撰写公告',
+        agent: 'user-operations',
+        prompt: '写一篇发布公告。',
+      },
+    });
+    expect(item.statusCode).toBe(200);
+    expect(item.json().data.items).toHaveLength(1);
+
+    const confirmed = await server.inject({
+      method: 'POST',
+      url: '/api/v1/agents/user-operations/task-plans/plan-web-1/actions/confirm',
+      headers,
+    });
+    expect(confirmed.json().data.status).toBe('active');
+
+    const dispatched = await server.inject({
+      method: 'POST',
+      url: '/api/v1/agents/user-operations/task-plans/plan-web-1/actions/run',
+      headers,
+      payload: { concurrency: 2 },
+    });
+    expect(dispatched.statusCode).toBe(202);
+    expect(dispatched.json().data).toMatchObject({
+      type: 'task_plan',
+      agentId: 'user-operations',
+      state: 'queued',
+    });
+
+    // 派发主循环在后台跑完；等待终态并验证 item 离开 pending（进入 awaiting_review，交叉审查在 CLI/编排层）。
+    const operationId = dispatched.json<{ data: { id: string } }>().data.id;
+    const applicationAny = application as unknown as {
+      waitOperation: (id: string) => Promise<void>;
+      getTaskPlan: (
+        ownerId: string,
+        planId: string,
+      ) => Promise<{ items: Array<{ status: string }> }>;
+    };
+    await applicationAny.waitOperation(operationId);
+    const finalPlan = await applicationAny.getTaskPlan('user-operations', 'plan-web-1');
+    expect(['awaiting_review', 'completed'].includes(finalPlan.items[0]?.status ?? '')).toBe(true);
+
+    await server.close();
+  });
+
+  it('runs a chat operation and streams progress + final output events', async () => {
+    const { server, application, headers } = await seededSetup();
+    vi.spyOn(application, 'runChat').mockResolvedValue({ text: '你好！我是运营专员。' });
+
+    const started = await server.inject({
+      method: 'POST',
+      url: '/api/v1/agents/user-operations/actions/chat',
+      headers,
+      payload: { prompt: '你好' },
+    });
+    expect(started.statusCode).toBe(202);
+    expect(started.json().data).toMatchObject({
+      type: 'chat',
+      agentId: 'user-operations',
+      state: 'queued',
+    });
+
+    const operationId = started.json<{ data: { id: string } }>().data.id;
+    const applicationAny = application as unknown as {
+      waitOperation: (id: string) => Promise<void>;
+    };
+    await applicationAny.waitOperation(operationId);
+    const events = (
+      await server.inject({
+        method: 'GET',
+        url: `/api/v1/operations/${operationId}/events`,
+        headers: { host: '127.0.0.1:48123', cookie: headers.cookie },
+      })
+    ).json<{ data: Array<{ kind: string; message?: string; progress?: number }> }>().data;
+
+    expect(events).toContainEqual(
+      expect.objectContaining({ kind: 'progress', progress: 10, message: '开始对话' }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({ kind: 'output', message: '你好！我是运营专员。' }),
+    );
+    await server.close();
+  });
+
+  it('validates plan create/add-item payloads', async () => {
+    const { server, headers } = await seededSetup();
+
+    const badName = await server.inject({
+      method: 'POST',
+      url: '/api/v1/agents/user-operations/task-plans',
+      headers,
+      payload: { planId: 'plan-x', name: '' },
+    });
+    expect(badName.statusCode).toBe(400);
+
+    await server.inject({
+      method: 'POST',
+      url: '/api/v1/agents/user-operations/task-plans',
+      headers,
+      payload: { planId: 'plan-x', name: '计划 X' },
+    });
+    const badItem = await server.inject({
+      method: 'POST',
+      url: '/api/v1/agents/user-operations/task-plans/plan-x/items',
+      headers,
+      payload: { id: 'i1', title: '', agent: 'user-operations', prompt: '' },
+    });
+    expect(badItem.statusCode).toBe(400);
+    await server.close();
   });
 });

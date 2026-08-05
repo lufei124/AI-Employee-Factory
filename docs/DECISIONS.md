@@ -177,8 +177,20 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 - 状态：Accepted（已实施，issue 07）
 - 日期：2026-08-05
 - 决定：Web 员工详情页「Todo」标签渲染**已存储的审查结论** `item.review { verdict, note }`（verdict 本地化为已通过/已驳回），**不展示原始 diff**。原因：按 D-017，`reviewTaskPlan` 由编排器从 worker workspace **实时读取** `diff.patch` 与运行日志、脱敏后喂 Chief，原始 diff **不写回计划文件**——计划文件只持久化 Chief 返回的结构化 verdict+note。因此 Web 无从读取 diff（它只读计划文件），展示 verdict+note 是唯一不新增网面的选择。
-- 边界：issue 07 的「走完 Todo 流程」只含看状态、确认/驳回计划、确认合并/驳回审查——**Web 不实现派发（run）与计划/任务项创建**（创建走 CLI `plan`/`chief run`，派发走 `agentctl plan run`）。若需 Web 展示原始 diff，属后续增强（读 worker 产物路径，见 ARCHITECTURE「Chief 编排与 Todo 状态机」）。
+- 边界：issue 07 的「走完 Todo 流程」原只含看状态、确认/驳回计划、确认合并/驳回审查——**创建/派发/Chief 发起由 D-024 于 TASK-027 放开**（Web 可编排）；本决策的「Web 不实现派发与任务项创建」措辞被 D-024 取代，但「不展示原始 diff」边界保持。若需 Web 展示原始 diff，属后续增强（读 worker 产物路径，见 ARCHITECTURE「Chief 编排与 Todo 状态机」）。
 - 原因：避免 scope creep（派发是 CLI 范畴）与避免为展示 diff 而放开隔离语义/新增读面；保持 Web 只读 + 两种闸门（计划级确认/驳回、审查级合并/驳回）的最小网面。
+
+## D-024：Web 编排写面开放——创建/派发/Chief 发起/单轮对话，全部后台 Operation
+
+- 状态：Accepted（已实施，TASK-027）
+- 日期：2026-08-05
+- 决定：放开 D-022/D-023 的「Web 只读」边界，Web 控制台新增编排写面与单轮对话：
+  - **Todo 写面**：`POST /api/v1/agents/:id/task-plans`（建计划，planId 由 Web 生成 `plan-<8hex>`）、`POST .../task-plans/:planId/items`（加任务项）、`POST .../task-plans/:planId/actions/run`（派发）。
+  - **Chief 发起**：`POST /api/v1/agents/:id/actions/chief-run` —— `startPlanWithChief` 把阻塞的 `planWithChief` 放进后台 Operation（拆解耗时几十秒不阻塞 HTTP），完成后停在 draft 等人工确认；确认/驳回是独立显式步骤（等价 CLI inquirer 门）。
+  - **单轮对话**：`POST /api/v1/agents/:id/actions/chat` —— 走 `runLogged`（复用 transcript/experience 管线，`transcript_persist` opt-in），`claude -p`/`codex exec` 非交互单轮，无需新 adapter；Operation 完成时把最终回答作为 output 事件写入，前端轮询读回。
+  - **统一模式**：全部写操作返回 202 + `OperationDto`（后台 Operation），前端轮询 `/api/v1/operations/:id/events`；不引入同步长请求。Web 与 CLI/MCP 共享 `FactoryApplication` 同一编排层（D-021 单一应用 seam 原则）。
+- 边界：**原始 diff 仍不持久化**（D-022 保持——Web 仍不展示 diff，审查结论 verdict+note 是唯一持久化形态）；对话会话记录不落盘（D-006 的 transcript 边界——`runChat` 无锁、`mirror: false`，与 CLI chat 一致）；`concurrency` 仅作派发参数，Chief 发起时不自动派发。S3（飞书入站创建 todo）无入站基础设施，单独立项。
+- 原因：用户要求「相关功能可以在 Web 使用、以及与 agent 对话生效」。后端编排方法全齐（MCP 写工具已直连，D-021），Web 只缺写端点与按钮；运行时本就支持非交互单轮（`claude -p`/`codex exec`），无新 adapter 面。飞书入站是全新网络面 + 安全评审，超本任务范围。
 
 ## D-023：Chief Web 编排流水线视图——派生状态，不新增写面
 
@@ -186,7 +198,7 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 - 日期：2026-08-05
 - 决定：Web 新增「Chief 编排」视图（仅 `role=chief` 员工显示该标签），把 Chief 拥有的每个目标（plan）渲染成一条流水线卡片：**阶段条**（拆解 → 计划确认 → 执行 → 审查 → 结果）与**聚合整体进度**（如 `2/3 完成 · 1 待审查`）。阶段点亮与整体状态均为**纯派生**（`derivePipeline`/`summarizePlan`，从 plan.status + item 状态分布计算，无副作用、可单测）——不落盘、不改后端 schema、不新增端点，计划文件仍是唯一事实源。
 - 阶段条语义（**累计到达门**）：每个阶段一旦达成即常亮、不随执行结束熄灭——完成计划的五段全亮，中途终止（cancelled 且曾派发）亮到已执行阶段，驳回未派发（cancelled 且全项 pending）仅亮「拆解」。**「曾派发」= 任一任务实际运行过（离开 pending 且非 cancelled）**——计划内被单独取消的项不算派发。进度聚合排除 cancelled 项（不进分母，不可能完成）。
-- 边界：延续 D-022——Web 只读 + 两种闸门，**不含发起编排入口**（目标创建/派发走 CLI `agentctl chief run`）；Chief 视角不替代 Todo 标签（Todo 是逐项操作视图，Chief 编排是目标级流水线仪表）。
+- 边界：**本视图本身仍纯派生**（阶段点亮/聚合进度不落盘、不改 schema）；Web 编排写面由 D-024 放开（创建/派发/Chief 发起走 Web，均后台 Operation）——本决策的「不含发起编排入口」措辞被 D-024 取代，但派生语义不变；Chief 视角不替代 Todo 标签（Todo 是逐项操作视图，Chief 编排是目标级流水线仪表）。
 - 原因：issue 07 已覆盖任务项级渲染，issue 10 的真正增量是目标为中心的流水线呈现与进度聚合；派生态避免为「是否来自 Chief 拆解」新增持久化字段（plan 有 items 即视为拆解完成），保持切片最小。
 
 ## D-001 - 引入多 Agent 协作骨架

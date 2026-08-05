@@ -13,8 +13,10 @@ import {
   MessageSquare,
   Play,
   PlugZap,
+  Plus,
   RefreshCw,
   Save,
+  Send,
   Square,
   Store,
   Terminal,
@@ -27,6 +29,7 @@ import {
   api,
   type AgentDetail,
   type AgentDocument,
+  type DashboardData,
   type JobConfig,
   type OperationDto,
   type SkillMetadata,
@@ -40,7 +43,17 @@ interface AgentDetailPageProps {
   agentId: string;
 }
 
-const tabs = ['概览', '身份文档', '任务', 'Todo', 'Skills', '日志', '备份', '诊断'] as const;
+const tabs = [
+  '概览',
+  '身份文档',
+  '任务',
+  'Todo',
+  '对话',
+  'Skills',
+  '日志',
+  '备份',
+  '诊断',
+] as const;
 type Tab = (typeof tabs)[number] | 'Chief 编排';
 
 const documentKeys = [
@@ -730,7 +743,8 @@ function useTaskPlansPolling(agentId: string) {
       setBusy(undefined);
     }
   };
-  return { plans, busy, error, feedback, refresh, run };
+  // D-024：setError 暴露给调用方做表单校验提示（不发请求）。
+  return { plans, busy, error, feedback, refresh, run, setError };
 }
 
 // 展开/收起一组 plan 的共享状态（TodoTab 与 ChiefPipelineTab 复用）。
@@ -746,9 +760,127 @@ function useExpandSet() {
   return { expanded, toggle };
 }
 
+// Web 编排写面（D-024）：计划 id 由前端生成 plan-<8 hex>，复用后端 planWithChief 的命名模式。
+function generatePlanId(): string {
+  return `plan-${crypto.randomUUID().slice(0, 8)}`;
+}
+
+// 计划级操作按钮（派发/确认/驳回）——TodoTab 与 ChiefPipelineTab 共用同一套逻辑与文案。
+function PlanActionButtons({
+  plan,
+  agentId,
+  busy,
+  run,
+}: {
+  plan: TaskPlan;
+  agentId: string;
+  busy: string | undefined;
+  run: (label: string, action: () => Promise<unknown>, success?: string) => Promise<void>;
+}) {
+  return (
+    <>
+      {plan.status === 'active' && (
+        <button
+          className="button primary"
+          disabled={Boolean(busy)}
+          onClick={() =>
+            void run(
+              `run:${plan.id}`,
+              () => api.runTaskPlan(agentId, plan.id),
+              `已派发计划 ${plan.id}，可到操作中心查看进度。`,
+            )
+          }
+        >
+          <Play size={15} />
+          派发执行
+        </button>
+      )}
+      {plan.status === 'draft' && (
+        <>
+          <button
+            className="button primary"
+            disabled={Boolean(busy)}
+            onClick={() =>
+              void run(
+                `confirm:${plan.id}`,
+                () => api.confirmPlan(agentId, plan.id),
+                `已确认计划 ${plan.id}，可派发执行。`,
+              )
+            }
+          >
+            <CheckCircle2 size={15} />
+            确认计划
+          </button>
+          <button
+            className="button ghost danger-text"
+            disabled={Boolean(busy)}
+            onClick={async () => {
+              const note = window.prompt(`驳回计划 ${plan.id}（可附理由）：`) ?? '';
+              await run(
+                `reject:${plan.id}`,
+                () => api.rejectPlan(agentId, plan.id, note || undefined),
+                `已驳回计划 ${plan.id}。`,
+              );
+            }}
+          >
+            <XCircle size={15} />
+            驳回计划
+          </button>
+        </>
+      )}
+    </>
+  );
+}
+
 function TodoTab({ agentId }: { agentId: string }) {
-  const { plans, busy, error, feedback, refresh, run } = useTaskPlansPolling(agentId);
+  const { plans, busy, error, feedback, refresh, run, setError } = useTaskPlansPolling(agentId);
   const { expanded, toggle } = useExpandSet();
+  const [showCreate, setShowCreate] = useState(false);
+  const [newPlanName, setNewPlanName] = useState('');
+  // 加任务项表单：每个展开的 draft 计划一行（agent 选择 + 标题 + 提示词 + 添加）。
+  const [agents, setAgents] = useState<DashboardData['agents']>([]);
+  const [itemAgent, setItemAgent] = useState('');
+  const [itemTitle, setItemTitle] = useState('');
+  const [itemPrompt, setItemPrompt] = useState('');
+  const [addingTo, setAddingTo] = useState<string>();
+  useEffect(() => {
+    const result = api.listAgents();
+    if (result && typeof result.then === 'function') {
+      void result.then(setAgents).catch(() => undefined);
+    }
+  }, []);
+  const createPlan = async () => {
+    const name = newPlanName.trim();
+    if (!name) {
+      setError('计划名称不能为空。');
+      return;
+    }
+    await run(
+      'create-plan',
+      () => api.createTaskPlan(agentId, generatePlanId(), name),
+      `已创建计划 ${name}。`,
+    );
+    setNewPlanName('');
+  };
+  const addItem = async (planId: string) => {
+    if (!itemTitle.trim() || !itemPrompt.trim() || !itemAgent) {
+      setError('请填写任务标题、执行员工与提示词。');
+      return;
+    }
+    await run(
+      `add-item:${planId}`,
+      () =>
+        api.addTaskItem(agentId, planId, {
+          id: `item-${crypto.randomUUID().slice(0, 8)}`,
+          title: itemTitle.trim(),
+          agent: itemAgent,
+          prompt: itemPrompt.trim(),
+        }),
+      `已添加任务项 ${itemTitle.trim()}。`,
+    );
+    setItemTitle('');
+    setItemPrompt('');
+  };
   return (
     <section className="panel">
       <div className="panel-heading">
@@ -756,10 +888,19 @@ function TodoTab({ agentId }: { agentId: string }) {
           <h2>Todo 任务</h2>
           <span>计划状态机 · 2 秒轮询刷新</span>
         </div>
-        <button className="button ghost" onClick={() => void run('refresh', refresh)}>
-          <RefreshCw size={15} />
-          刷新
-        </button>
+        <div className="button-row">
+          <button className="button ghost" onClick={() => void run('refresh', refresh)}>
+            <RefreshCw size={15} />
+            刷新
+          </button>
+          <button
+            className="button primary"
+            onClick={() => setShowCreate(!showCreate)}
+            disabled={Boolean(busy)}
+          >
+            {showCreate ? '收起表单' : '新建计划'}
+          </button>
+        </div>
       </div>
       {error && <div className="notice danger">{error}</div>}
       {feedback && (
@@ -767,11 +908,38 @@ function TodoTab({ agentId }: { agentId: string }) {
           {feedback}
         </div>
       )}
-      {plans.length === 0 ? (
+      {showCreate && (
+        <div className="inline-form">
+          <div className="form-grid two">
+            <label>
+              计划名称
+              <input
+                value={newPlanName}
+                placeholder="例如：发布新版产品"
+                onChange={(event) => setNewPlanName(event.target.value)}
+              />
+            </label>
+          </div>
+          <div className="button-row">
+            <button
+              className="button primary"
+              disabled={Boolean(busy)}
+              onClick={() => void createPlan()}
+            >
+              <CheckCircle2 size={15} />
+              创建计划
+            </button>
+          </div>
+        </div>
+      )}
+      {plans.length === 0 && !showCreate ? (
         <div className="empty-state">
           <ListTodo size={26} />
           <h3>暂无 Todo 计划</h3>
-          <p>通过 CLI 的 plan / chief 命令创建计划后，在此确认、派发与合并审查。</p>
+          <p>
+            点击「新建计划」创建目标，或通过 CLI 的 plan / chief
+            命令创建计划后，在此确认、派发与合并审查。
+          </p>
         </div>
       ) : (
         <div className="todo-list">
@@ -788,39 +956,7 @@ function TodoTab({ agentId }: { agentId: string }) {
                   </small>
                 </button>
                 <div className="button-row">
-                  {plan.status === 'draft' && (
-                    <>
-                      <button
-                        className="button primary"
-                        disabled={Boolean(busy)}
-                        onClick={() =>
-                          void run(
-                            `confirm:${plan.id}`,
-                            () => api.confirmPlan(agentId, plan.id),
-                            `已确认计划 ${plan.id}，可派发执行。`,
-                          )
-                        }
-                      >
-                        <CheckCircle2 size={15} />
-                        确认计划
-                      </button>
-                      <button
-                        className="button ghost danger-text"
-                        disabled={Boolean(busy)}
-                        onClick={async () => {
-                          const note = window.prompt(`驳回计划 ${plan.id}（可附理由）：`) ?? '';
-                          await run(
-                            `reject:${plan.id}`,
-                            () => api.rejectPlan(agentId, plan.id, note || undefined),
-                            `已驳回计划 ${plan.id}。`,
-                          );
-                        }}
-                      >
-                        <XCircle size={15} />
-                        驳回计划
-                      </button>
-                    </>
-                  )}
+                  <PlanActionButtons plan={plan} agentId={agentId} busy={busy} run={run} />
                 </div>
               </div>
               {plan.note && <p className="muted">驳回/取消理由：{plan.note}</p>}
@@ -836,6 +972,58 @@ function TodoTab({ agentId }: { agentId: string }) {
                       run={run}
                     />
                   ))}
+                  {plan.status === 'draft' && (
+                    <div className="todo-add-item">
+                      <div className="form-grid two">
+                        <label>
+                          任务标题
+                          <input
+                            value={itemTitle}
+                            placeholder="例如：撰写发布公告"
+                            onChange={(event) => setItemTitle(event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          执行员工
+                          <select
+                            value={itemAgent}
+                            onChange={(event) => setItemAgent(event.target.value)}
+                          >
+                            <option value="">选择员工…</option>
+                            {agents
+                              .filter((a) => !a.archived)
+                              .map((a) => (
+                                <option key={a.id} value={a.id}>
+                                  {a.name} ({a.id})
+                                </option>
+                              ))}
+                          </select>
+                        </label>
+                      </div>
+                      <label>
+                        提示词
+                        <textarea
+                          value={itemPrompt}
+                          rows={2}
+                          placeholder="交给该员工的完整任务描述…"
+                          onChange={(event) => setItemPrompt(event.target.value)}
+                        />
+                      </label>
+                      <div className="button-row">
+                        <button
+                          className="button primary"
+                          disabled={Boolean(busy) || addingTo !== undefined}
+                          onClick={() => {
+                            setAddingTo(plan.id);
+                            void addItem(plan.id).finally(() => setAddingTo(undefined));
+                          }}
+                        >
+                          <Plus size={15} />
+                          添加任务项
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </article>
@@ -1033,11 +1221,28 @@ function PipelineStages({ stages }: { stages: PipelineStageFlags }) {
   );
 }
 
-// Chief 视角页（issue 10）：对一个目标看整条编排流水线（计划→执行→审查→结果），
-// 聚合整体进度 + 阶段点亮，2s 轮询。纯流水线视图——发起/派发仍走 CLI（D-022 边界）。
+// Chief 视角页（issue 10 + D-024）：对一个目标看整条编排流水线（计划→执行→审查→结果），
+// 聚合整体进度 + 阶段点亮，2s 轮询。D-024 起 Web 可发起目标（chief-run 后台拆解）与派发。
 function ChiefPipelineTab({ agentId }: { agentId: string }) {
-  const { plans, busy, error, feedback, refresh, run } = useTaskPlansPolling(agentId);
+  const { plans, busy, error, feedback, refresh, run, setError } = useTaskPlansPolling(agentId);
   const { expanded, toggle } = useExpandSet();
+  const [goal, setGoal] = useState('');
+  const [concurrency, setConcurrency] = useState('');
+  const submitGoal = async () => {
+    const trimmed = goal.trim();
+    if (!trimmed) {
+      setError('目标不能为空。');
+      return;
+    }
+    await run(
+      'chief-run',
+      () =>
+        api.chiefRun(agentId, trimmed, concurrency ? Number.parseInt(concurrency, 10) : undefined),
+      `已发起目标编排，Chief 正在后台拆解，稍后刷新查看流水线。`,
+    );
+    setGoal('');
+    setConcurrency('');
+  };
   return (
     <section className="panel">
       <div className="panel-heading">
@@ -1056,11 +1261,44 @@ function ChiefPipelineTab({ agentId }: { agentId: string }) {
           {feedback}
         </div>
       )}
+      <div className="inline-form">
+        <div className="form-grid two">
+          <label>
+            目标
+            <input
+              value={goal}
+              placeholder="例如：发布新版产品上线"
+              onChange={(event) => setGoal(event.target.value)}
+            />
+          </label>
+          <label>
+            并发数（可选，1-8）
+            <input
+              type="number"
+              min={1}
+              max={8}
+              value={concurrency}
+              placeholder="默认 1"
+              onChange={(event) => setConcurrency(event.target.value)}
+            />
+          </label>
+        </div>
+        <div className="button-row">
+          <button
+            className="button primary"
+            disabled={Boolean(busy) || !goal.trim()}
+            onClick={() => void submitGoal()}
+          >
+            <Workflow size={15} />
+            发起目标
+          </button>
+        </div>
+      </div>
       {plans.length === 0 ? (
         <div className="empty-state">
           <Workflow size={26} />
           <h3>暂无编排目标</h3>
-          <p>通过 CLI 的 chief run 发起目标编排后，在此查看整条流水线。</p>
+          <p>在上方输入目标发起编排，Chief 会在后台拆解成计划；也可通过 CLI 的 chief run 发起。</p>
         </div>
       ) : (
         <div className="todo-list">
@@ -1077,39 +1315,7 @@ function ChiefPipelineTab({ agentId }: { agentId: string }) {
                     </small>
                   </button>
                   <div className="button-row">
-                    {plan.status === 'draft' && (
-                      <>
-                        <button
-                          className="button primary"
-                          disabled={Boolean(busy)}
-                          onClick={() =>
-                            void run(
-                              `confirm:${plan.id}`,
-                              () => api.confirmPlan(agentId, plan.id),
-                              `已确认计划 ${plan.id}，可派发执行。`,
-                            )
-                          }
-                        >
-                          <CheckCircle2 size={15} />
-                          确认计划
-                        </button>
-                        <button
-                          className="button ghost danger-text"
-                          disabled={Boolean(busy)}
-                          onClick={async () => {
-                            const note = window.prompt(`驳回计划 ${plan.id}（可附理由）：`) ?? '';
-                            await run(
-                              `reject:${plan.id}`,
-                              () => api.rejectPlan(agentId, plan.id, note || undefined),
-                              `已驳回计划 ${plan.id}。`,
-                            );
-                          }}
-                        >
-                          <XCircle size={15} />
-                          驳回计划
-                        </button>
-                      </>
-                    )}
+                    <PlanActionButtons plan={plan} agentId={agentId} busy={busy} run={run} />
                   </div>
                 </div>
                 {plan.note && <p className="muted">驳回/取消理由：{plan.note}</p>}
@@ -1133,6 +1339,118 @@ function ChiefPipelineTab({ agentId }: { agentId: string }) {
           })}
         </div>
       )}
+    </section>
+  );
+}
+
+// Web 单轮对话（D-024）：发送 prompt → POST chat（后台 Operation）→ 轮询 events 读回流式输出。
+// 会话记录只存本组件内存，不持久化（原始 diff/transcript 边界保持，D-022/D-006）。
+function ChatTab({ agentId }: { agentId: string }) {
+  const [prompt, setPrompt] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [messages, setMessages] = useState<
+    Array<{ role: 'user' | 'assistant'; text: string; running?: boolean }>
+  >([]);
+  const send = async () => {
+    const trimmed = prompt.trim();
+    if (!trimmed || busy) return;
+    setPrompt('');
+    setError('');
+    setBusy(true);
+    const runId = messages.length;
+    setMessages((current) => [...current, { role: 'user', text: trimmed }]);
+    setMessages((current) => [...current, { role: 'assistant', text: '', running: true }]);
+    try {
+      const operation = await api.chat(agentId, trimmed);
+      let lastSeq = 0;
+      let done = false;
+      for (let i = 0; !done && i < 600; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const events = await api.operationEvents(operation.id, lastSeq);
+        const last = events.at(-1);
+        if (last) {
+          lastSeq = last.seq;
+          const output = events.filter((event) => event.kind === 'output' && event.message);
+          if (output.length > 0) {
+            const text = output.map((event) => event.message).join('\n');
+            setMessages((current) =>
+              current.map((message, index) =>
+                index === runId + 1 ? { role: 'assistant', text } : message,
+              ),
+            );
+          }
+        }
+        const current = await api.operation(operation.id);
+        done = ['succeeded', 'failed', 'cancelled'].includes(current.state);
+      }
+      if (!done) setError('对话超时（10 分钟），请查看操作中心。');
+      const current = await api.operation(operation.id);
+      if (current.state === 'failed') setError(current.error?.message ?? '对话失败。');
+      setMessages((current) =>
+        current.map((message, index) =>
+          index === runId + 1 ? { ...message, running: false } : message,
+        ),
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      setMessages((current) =>
+        current.map((message, index) =>
+          index === runId + 1 ? { ...message, running: false } : message,
+        ),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  const autoGrow = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      void send();
+    }
+  };
+  return (
+    <section className="panel">
+      <div className="panel-heading">
+        <div>
+          <h2>对话</h2>
+          <span>单轮问答 · claude -p / codex exec · 输出流式推送</span>
+        </div>
+      </div>
+      {error && <div className="notice danger">{error}</div>}
+      <div className="chat-thread" aria-live="polite">
+        {messages.length === 0 ? (
+          <div className="empty-state">
+            <MessageSquare size={26} />
+            <h3>开始对话</h3>
+            <p>输入问题并发送，员工将单轮回答。Enter 发送，Shift+Enter 换行。</p>
+          </div>
+        ) : (
+          messages.map((message, index) => (
+            <div className={`chat-bubble ${message.role}`} key={index}>
+              <pre className="chat-pre">{message.text || (message.running ? '思考中…' : '')}</pre>
+            </div>
+          ))
+        )}
+      </div>
+      <div className="chat-composer">
+        <textarea
+          value={prompt}
+          rows={3}
+          disabled={busy}
+          placeholder={busy ? '员工正在回答…' : '输入消息，Enter 发送'}
+          onChange={(event) => setPrompt(event.target.value)}
+          onKeyDown={autoGrow}
+        />
+        <button
+          className="button primary"
+          disabled={busy || !prompt.trim()}
+          onClick={() => void send()}
+        >
+          <Send size={15} />
+          发送
+        </button>
+      </div>
     </section>
   );
 }
@@ -1423,7 +1741,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   if (error) return <div className="notice danger">{error}</div>;
   if (!detail || !guidance) return <div className="skeleton-page">正在读取员工配置…</div>;
   const registry = detail.registry;
-  // Chief 编排视图仅对 role=chief 的员工展示（issue 10）。
+  // Chief 编排视图仅对 role=chief 的员工展示（issue 10）；对话标签所有员工可见（D-024）。
   const visibleTabs: Tab[] =
     registry.role === 'chief' ? [...tabs.slice(0, 4), 'Chief 编排', ...tabs.slice(4)] : [...tabs];
   return (
@@ -1448,6 +1766,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
       {tab === '身份文档' && <DocumentsTab agentId={agentId} />}
       {tab === '任务' && <JobsTab agentId={agentId} />}
       {tab === 'Todo' && <TodoTab agentId={agentId} />}
+      {tab === '对话' && <ChatTab agentId={agentId} />}
       {tab === 'Chief 编排' && registry.role === 'chief' && <ChiefPipelineTab agentId={agentId} />}
       {tab === 'Skills' && <SkillsTab agentId={agentId} />}
       {tab === '日志' && <LogsTab agentId={agentId} />}

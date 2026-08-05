@@ -939,6 +939,20 @@ export class FactoryApplication {
     return { plan: current, source: 'chief' };
   }
 
+  // Web 发起入口（D-024）：把「Chief 拆解」放进后台 Operation，避免同步阻塞 HTTP。
+  // 拆解完成后停在 draft 等人工确认（confirm/reject 由 Web 显式调用，等价 CLI 的 inquirer 门）。
+  // concurrency 仅作参数透传，派发时由 runTaskPlan 使用——Web 侧发起目标时不派发。
+  async startPlanWithChief(
+    chiefId: string,
+    goal: string,
+    _options: { concurrency?: number } = {},
+  ): Promise<OperationDto> {
+    return this.operationManager.start('task_plan', chiefId, async () => {
+      await this.planWithChief(chiefId, goal);
+      return { exitCode: 0 };
+    });
+  }
+
   // 顶层一句话闭环：planWithChief → 等确认（confirm 回调）→ 派发 → 交叉审查。审查合并留给调用方。
   // 派发以后台 Operation 执行；orchestrate 自身保持同步（交互确认门），内部 await 派发终态后返回
   // 最终计划并附 operation（OperationDto，供进度/取消观测）。
@@ -980,6 +994,43 @@ export class FactoryApplication {
     );
     // OP1 Stage C：chat 交互不落盘 transcript（D-006），仅当显式 opt-in 时经 runLogged 持久化。
     return code;
+  }
+
+  // Web 单轮对话（D-024）：非交互调用（claude -p / codex exec），runLogged 捕获 stdout 到日志，
+  // 返回 stdout 文本供前端渲染。无锁（与 CLI chat 一致）；transcript 沿用 runAgent 的 opt-in 管线。
+  async runChat(id: string, prompt: string, timeoutSeconds = 300): Promise<{ text: string }> {
+    if (!prompt.trim()) throw new AgentCtlError('VALIDATION_ERROR', '消息内容不能为空。');
+    if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0 || timeoutSeconds > 86_400) {
+      throw new AgentCtlError('VALIDATION_ERROR', 'timeout 必须是 1 到 86400 秒。');
+    }
+    const { registry, agent } = await this.getAgent(id);
+    await this.prepareRuntime(registry, agent);
+    const result = await new ProcessRunner(this.paths.logsDir).runLogged(
+      id,
+      // structured: true → claude -p --output-format json / codex exec --json，
+      // 与 runAgent 一致：stdout 为结构化 JSON，可经 parseStructuredResult 提取纯文本，
+      // runLogged 解析 usage 供 gen_ai.* span 上报（OP4-C，best-effort）。
+      getRuntimeAdapter(agent.runtime).run(
+        registry,
+        agent.runtime,
+        prompt,
+        timeoutSeconds * 1000,
+        true,
+      ),
+      {
+        ...(agent.memory.transcript_persist === true ? { transcript: true } : {}),
+        provider: agent.runtime.provider,
+        structured: true,
+        mirror: false,
+      },
+    );
+    // OP1 Stage D：与 runAgent 一致——experience_extraction=true 且 transcript_persist=true 时
+    // 提取经验写回 knowledge/lessons/（仅当 transcriptFile 已生成）。
+    await this.maybeExtractExperience(id, agent, result.transcriptFile);
+    const raw = await fs.readFile(result.stdoutFile, 'utf8').catch(() => '');
+    // 结构化 result 解析失败（非 JSON/空输出）返回 undefined，降级为原始 stdout 文本。
+    const text = parseStructuredResult(agent.runtime.provider, raw) ?? raw;
+    return { text };
   }
 
   async runtimeAuth(id: string, operation: 'login' | 'status'): Promise<number> {

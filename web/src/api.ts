@@ -396,4 +396,40 @@ export const api = {
       `/agents/${encodeURIComponent(id)}/task-plans/${encodeURIComponent(planId)}/items/${encodeURIComponent(itemId)}/actions/reject-review`,
       { method: 'POST', body: JSON.stringify(note ? { note } : {}) },
     ),
+  // TASK-027（D-024）：Web 编排写面 + 单轮对话。全部返回 OperationDto（202）或更新后的计划。
+  createTaskPlan: (id: string, planId: string, name: string) =>
+    request<TaskPlan>(`/agents/${encodeURIComponent(id)}/task-plans`, {
+      method: 'POST',
+      body: JSON.stringify({ planId, name }),
+    }),
+  addTaskItem: (
+    id: string,
+    planId: string,
+    input: {
+      id: string;
+      title: string;
+      agent: string;
+      prompt: string;
+      dependencies?: string[];
+    },
+  ) =>
+    request<TaskPlan>(
+      `/agents/${encodeURIComponent(id)}/task-plans/${encodeURIComponent(planId)}/items`,
+      { method: 'POST', body: JSON.stringify(input) },
+    ),
+  runTaskPlan: (id: string, planId: string, concurrency?: number) =>
+    request<OperationDto>(
+      `/agents/${encodeURIComponent(id)}/task-plans/${encodeURIComponent(planId)}/actions/run`,
+      { method: 'POST', body: JSON.stringify(concurrency ? { concurrency } : {}) },
+    ),
+  chiefRun: (id: string, goal: string, concurrency?: number) =>
+    request<OperationDto>(`/agents/${encodeURIComponent(id)}/actions/chief-run`, {
+      method: 'POST',
+      body: JSON.stringify(concurrency ? { goal, concurrency } : { goal }),
+    }),
+  chat: (id: string, prompt: string, timeoutSeconds?: number) =>
+    request<OperationDto>(`/agents/${encodeURIComponent(id)}/actions/chat`, {
+      method: 'POST',
+      body: JSON.stringify(timeoutSeconds ? { prompt, timeoutSeconds } : { prompt }),
+    }),
 };

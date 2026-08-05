@@ -2,43 +2,44 @@
 
 ## 身份
 
-Task ID: TASK-026
+Task ID: TASK-027
 
-Task title: Chief Web 编排流水线视图（spec-chief-todo-mcp issue 10：纯流水线视图——目标流水线卡片 + 阶段条 + 聚合进度 + role 门控 + 2s 轮询）
+Task title: Web 编排写面 + 单轮对话（放开 D-022/D-023 只读边界：Todo 创建/加项/派发 + Chief 发起 + 对话标签）
 
 Outgoing/current agent: claude-20260803-01
 
-Intended next role/agent: 用户或后续维护者（spec-chief-todo-mcp 承接：MCP 增强路径——请求内 SSE progress / 推送订阅；如需 Web 发起编排（创建目标/派发），须先放开 D-022/D-023 边界并拆同步 orchestrate）
+Intended next role/agent: 用户或后续维护者（S3 飞书入站创建 todo 单独立项；如需要 Web 展示原始 diff，属后续增强，见 D-022/D-024）
 
 Branch/worktree: main
 
-Status: DONE（切片已实现并通过 /code-review，提交后更新）
+Status: 实现完成，验证/评审中（提交后更新）
 
-更新时间：2026-08-05 15:08 +0800（本地已提交，未 push）
+更新时间：2026-08-05 16:04 +0800
 
 ## 已完成
 
-- **Chief 编排视图（issue 10）**：`web/src/pages/AgentDetailPage.tsx` 新增「Chief 编排」标签（仅 `detail.registry.role === 'chief'` 时插入标签并渲染，worker 不显示）。`ChiefPipelineTab` 把 Chief 拥有的每个目标（plan）渲染成流水线卡片：**阶段条**（拆解 → 计划确认 → 执行 → 审查 → 结果，按派生状态点亮）+ **聚合整体进度**（`summarizePlan`：如 `2/3 完成 · 1 待审查`）。展开复用任务项渲染与两种闸门（计划级确认/驳回、审查级确认合并/驳回返工），2s 轮询。
-- **纯派生（不落盘、不改后端）**：`derivePipeline`/`summarizePlan` 从 plan.status + item 状态分布纯计算，无副作用；`getAgent` 响应本就含 `registry.role`（RegistryAgent），仅补 web 端 `AgentDetail.registry.role` 类型声明——**后端零改动、零新端点**（D-023）。
-- **共享抽取**：轮询/闸门执行逻辑抽为 `useTaskPlansPolling` hook（TodoTab 与 ChiefPipelineTab 复用）；任务项卡片抽为 `TaskItemRow`（两标签复用）；展开状态抽为 `useExpandSet`（两标签复用）。Standards 评审三项 judgement call（run/轮询重复、PipelineStages 接口与组件同名、展开状态重复）均已修复。
-- **样式**：`web/src/styles.css` 新增 `.pipeline-stages/.pipeline-stage(.done)/.pipeline-arrow`，复用 panel/status-badge/button 设计系统。
-- **测试**：`tests/web-ui.test.tsx` 19 过（含新增 4 个 Chief 测试——流水线渲染+role 门控（worker 不显示）、展开审查结论+确认合并/驳回返工、2s 轮询、阶段条累计到达门回归）。
-- **文档**：ARCHITECTURE「Chief 编排与 Todo 状态机」Web 视图段补 Chief 编排视图；TESTING 补覆盖；DECISIONS 记 D-023（派生状态不落盘 + 不新增写面 + 阶段语义）。
+- **后端应用层**：`startPlanWithChief(chiefId, goal)`（把阻塞的 `planWithChief` 放进后台 Operation，完成停在 draft 等人工确认——等价 CLI inquirer 门）；`runChat(id, prompt, timeoutSeconds)`（走 `runLogged` 复用 transcript/experience 管线——`structured: true` 与 runAgent 一致、`provider`/`structured` 透传供 OP4-C usage 上报、`transcript_persist` opt-in、`experience_extraction` opt-in 时提取经验写回 knowledge/lessons/；`parseStructuredResult ?? raw` 降级为原始 stdout）。
+- **Web 写路由（5 个）**：`POST /agents/:id/task-plans`（建计划）、`.../task-plans/:planId/items`（加任务项）、`.../actions/run`（派发，202 + OperationDto）、`.../actions/chief-run`（Chief 发起，后台拆解）、`.../actions/chat`（单轮对话，进度 + 完成时最终回答作为 output 事件写入）。全部走既有 `operations.start` 后台模式 + 202 + 前端轮询 events。
+- **前端**：`api.ts` 5 个方法；`TodoTab` 新建计划表单（planId 前端生成 `plan-<8hex>`）+ draft 展开加任务项（执行员工选择器）+ active「派发执行」；`ChiefPipelineTab` 发起目标表单（goal + 可选并发）+ 派发执行按钮；新「对话」标签（所有员工）——Enter 发送、busy 禁用、1s 轮询 events 流式渲染、会话只存内存。
+- **样式**：`.todo-add-item`（draft 加项表单）、`.chat-thread/.chat-bubble/.chat-composer` 等对话类。
+- **测试**：web-server.test.ts 3 新测（建计划/加项/确认/派发 202 + 后台跑完 item 离开 pending；payload 校验 400；chat 进度/output 事件流——`runAgent`/`runChat` 被 mock 不 spawn 真实进程；setup 重构为共享 OperationManager 返回 `{server, application}`）；web-ui.test.tsx 3 新测（Todo 写面、Chief 发起、对话轮询读回）+ mock 补齐 6 个方法；experience.test.ts 1 新测（runChat 自动提取经验写回）+ 修复既有 date-sensitive 硬编码日期。
+- **文档**：DECISIONS D-024（Web 编排写面开放）+ D-022/D-023 边界措辞更新（「Web 只读」被取代，原始 diff 不持久化保持）；ARCHITECTURE「Chief 编排与 Todo 状态机」Web 视图段补写面 + 对话标签；TESTING 补覆盖。
 
 ## 验证
 
-| 命令/检查                              | 结果   | 相关输出                                                                                                                                                                                                                                                                                |
-| -------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run build`                        | 通过   | tsc + vite 全绿（含 web tsconfig exactOptionalPropertyTypes，busy prop 用 `string \| undefined`）                                                                                                                                                                                       |
-| `npx tsc --noEmit`                     | 通过   | 全绿                                                                                                                                                                                                                                                                                    |
-| `npx vitest run tests/web-ui.test.tsx` | 19 过  | 含新增 4 个 Chief 测试（流水线渲染+role 门控、展开审查门、2s 轮询、阶段条累计到达门回归）                                                                                                                                                                                               |
-| `npm test`                             | 1 失败 | 310 过 1 失败；唯一失败为既有 date-sensitive `tests/experience.test.ts`（硬编码 2026-08-04，非本任务引入）                                                                                                                                                                              |
-| lint + prettier                        | 通过   | eslint 无错误；源文件 prettier 全绿（.agent/TASK_BOARD.md 表格行宽与既有提交宽度对齐，diff 仅 +1 行）                                                                                                                                                                                   |
-| /code-review                           | 通过   | Standards（无硬违规；修 3 项 judgement call：hook 抽取 useTaskPlansPolling、PipelineStages→PipelineStageFlags、展开状态抽 useExpandSet）+ Spec（修 4：进度分母排除 cancelled、anyDispatched 排除单独取消项、active 未派发显示「待派发」、有失败进度补执行中；阶段条累计语义记入 D-023） |
+| 命令/检查                                 | 结果   | 相关输出                                                                                       |
+| ----------------------------------------- | ------ | ---------------------------------------------------------------------------------------------- |
+| `npx tsc --noEmit`                        | 通过   | 全绿                                                                                           |
+| `npm run build`                           | 通过   | tsc + vite 全绿                                                                                |
+| `npm run lint`                            | 通过   | eslint 无错误 + prettier 全绿（`startPlanWithChief` 的 `_options` 前缀处理未使用参数）         |
+| `npx vitest run tests/web-server.test.ts` | 8 过   | 含新增 3 个 D-024 写端点测试（建计划/加项/确认/派发 + payload 校验 + chat 进度/output 事件流） |
+| `npx vitest run tests/web-ui.test.tsx`    | 22 过  | 含新增 3 个（Todo 写面、Chief 发起、对话轮询）                                                 |
+| `npm test`                                | 318 过 | 全绿（含修复既有 date-sensitive `tests/experience.test.ts`——硬编码 2026-08-04 改为动态日期）   |
 
 ## 安全边界与限制
 
-- **纯流水线视图（D-023）**：Web 只读 + 两种闸门，**不含发起编排入口**——目标创建/派发走 CLI `agentctl chief run`；后端 `src/` 零改动；原始 diff 仍不持久化（D-022）。
-- **派生语义**：阶段「拆解完成 = plan.items 非空」（不区分 Chief 拆解 vs 手工创建，plan 不持久化 source）；「结果 = 全部非 cancelled 项 completed」；「曾派发 = 任一任务离开 pending 且非 cancelled」（单独取消的项不算派发，D-023）。若未来需要「是否来自 Chief 拆解」指示，须先加持久化字段（D-023 记录）。
-- Chief 编排视图与 Todo 标签并存：前者目标级流水线仪表，后者逐项操作视图，不互相替代。
+- **原始 diff 不持久化/不展示（D-022 保持）**：Web 编排写面只写计划文件与派发，审查结论仍只持久化 verdict+note；对话会话记录不落盘（D-006 transcript 边界，`runChat` 无锁、`mirror: false` 与 CLI chat 一致）。
+- **全部写操作后台 Operation**：无同步长请求；202 + OperationDto，前端轮询 `/api/v1/operations/:id/events`（D-021 单一应用 seam——Web/CLI/MCP 共享 `FactoryApplication` 同一编排层）。
+- **Chief 发起不自动派发**：`startPlanWithChief` 拆解完停在 draft 等确认；`concurrency` 仅作派发参数透传。
+- **S3 飞书入站创建 todo 未实现**：`lark-channel-bridge` 无 send/webhook 子命令、无入站路径，属全新网络面 + 安全评审，单独立项（D-024 记录）。
 - 未 push；按用户常驻规则「任务完成即 commit」只提交不推送。

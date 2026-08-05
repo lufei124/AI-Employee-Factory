@@ -690,6 +690,104 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
     },
   );
 
+  // TASK-027（D-024）：Web 编排写面——建计划/加任务项/派发/Chief 发起/对话。
+  // 全部走既有 operations.start 后台 Operation 模式（202 + OperationDto，前端轮询 events）。
+  server.post<{ Params: { id: string } }>('/api/v1/agents/:id/task-plans', async (request) => {
+    const body = z
+      .object({ planId: z.string().min(1), name: z.string().min(1) })
+      .parse(request.body);
+    return {
+      data: await options.application.createTaskPlan(request.params.id, {
+        id: body.planId,
+        name: body.name,
+      }),
+    };
+  });
+
+  server.post<{ Params: { id: string; planId: string } }>(
+    '/api/v1/agents/:id/task-plans/:planId/items',
+    async (request) => {
+      const body = z
+        .object({
+          id: z.string().min(1),
+          title: z.string().min(1),
+          agent: z.string().min(1),
+          prompt: z.string().min(1),
+          dependencies: z.array(z.string()).optional(),
+        })
+        .parse(request.body);
+      return {
+        data: await options.application.addTaskItem(request.params.id, request.params.planId, {
+          id: body.id,
+          title: body.title,
+          agent: body.agent,
+          prompt: body.prompt,
+          ...(body.dependencies ? { dependencies: body.dependencies } : {}),
+        }),
+      };
+    },
+  );
+
+  server.post<{ Params: { id: string; planId: string } }>(
+    '/api/v1/agents/:id/task-plans/:planId/actions/run',
+    async (request, reply) => {
+      const body = z
+        .object({ concurrency: z.number().int().min(1).max(8).optional() })
+        .parse(request.body ?? {});
+      const operation = await options.application.runTaskPlan(
+        request.params.id,
+        request.params.planId,
+        { ...(body.concurrency ? { concurrency: body.concurrency } : {}) },
+      );
+      reply.code(202);
+      return { data: operation };
+    },
+  );
+
+  // Chief 发起：goal 在后台 Operation 中拆解（planWithChief 阻塞几十秒），返回 202 + OperationDto，
+  // 前端轮询 operations events 后刷新计划列表。
+  server.post<{ Params: { id: string } }>(
+    '/api/v1/agents/:id/actions/chief-run',
+    async (request, reply) => {
+      const body = z
+        .object({ goal: z.string().min(1), concurrency: z.number().int().min(1).max(8).optional() })
+        .parse(request.body);
+      const operation = await options.application.startPlanWithChief(request.params.id, body.goal, {
+        ...(body.concurrency ? { concurrency: body.concurrency } : {}),
+      });
+      reply.code(202);
+      return { data: operation };
+    },
+  );
+
+  // Web 单轮对话（D-024）：非交互单轮（claude -p / codex exec，stdout 为结构化 JSON）。
+  // 后台 Operation 推送进度事件；完成时把最终回答（解析后的文本）作为 output 事件写入，前端轮询读回。
+  // 原始 diff/对话记录不持久化（D-022/D-006 边界保持）。
+  server.post<{ Params: { id: string } }>(
+    '/api/v1/agents/:id/actions/chat',
+    async (request, reply) => {
+      const body = z
+        .object({
+          prompt: z.string().min(1),
+          timeoutSeconds: z.number().int().min(1).max(86_400).optional(),
+        })
+        .parse(request.body);
+      const operation = operations.start('chat', request.params.id, async ({ emit }) => {
+        emit({ kind: 'progress', progress: 10, message: '开始对话' });
+        const { text } = await options.application.runChat(
+          request.params.id,
+          body.prompt,
+          body.timeoutSeconds ?? 300,
+        );
+        emit({ kind: 'progress', progress: 90, message: '对话完成' });
+        emit({ kind: 'output', message: text });
+        return { exitCode: 0 };
+      });
+      reply.code(202);
+      return { data: operation };
+    },
+  );
+
   server.get('/api/v1/backups', async () => ({ data: await options.application.listBackups() }));
 
   server.post('/api/v1/backups/import', async (request, reply) => {
