@@ -264,4 +264,25 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 
 ---
 
+## D-028：员工自我配置定时任务（按需）
+
+- 状态：Accepted（已实施，TASK-031）
+- 日期：2026-08-05
+- 背景：用户需求「允许员工给自己配置定时任务 按需」。现状是 Job 定义存员工 workspace `automation/jobs/*.yaml`，由 launchd plist 定时触发，但只有管理员能创建/调度（`setJobEnabled` → `enableScheduled`）——员工即使写了 YAML 也不会产生任何调度。
+- 决定：
+  - **managed_by 标记**：`jobConfigSchema` 加 `managed_by: 'admin' | 'employee'`（缺省 admin，向后兼容）。同一目录，Web 显示 `[管理员]/[员工]` 徽标。
+  - **自动生效**：员工 `enabled: true` 的 job 在每次 run/chat/job 结束后自动 reconcile（`src/core/job-reconcile.ts` 的 `reconcileEmployeeJobs`，best-effort），安装 launchd 调度，无需人工审批。
+  - **文件 YAML 自我进化**（D-026 模式延伸）：员工在任务中写/改 `automation/jobs/*.yaml`，系统自动检测→调度→单文件 git 提交（`git add -- <relPath>`，绝不用 `add -A`）。
+  - **清单**：`schedules/<agent>/.employee-jobs.json` 记录上次已调度的 employee job 及其 `schedule.time`，用于检测删除/停用/改时间：删除或 `enabled:false` → 反注册（bootout + 删 plist）；`schedule.time` 变更 → 先反注册再重装（让 launchd 重新加载日历）。
+  - **权限放行**：`prepareRuntime` 幂等放行 `automation/jobs/**` 与 `automation/prompts/**`（仅 UX 平滑，非硬权限门——员工本就在 workspace 权限内）。
+  - **引导**：ENTRY 模板加「定时任务自我配置」节；种子 `automation/jobs/README.md` 说明 managed_by 协议。
+- 边界：
+  - 只对 `managed_by: employee` reconcile；管理员 job 不受自动 reconcile 影响。
+  - 单 job 校验失败（schema/路径逃逸 `assertInsideReal`）仅跳过该 job，不阻断其余。
+  - 脚本/job 仍以员工 runtime 的 workspace 权限运行，路径限制在 workspace 内，不扩大权限；员工不可改 `.claude/settings.json` 扩大权限。
+- 原因：把「员工自我进化」从「改文档」扩展到「配置自己的定时任务」，让例行工作自动化而无需每次人工；同时用 managed_by 明确边界，防止员工意外改动管理员任务。
+- 影响：新增 `JobStore.listTolerant()`（容错列举）；`factory-application.ts` 的 runAgent/runChat/runJob 后接 reconcile。
+
+---
+
 > 后续决策按 `D-XXX - 标题` 格式追加。模板见 [.agent/decisions/ADR-0000-template.md](../.agent/decisions/ADR-0000-template.md)。重要技术取舍（架构、API、数据、依赖、跨模块规则）须记录于此。

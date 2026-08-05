@@ -183,6 +183,10 @@ agentctl job enable user-operations daily-feedback-review
 agentctl job disable user-operations daily-feedback-review
 ```
 
+### 员工自我配置定时任务
+
+员工（AI）可在任务中给自己配置定时任务，无需人工介入：在 `automation/jobs/*.yaml` 写 `managed_by: employee` + `enabled: true`，系统会在每次任务执行结束后自动安装 launchd 调度并单文件 git 提交；删除文件或 `enabled: false` 自动反注册，修改 `schedule.time` 自动重新加载。`managed_by` 缺省为 `admin`，只有 `employee` 任务会被自动 reconcile。（Web「任务」页用 `[员工]/[管理员]` 徽标区分。）
+
 ## Skill 安装与迁移
 
 Skill 按作用域分为两级：

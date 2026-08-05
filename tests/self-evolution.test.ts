@@ -141,6 +141,25 @@ describe('员工自我进化（TASK-029）', () => {
     }
   });
 
+  it('ensureAgentDocsAllowed 幂等放行 automation/jobs 与 automation/prompts（D-028）', async () => {
+    const { paths } = await setup();
+    const workspace = path.join(paths.workspaceRoot, 'worker-a');
+
+    await ensureAgentDocsAllowed(workspace, ['automation/jobs/**', 'automation/prompts/**']);
+    await ensureAgentDocsAllowed(workspace, ['automation/jobs/**', 'automation/prompts/**']);
+
+    const settings = await fs.readJson(path.join(workspace, '.claude', 'settings.json'));
+    const allow = settings.permissions.allow as string[];
+    for (const rule of [
+      'Edit(automation/jobs/**)',
+      'Write(automation/jobs/**)',
+      'Edit(automation/prompts/**)',
+      'Write(automation/prompts/**)',
+    ]) {
+      expect(allow.filter((r) => r === rule)).toHaveLength(1);
+    }
+  });
+
   it('knowledgeWrite 后知识文件被单文件自动提交', async () => {
     const { app, paths } = await setup();
     const workspace = path.join(paths.workspaceRoot, 'worker-a');

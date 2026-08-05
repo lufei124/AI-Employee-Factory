@@ -59,6 +59,7 @@ export interface JobConfig {
   schema_version: 1;
   id: string;
   enabled: boolean;
+  managed_by: 'admin' | 'employee';
   schedule: { type: 'daily'; time: string };
   execution:
     | {

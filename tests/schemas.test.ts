@@ -107,4 +107,26 @@ describe('preset and job schemas', () => {
       }),
     ).toThrow();
   });
+
+  it('defaults managed_by to admin and accepts explicit employee (D-028)', () => {
+    const admin = jobConfigSchema.parse({
+      schema_version: 1,
+      id: 'daily-feedback-review',
+      enabled: false,
+      schedule: { type: 'daily', time: '09:00' },
+      execution: {
+        type: 'agent',
+        prompt_file: 'automation/prompts/daily-feedback-review.md',
+        timeout_seconds: 900,
+        concurrency: 'forbid',
+      },
+    });
+    expect(admin.managed_by).toBe('admin');
+
+    const employee = jobConfigSchema.parse({
+      ...admin,
+      managed_by: 'employee',
+    });
+    expect(employee.managed_by).toBe('employee');
+  });
 });

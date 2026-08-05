@@ -19,3 +19,6 @@
 - **FactoryApplication**：CLI 与 Web API 共用的应用用例编排层。
 - **Web Console**：由 `agentctl web` 临时启动、仅监听 `127.0.0.1` 的 React 本地管理页面。
 - **Operation**：Web 进程内表示 run、Doctor、Job、备份或恢复的异步状态及 SSE 事件流。
+- **Job（定时任务）**：定义在员工 workspace `automation/jobs/*.yaml`、由 launchd plist 定时触发 `agentctl _service job run` 的脚本/Agent 任务。
+- **managed_by**：Job 的来源标记（`admin`/`employee`，缺省 admin）。`employee` 任务由 `reconcileEmployeeJobs` 自动调度与反注册；`admin` 任务仅管理员经 `agentctl job`/Web「任务」页管理。
+- **员工 Job**：`managed_by: employee` 的定时任务——员工在任务中写 YAML 自我配置，系统自动安装调度、单文件 git 提交（D-028）。

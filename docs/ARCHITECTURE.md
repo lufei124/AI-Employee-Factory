@@ -46,6 +46,8 @@ Web 仅绑定 `127.0.0.1`：启动 URL fragment 中的一次性 token 交换为 
 
 **员工自我进化（D-026）**：员工（AI）可在任务执行阶段更新 `agent/ROLE.md`（岗位）、`GOALS.md`（目标）、`OPERATING_SYSTEM.md`（工作系统）、`POLICIES.md`（规则）与 `knowledge/` 知识做自我进化——`prepareRuntime` 幂等放行编辑（`ensureAgentDocsAllowed`），`runAgent`/`runChat`/`runJob` 成功后 `commitSelfEvolution` 单文件自动提交（`evolve: 更新 <basename>`），`knowledgeWrite`（含经验提取写回 `knowledge/lessons/`）提交 `evolve: 更新知识`；均 best-effort 不阻断主流程。员工不可修改 `.claude/settings.json` 扩大自身权限，单文件提交绝不用 `add -A`。
 
+**员工自我配置定时任务（D-028）**：员工可写 `automation/jobs/*.yaml`（`managed_by: employee` + `enabled: true`）给自己配置定时任务，`jobConfigSchema` 用 `managed_by`（缺省 admin）区分来源。`runAgent`/`runChat`/`runJob` 结束后经 `reconcileEmployeeJobs`（`src/core/job-reconcile.ts`，best-effort）自动 reconcile：`enabled: true` 的 job 安装 launchd 调度（`jobLaunchdService(...).enableScheduled()`），删除或 `enabled: false` 反注册（bootout + 删 plist），`schedule.time` 变更先反注册再重装；`schedules/<agent>/.employee-jobs.json` 记录上次调度集合与时间用于变化检测。新增/变更的 employee job YAML 单文件 git 提交（`job: 更新 <id>`）。`prepareRuntime` 幂等放行 `automation/jobs/**` 与 `automation/prompts/**`。只对 employee job 生效，管理员 job 不受自动 reconcile 影响；单 job 校验失败（schema/路径逃逸）仅跳过不阻断。
+
 飞书采用 `lark-coding-agent-bridge` 官方 PersonalAgent 注册与 WebSocket 长连接。Factory 保持每员工独立 `LARK_CHANNEL_HOME`，并在授权和启动边界把 profile 权限固定为 `workspace/workspace`；不使用 Bridge 自带 daemon，也不把 App Secret 放入 argv、plist 或日志。
 
 ## Web 单轮对话（D-024 对话部分）

@@ -369,6 +369,8 @@ function JobsTab({ agentId }: { agentId: string }) {
       schema_version: 1 as const,
       id,
       enabled: false,
+      // Web 是管理员入口，新建任务归管理员管理（员工任务由员工在任务内写在 automation/jobs）。
+      managed_by: 'admin' as const,
       schedule: { type: 'daily' as const, time },
     };
     const parsedArgs = args.split(/\s+/).filter(Boolean);
@@ -592,6 +594,13 @@ function JobsTab({ agentId }: { agentId: string }) {
             <article key={job.id}>
               <div>
                 <strong>{job.id}</strong>
+                <span
+                  className={`job-source-badge ${
+                    job.managed_by === 'employee' ? 'job-source-employee' : ''
+                  }`}
+                >
+                  {job.managed_by === 'employee' ? '员工' : '管理员'}
+                </span>
                 <span>
                   每天 {job.schedule.time} · {job.execution.type}
                 </span>

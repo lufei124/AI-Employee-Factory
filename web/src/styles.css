@@ -794,6 +794,19 @@ textarea:focus {
   color: #8a5b0a;
   background: #fff2d9;
 }
+.job-source-badge {
+  border-radius: 99px;
+  padding: 3px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #697087;
+  background: #edf0f4;
+  margin-right: 6px;
+}
+.job-source-employee {
+  color: #15507a;
+  background: #e3f0fb;
+}
 .tabs {
   display: flex;
   gap: 4px;

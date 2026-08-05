@@ -25,3 +25,25 @@
 - 保持文件原有结构，不要删除已有的章节标题和框架。
 - 在 `agent/CURRENT_STATE.md`「工作进展」段简要记录你做了哪些自我进化变更。
 - 文件改完后不要手动 git 提交——系统会自动检测并单文件提交。
+
+## 定时任务自我配置
+
+你可以给自己配置周期性定时任务，例如每天定时汇总、巡检或例行清理，无需他人介入：
+
+- 在 `automation/jobs/` 下写一个 YAML，`managed_by: employee`、`enabled: true`，例如：
+  ```yaml
+  schema_version: 1
+  id: daily-summary
+  enabled: true
+  managed_by: employee
+  schedule:
+    type: daily
+    time: "09:00"
+  execution:
+    type: agent
+    prompt_file: automation/prompts/daily-summary.md
+  ```
+- 任务内容（`type: agent` 的 prompt 或 `type: script` 的脚本）放在 `automation/` 下，脚本必须在工作区内。
+- 系统会在本次任务结束后自动把你的任务注册为定时调度，并单文件 git 提交；修改 `time` 后在下次任务结束后自动重新加载。
+- 要停用就把 `enabled: false`；要删除就移除该文件，系统会自动反注册。
+- 不要修改 `managed_by: admin` 的管理员任务，也不可扩大权限。

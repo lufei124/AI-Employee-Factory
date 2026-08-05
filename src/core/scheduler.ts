@@ -20,6 +20,22 @@ export class JobStore {
     return Promise.all(files.map((file) => this.readFile(path.join(this.jobsDir, file))));
   }
 
+  // D-028：reconcile 用容错列举——单个无效 job（schema 校验失败/路径逃逸）不阻断其余。
+  // 逐文件独立 parse，失败仅 console.warn 跳过，返回所有可解析的 job。
+  async listTolerant(): Promise<JobConfig[]> {
+    if (!(await fs.pathExists(this.jobsDir))) return [];
+    const files = (await fs.readdir(this.jobsDir)).filter((file) => /\.ya?ml$/i.test(file)).sort();
+    const configs: JobConfig[] = [];
+    for (const file of files) {
+      try {
+        configs.push(await this.readFile(path.join(this.jobsDir, file)));
+      } catch (error) {
+        console.warn(`[job-reconcile] 跳过无效任务文件 ${file}：`, error);
+      }
+    }
+    return configs;
+  }
+
   async get(id: string): Promise<JobConfig> {
     agentIdSchema.parse(id);
     for (const extension of ['yaml', 'yml']) {
@@ -73,7 +89,8 @@ export class JobStore {
     await fs.move(file, path.join(archive, `${id}-${Date.now()}.yaml`));
   }
 
-  private async fileFor(id: string): Promise<string> {
+  /** 返回 job 定义文件的绝对路径（`.yaml` 或 `.yml`）。 */
+  async fileFor(id: string): Promise<string> {
     for (const extension of ['yaml', 'yml']) {
       const file = path.join(this.jobsDir, `${id}.${extension}`);
       if (await fs.pathExists(file)) return file;

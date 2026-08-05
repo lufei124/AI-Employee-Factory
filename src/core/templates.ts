@@ -124,6 +124,42 @@ export async function renderAgentWorkspace(input: {
       '',
     ].join('\n'),
   );
+  // TASK-031（D-028）：员工自我配置定时任务——automation/jobs/ 目录协议说明。
+  await fs.writeFile(
+    path.join(workspace, 'automation/jobs/README.md'),
+    [
+      '# 定时任务（automation/jobs）',
+      '',
+      '本目录存放定时任务定义（YAML）。每个文件一个任务，文件名＝任务 id。',
+      '',
+      '## 来源（managed_by）',
+      '',
+      '- `managed_by: admin`（缺省）：管理员配置，系统不会自动增删。',
+      '- `managed_by: employee`：员工自我配置，系统在每次任务执行结束后自动 reconcile：',
+      '  - `enabled: true` 的任务自动安装定时调度，并单文件 git 提交；',
+      '  - 删除文件或 `enabled: false` 自动反注册；',
+      '  - 修改 `schedule.time` 自动重新加载。',
+      '',
+      '## 最小示例（agent 任务）',
+      '',
+      '```yaml',
+      'schema_version: 1',
+      'id: daily-summary',
+      'enabled: true',
+      'managed_by: employee',
+      'schedule:',
+      '  type: daily',
+      '  time: "09:00"',
+      'execution:',
+      '  type: agent',
+      '  prompt_file: automation/prompts/daily-summary.md',
+      '```',
+      '',
+      '脚本任务用 `type: script` + `script_file`（必须在工作区内）。',
+      '提示：任务内容 prompt/脚本放在 `automation/` 下；不要改管理员任务，不可扩大权限。',
+      '',
+    ].join('\n'),
+  );
   await fs.writeFile(
     path.join(workspace, 'deployment/MIGRATION.md'),
     `# 迁移 ${config.name}\n\n1. 克隆本 Agent Git 仓库或使用 \`agentctl restore\`。\n2. 在新电脑运行 \`${

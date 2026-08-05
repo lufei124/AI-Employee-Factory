@@ -17,6 +17,8 @@ export const jobConfigSchema = z.object({
   schema_version: z.literal(1).default(1),
   id: agentIdSchema,
   enabled: z.boolean(),
+  // D-028：任务来源。employee = 员工自我配置（任务后自动 reconcile 调度）；缺省 admin。
+  managed_by: z.enum(['admin', 'employee']).default('admin'),
   schedule: z.object({
     type: z.literal('daily'),
     time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, '时间必须使用 HH:mm。'),

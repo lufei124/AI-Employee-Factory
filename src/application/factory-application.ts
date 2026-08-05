@@ -29,6 +29,7 @@ import { JobRunner } from '../core/job-runner.js';
 import { assertInside, assertInsideReal, type FactoryPaths } from '../core/paths.js';
 import type { RegistryStore } from '../core/registry.js';
 import { JobStore } from '../core/scheduler.js';
+import { reconcileEmployeeJobs } from '../core/job-reconcile.js';
 import { SkillService, type SkillMetadata, type SkillScope } from '../core/skills.js';
 import { SkillStoreService } from '../core/skill-store.js';
 import { OperationStore, type OperationSummary } from '../core/operation-store.js';
@@ -470,6 +471,8 @@ export class FactoryApplication {
         await this.maybeExtractExperience(id, agent, result.transcriptFile);
         // TASK-029 自我进化：任务执行结束后检测并单文件提交员工自维护文档变更。
         await this.commitSelfEvolution(agent, registry.workspace.path);
+        // TASK-031（D-028）：员工自我配置定时任务——任务结束后自动 reconcile 调度。
+        await reconcileEmployeeJobs(registry, agent, this.paths);
         return result;
       });
   }
@@ -517,6 +520,8 @@ export class FactoryApplication {
     await this.maybeExtractExperience(id, agent, result.transcriptFile);
     // TASK-029 自我进化：对话结束后检测并单文件提交员工自维护文档变更。
     await this.commitSelfEvolution(agent, registry.workspace.path);
+    // TASK-031（D-028）：员工自我配置定时任务——对话结束后自动 reconcile 调度。
+    await reconcileEmployeeJobs(registry, agent, this.paths);
     const raw = await fs.readFile(result.stdoutFile, 'utf8').catch(() => '');
     // 结构化 result 解析失败（非 JSON/空输出）返回 undefined，降级为原始 stdout 文本。
     const text = parseStructuredResult(agent.runtime.provider, raw) ?? raw;
@@ -856,6 +861,8 @@ export class FactoryApplication {
         await this.maybeExtractExperience(id, agent, result.transcriptFile);
         // TASK-029 自我进化：任务执行结束后检测并单文件提交员工自维护文档变更。
         await this.commitSelfEvolution(agent, registry.workspace.path);
+        // TASK-031（D-028）：员工自我配置定时任务——任务结束后自动 reconcile 调度。
+        await reconcileEmployeeJobs(registry, agent, this.paths);
         return result;
       });
   }
@@ -885,6 +892,12 @@ export class FactoryApplication {
       agent.identity.goals_file,
       agent.identity.operating_system_file,
       agent.identity.policies_file,
+    ]);
+    // TASK-031（D-028）：员工自我配置定时任务——放行 automation/jobs 与 automation/prompts，
+    // 避免员工写 job/prompt 时被反复确认（glob 放行，幂等；仅 UX 平滑，非硬权限门）。
+    await ensureAgentDocsAllowed(registry.workspace.path, [
+      'automation/jobs/**',
+      'automation/prompts/**',
     ]);
     const config = await readConfig(this.paths);
     // OP5-D：Registry 本机绑定的 Provider 名（不进便携文件），指定时按该 Provider 同步；缺省 live。
