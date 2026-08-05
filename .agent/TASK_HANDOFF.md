@@ -12,9 +12,9 @@ Intended next role/agent: 用户或后续维护者（spec-chief-todo-mcp 剩余 
 
 Branch/worktree: main
 
-Status: IN_PROGRESS（前端 6 票已实现并通过 /code-review，待提交）
+Status: DONE（前端 6 票已实现并通过 /code-review，已提交 56bcef6）
 
-更新时间：2026-08-05 11:48 +0800
+更新时间：2026-08-05 11:50 +0800（提交 56bcef6）
 
 ## 已完成
 
