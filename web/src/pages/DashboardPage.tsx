@@ -90,7 +90,7 @@ export function DashboardPage() {
           <div className="empty-state">
             <Bot size={28} />
             <h3>尚未创建 AI 员工</h3>
-            <p>从经过审查的岗位预设开始，几分钟内完成隔离配置。</p>
+            <p>用一句话描述员工用法，AI 自动生成可编辑的员工蓝图，几分钟内完成隔离配置。</p>
             <a href="#/create" className="button secondary">
               开始创建
             </a>

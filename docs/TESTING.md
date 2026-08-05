@@ -33,7 +33,7 @@ node dist/cli.js init
 HOME="$SMOKE_ROOT/home" \
 AI_EMPLOYEES_HOME="$SMOKE_ROOT/private" \
 AI_EMPLOYEES_WORKSPACE_ROOT="$SMOKE_ROOT/agents" \
-node dist/cli.js create --id user-operations --name "用户运营专员" --runtime claude --preset user-operations --feishu dedicated
+node dist/cli.js create --id user-operations --name "用户运营专员" --description "负责收集用户反馈并闭环跟进" --goal "提升用户满意度" --runtime claude --feishu dedicated
 ```
 
 不得通过删除断言、跳过测试或弱化安全检查来获得绿色结果。

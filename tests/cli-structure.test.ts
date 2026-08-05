@@ -83,4 +83,11 @@ describe('agentctl command surface', () => {
     expect(names('trash')).toEqual(expect.arrayContaining(['move', 'list', 'restore', 'purge']));
     expect(names('operations')).toEqual(expect.arrayContaining(['query']));
   });
+
+  it('create exposes --describe and no longer exposes --preset (D-029)', () => {
+    const create = createProgram().commands.find((command) => command.name() === 'create');
+    const flags = create?.options.map((option) => option.flags).join(' ') ?? '';
+    expect(flags).toContain('--describe');
+    expect(flags).not.toContain('--preset');
+  });
 });

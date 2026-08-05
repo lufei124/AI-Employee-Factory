@@ -22,6 +22,7 @@ import type {
 import { FileLock } from '../core/locks.js';
 import { initializeFactory, readConfig } from '../core/config.js';
 import { CreateAgentService, type CreateAgentInput } from '../core/create-agent.js';
+import { generateEmployeeProfile } from '../core/employee-generator.js';
 import { DefaultExperienceExtractor } from '../core/experience.js';
 import { DoctorService } from '../core/doctor.js';
 import { AgentCtlError } from '../core/errors.js';
@@ -153,6 +154,15 @@ export class FactoryApplication {
   async createAgent(input: CreateAgentInput): Promise<{ id: string; workspace: string }> {
     await this.initialize();
     return new CreateAgentService(this.paths, this.registry).create(input);
+  }
+
+  // D-029：创建阶段「描述 → 生成员工蓝图」。委托本地 Claude CLI，返回可编辑蓝图。
+  async generateProfile(
+    brief: string,
+    options?: { model?: string },
+  ): Promise<Awaited<ReturnType<typeof generateEmployeeProfile>>> {
+    await this.initialize();
+    return generateEmployeeProfile(brief, options?.model ? { model: options.model } : undefined);
   }
 
   async listAgents(): Promise<AgentSummary[]> {
@@ -338,17 +348,29 @@ export class FactoryApplication {
     }
   }
 
-  /** 检测并单文件提交员工四份自维护文档的变更（runAgent/runChat/runJob 成功后调用）。 */
+  /** 检测并单文件提交员工自维护文档/内容的变更（runAgent/runChat/runJob 成功后调用）。
+   *  D-029 拓宽：除四份身份文档外，员工写的内容目录（skills/workflows/knowledge）也自动
+   *  版本化——含未跟踪新文件，沿用单文件 git add，绝不用 add -A。 */
   private async commitSelfEvolution(agent: AgentConfig, workspace: string): Promise<void> {
-    for (const relPath of [
+    const relPaths = [
       agent.identity.role_file,
       agent.identity.goals_file,
       agent.identity.operating_system_file,
       agent.identity.policies_file,
-    ]) {
+      'skills',
+      'workflows',
+      'knowledge',
+    ];
+    for (const relPath of relPaths) {
       const dirty = await gitStatusShort(workspace, relPath);
-      if (dirty.length === 0) continue;
-      await this.commitAgentFile(workspace, relPath, `evolve: 更新 ${path.basename(relPath)}`);
+      for (const entry of dirty) {
+        if (entry.path === '.') continue;
+        await this.commitAgentFile(
+          workspace,
+          entry.path,
+          `evolve: 更新 ${path.basename(entry.path)}`,
+        );
+      }
     }
   }
 

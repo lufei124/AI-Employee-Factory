@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import { confirm, input, password, select } from '@inquirer/prompts';
 import type { CreateAgentInput } from './core/create-agent.js';
+import type { GeneratedProfile } from './core/employee-generator.js';
 import { AgentCtlError } from './core/errors.js';
 import { OperationStore } from './core/operation-store.js';
 import { resolveFactoryPaths, displayPath } from './core/paths.js';
@@ -38,7 +39,25 @@ async function recordOperation(
   await new OperationStore(logsDir).record(input).catch(() => undefined);
 }
 
-async function createInputFromOptions(options: Record<string, unknown>): Promise<CreateAgentInput> {
+function slugFromName(name: string): string {
+  const id = name
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return id;
+}
+
+/** 返回合法 Agent ID（kebab-case 英文），否则返回空串（供 fallback 到人工输入）。 */
+function validAgentId(value: string | undefined): string {
+  return value && /^[a-z0-9][a-z0-9-]*$/.test(value) ? value : '';
+}
+
+async function createInputFromOptions(
+  options: Record<string, unknown>,
+  generated?: GeneratedProfile,
+): Promise<CreateAgentInput> {
   const runtime =
     (options.runtime as RuntimeProvider | undefined) ??
     (await select({
@@ -48,12 +67,14 @@ async function createInputFromOptions(options: Record<string, unknown>): Promise
         { name: 'OpenAI Codex', value: 'codex' },
       ],
     }));
-  const preset = options.preset as string | undefined;
-  const id = (options.id as string | undefined) ?? (await input({ message: 'Agent ID' }));
-  const name = (options.name as string | undefined) ?? (await input({ message: '员工名称' }));
+  const derivedId = generated ? validAgentId(generated.id) || slugFromName(generated.name) : '';
+  const id =
+    (options.id as string | undefined) ?? (derivedId || (await input({ message: 'Agent ID' })));
+  const name =
+    (options.name as string | undefined) ??
+    (generated ? generated.name : await input({ message: '员工名称' }));
   const feishu = (options.feishu as 'dedicated' | 'disabled' | undefined) ?? 'dedicated';
   const result: CreateAgentInput = { id, name, runtime, feishu };
-  if (preset) result.preset = preset;
   if (typeof options.description === 'string') result.description = options.description;
   if (Array.isArray(options.goal)) result.goals = options.goal as string[];
   if (typeof options.model === 'string') result.model = options.model;
@@ -113,8 +134,8 @@ export function createProgram(): Command {
     .option('--id <id>')
     .option('--name <name>')
     .option('--runtime <provider>', 'claude 或 codex')
-    .option('--preset <preset>')
     .option('--feishu <mode>', 'dedicated 或 disabled', 'dedicated')
+    .option('--describe <description>', '用一句话描述员工用法，由 AI 生成蓝图')
     .option('--description <description>')
     .option('--goal <goal...>')
     .option('--model <model>')
@@ -123,7 +144,32 @@ export function createProgram(): Command {
     .action(async (options: Record<string, unknown>) => {
       const { paths, application } = context();
       await application.initialize();
-      const createInput = await createInputFromOptions(options);
+      // D-029：--describe 先用本地 Claude 生成员工蓝图，再预填 createInput。
+      let generated: GeneratedProfile | undefined;
+      if (typeof options.describe === 'string' && options.describe.trim().length > 0) {
+        generated = await application.generateProfile(
+          options.describe,
+          typeof options.model === 'string' ? { model: options.model } : undefined,
+        );
+        console.log(chalk.cyan('AI 生成员工蓝图：'));
+        console.log(
+          YAML.stringify({
+            id: validAgentId(generated.id) || slugFromName(generated.name),
+            name: generated.name,
+            description: generated.description,
+            goals: generated.goals,
+          }),
+        );
+      }
+      const createInput = await createInputFromOptions(options, generated);
+      if (generated) {
+        createInput.description = generated.description;
+        createInput.goals = generated.goals;
+        createInput.responsibilities = generated.responsibilities;
+        createInput.policies = generated.policies;
+        createInput.escalation_conditions = generated.escalation_conditions;
+        createInput.skills = generated.skills;
+      }
       if (options.dryRun) {
         console.log(
           YAML.stringify({

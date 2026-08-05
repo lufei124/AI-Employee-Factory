@@ -1,39 +1,95 @@
 import { useState } from 'react';
 import { Check, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
-import { api, type CreateAgentRequest } from '../api.js';
+import { api, type GeneratedProfile } from '../api.js';
 import { CopyButton } from '../components/CopyButton.js';
-
-const presets = [
-  { id: 'user-operations', name: '用户运营专员', description: '反馈收集、分析与闭环跟进' },
-  { id: 'growth', name: '增长专员', description: '实验设计、渠道复盘和增长建议' },
-  { id: 'monetization', name: '商业化专员', description: '商业机会分析与变现方案' },
-  { id: 'engineering', name: '工程专员', description: '需求实现、测试和技术维护' },
-];
 
 function agentIdFromName(name: string, fallback: string): string {
   const generated = name
     .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
   return generated || fallback;
 }
 
+function toLines(value: string[] | undefined): string {
+  return (value ?? []).join('\n');
+}
+
+function fromLines(value: string): string[] {
+  return value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 export function CreateAgentPage() {
+  // D-029：描述 → AI 生成可编辑蓝图；不再使用岗位预设。
   const [step, setStep] = useState(0);
-  const [preset, setPreset] = useState('user-operations');
-  const [id, setId] = useState('user-operations');
-  const [name, setName] = useState('用户运营专员');
+  const [brief, setBrief] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [generated, setGenerated] = useState(false);
+  const [id, setId] = useState('');
   const [idManuallyEdited, setIdManuallyEdited] = useState(false);
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [goals, setGoals] = useState('');
+  const [responsibilities, setResponsibilities] = useState('');
+  const [policies, setPolicies] = useState('');
+  const [escalation, setEscalation] = useState('');
+  const [skills, setSkills] = useState('');
   const [runtime, setRuntime] = useState<'claude' | 'codex'>('claude');
   const [feishu, setFeishu] = useState<'dedicated' | 'disabled'>('dedicated');
   const [created, setCreated] = useState<{ id: string; workspace: string }>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const input: CreateAgentRequest = { id, name, runtime, preset, feishu };
-  const canContinue = id.length > 0 && name.length > 0;
+  const input = {
+    id,
+    name,
+    runtime,
+    feishu,
+    description,
+    goals: fromLines(goals),
+    responsibilities: fromLines(responsibilities),
+    policies: fromLines(policies),
+    escalation_conditions: fromLines(escalation),
+    skills: fromLines(skills),
+  };
+  const canContinue = id.length > 0 && description.length > 0 && fromLines(goals).length > 0;
+
+  const applyProfile = (profile: GeneratedProfile) => {
+    setName(profile.name);
+    setDescription(profile.description);
+    setGoals(toLines(profile.goals));
+    setResponsibilities(toLines(profile.responsibilities));
+    setPolicies(toLines(profile.policies));
+    setEscalation(toLines(profile.escalation_conditions));
+    setSkills(toLines(profile.skills));
+    if (!idManuallyEdited) {
+      const id =
+        profile.id && /^[a-z0-9][a-z0-9-]*$/.test(profile.id)
+          ? profile.id
+          : agentIdFromName(profile.name, '');
+      setId(id);
+    }
+  };
+
+  const generate = async () => {
+    setGenerating(true);
+    setError('');
+    try {
+      const profile = await api.generateEmployeeProfile(brief);
+      applyProfile(profile);
+      setGenerated(true);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   const submit = async () => {
     setBusy(true);
     setError('');
@@ -103,11 +159,11 @@ export function CreateAgentPage() {
         <div>
           <p className="eyebrow">EMPLOYEE BLUEPRINT</p>
           <h1>创建 AI 员工</h1>
-          <p>通过三步向导生成可迁移、可诊断且身份隔离的本地员工。</p>
+          <p>用一句话描述员工用法，AI 生成可编辑蓝图；生成可迁移、可诊断且身份隔离的本地员工。</p>
         </div>
       </header>
       <ol className="stepper">
-        {['身份与预设', '运行环境', '确认创建'].map((label, index) => (
+        {['描述与蓝图', '运行环境', '确认创建'].map((label, index) => (
           <li className={index <= step ? 'active' : ''} key={label}>
             <span>{index + 1}</span>
             {label}
@@ -118,28 +174,49 @@ export function CreateAgentPage() {
         {step === 0 && (
           <div className="form-stack">
             <div>
-              <span className="field-label">岗位预设</span>
-              <div className="preset-grid">
-                {presets.map((item) => (
-                  <button
-                    type="button"
-                    className={`preset-card ${preset === item.id ? 'selected' : ''}`}
-                    onClick={() => {
-                      setPreset(item.id);
-                      setName(item.name);
-                      setId(item.id);
-                      setIdManuallyEdited(false);
-                    }}
-                    key={item.id}
-                  >
-                    <Sparkles size={18} />
-                    <strong>{item.name}</strong>
-                    <span>{item.description}</span>
-                  </button>
-                ))}
+              <span className="field-label">一句话描述你的员工</span>
+              <textarea
+                aria-label="员工描述"
+                value={brief}
+                onChange={(event) => setBrief(event.target.value)}
+                placeholder="例如：帮我建一个负责收集用户反馈、分析并闭环跟进的产品运营……"
+                rows={3}
+              />
+              <div className="field-actions">
+                <button
+                  type="button"
+                  className="button primary"
+                  disabled={generating || brief.trim().length === 0}
+                  onClick={() => void generate()}
+                >
+                  <Sparkles size={16} />
+                  {generating ? 'AI 生成中…' : 'AI 生成蓝图'}
+                </button>
+                {generated ? (
+                  <span className="field-help">已生成，可修改下方字段后继续。</span>
+                ) : (
+                  <span className="field-help">AI 会生成岗位名、职责、目标与权限边界。</span>
+                )}
               </div>
             </div>
+            {!generated && (
+              <p className="field-help">
+                AI 生成会预填下方字段；也可跳过生成，直接手动填写员工蓝图。
+              </p>
+            )}
             <div className="form-grid two">
+              <label>
+                员工名称
+                <input
+                  aria-label="员工名称"
+                  value={name}
+                  onChange={(event) => {
+                    const nextName = event.target.value;
+                    setName(nextName);
+                    if (!idManuallyEdited) setId(agentIdFromName(nextName, ''));
+                  }}
+                />
+              </label>
               <label>
                 Agent ID（自动生成）
                 <input
@@ -155,17 +232,54 @@ export function CreateAgentPage() {
                   用于工作区和终端命令，系统会自动生成，也可手动修改。
                 </small>
               </label>
+            </div>
+            <div className="form-grid two">
+              <label className="grid-span-2">
+                职责描述
+                <textarea
+                  rows={3}
+                  value={description}
+                  onChange={(event) => setDescription(event.target.value)}
+                />
+              </label>
               <label>
-                员工名称
-                <input
-                  aria-label="员工名称"
-                  value={name}
-                  onChange={(event) => {
-                    const nextName = event.target.value;
-                    setName(nextName);
-                    if (!idManuallyEdited) setId(agentIdFromName(nextName, preset));
-                  }}
-                  placeholder="例如 内容运营"
+                核心目标（每行一条）
+                <textarea
+                  rows={4}
+                  value={goals}
+                  onChange={(event) => setGoals(event.target.value)}
+                />
+              </label>
+              <label>
+                长期职责（每行一条）
+                <textarea
+                  rows={4}
+                  value={responsibilities}
+                  onChange={(event) => setResponsibilities(event.target.value)}
+                />
+              </label>
+              <label>
+                权限与上报规则（每行一条）
+                <textarea
+                  rows={4}
+                  value={policies}
+                  onChange={(event) => setPolicies(event.target.value)}
+                />
+              </label>
+              <label>
+                主动上报情形（每行一条）
+                <textarea
+                  rows={3}
+                  value={escalation}
+                  onChange={(event) => setEscalation(event.target.value)}
+                />
+              </label>
+              <label>
+                技能（每行一个，英文 kebab-case）
+                <textarea
+                  rows={3}
+                  value={skills}
+                  onChange={(event) => setSkills(event.target.value)}
                 />
               </label>
             </div>
@@ -222,8 +336,12 @@ export function CreateAgentPage() {
                 </dd>
               </div>
               <div>
-                <dt>岗位预设</dt>
-                <dd>{preset}</dd>
+                <dt>职责描述</dt>
+                <dd>{description}</dd>
+              </div>
+              <div>
+                <dt>核心目标</dt>
+                <dd>{fromLines(goals).length} 条</dd>
               </div>
               <div>
                 <dt>Runtime</dt>

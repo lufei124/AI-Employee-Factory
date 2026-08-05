@@ -222,6 +222,19 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
     return { data: created };
   });
 
+  // D-029：创建阶段「描述 → 生成员工蓝图」。同步等待本地 Claude 生成，Web 端转圈。
+  server.post('/api/v1/agents/generate', async (request) => {
+    const body = z
+      .object({ brief: z.string().min(1), model: z.string().optional() })
+      .parse(request.body);
+    return {
+      data: await options.application.generateProfile(
+        body.brief,
+        body.model ? { model: body.model } : undefined,
+      ),
+    };
+  });
+
   server.get<{ Params: { id: string } }>('/api/v1/agents/:id', async (request) => ({
     data: await options.application.getAgent(request.params.id),
   }));

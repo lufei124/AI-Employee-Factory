@@ -8,7 +8,7 @@ import { FileLock } from './locks.js';
 import { gitAddCommit } from './git.js';
 import { assertInside, type FactoryPaths } from './paths.js';
 import { type RegistryStore } from './registry.js';
-import { loadPreset, renderAgentWorkspace } from './templates.js';
+import { renderAgentWorkspace } from './templates.js';
 import { computeConfigHash } from './agents.js';
 import {
   agentConfigSchema,
@@ -24,10 +24,13 @@ export const createAgentInputSchema = z.object({
   id: agentIdSchema,
   name: z.string().min(1),
   runtime: runtimeProviderSchema,
-  preset: agentIdSchema.optional(),
   feishu: z.enum(['dedicated', 'disabled']),
   description: z.string().min(1).optional(),
   goals: z.array(z.string().min(1)).optional(),
+  responsibilities: z.array(z.string().min(1)).optional(),
+  policies: z.array(z.string().min(1)).optional(),
+  escalation_conditions: z.array(z.string().min(1)).optional(),
+  skills: z.array(z.string()).optional(),
   model: z.string().min(1).optional(),
   // T08：角色（worker 默认 / chief）。创建时指定为 chief 即成为编排主管。
   role: agentRoleSchema.optional(),
@@ -52,7 +55,7 @@ export class CreateAgentService {
     if (registry.agents.some((agent) => agent.id === input.id)) {
       throw new AgentCtlError('CONFLICT', `Agent 已存在：${input.id}`);
     }
-    const preset = await this.resolvePreset(input);
+    const preset = await this.resolveProfile(input);
     const workspace = assertInside(
       this.paths.workspaceRoot,
       path.join(this.paths.workspaceRoot, input.id),
@@ -146,12 +149,12 @@ export class CreateAgentService {
     }
   }
 
-  private async resolvePreset(input: CreateAgentInput): Promise<Preset> {
-    if (input.preset) return loadPreset(input.preset);
+  // D-029：员工蓝图由 description + goals 合成（Web/CLI 可先用 AI 生成后预填）。
+  private async resolveProfile(input: CreateAgentInput): Promise<Preset> {
     if (!input.description || !input.goals?.length) {
       throw new AgentCtlError(
         'VALIDATION_ERROR',
-        '无 Preset 创建时必须提供 description 和至少一个 goal。',
+        '创建员工需要 description 和至少一个 goal（或用 --describe 由 AI 生成）。',
       );
     }
     return {
@@ -160,10 +163,16 @@ export class CreateAgentService {
       name: input.name,
       description: input.description,
       goals: input.goals,
-      responsibilities: [input.description],
-      policies: ['生产写入、对外发布、Git push 和删除数据必须经人工审批'],
-      escalation_conditions: ['需要生产权限或管理决策'],
-      skills: [],
+      responsibilities: input.responsibilities?.length
+        ? input.responsibilities
+        : [input.description],
+      policies: input.policies?.length
+        ? input.policies
+        : ['生产写入、对外发布、Git push 和删除数据必须经人工审批'],
+      escalation_conditions: input.escalation_conditions?.length
+        ? input.escalation_conditions
+        : ['需要生产权限或管理决策'],
+      skills: input.skills ?? [],
     };
   }
 

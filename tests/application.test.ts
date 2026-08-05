@@ -37,7 +37,8 @@ describe('FactoryApplication', () => {
       id: 'user-operations',
       name: '用户运营专员',
       runtime: 'claude',
-      preset: 'user-operations',
+      description: '负责用户反馈收集、分析与闭环跟进',
+      goals: ['收集并分析用户反馈', '闭环跟进问题'],
       feishu: 'dedicated',
     });
 
@@ -62,7 +63,8 @@ describe('FactoryApplication', () => {
       id: 'user-operations',
       name: '用户运营专员',
       runtime: 'claude',
-      preset: 'user-operations',
+      description: '负责用户反馈收集、分析与闭环跟进',
+      goals: ['收集并分析用户反馈', '闭环跟进问题'],
       feishu: 'disabled',
     });
     // 正常：agent.yaml 存在，provider 来自单一真相源
@@ -79,7 +81,8 @@ describe('FactoryApplication', () => {
       id: 'chief',
       name: '主管',
       runtime: 'claude',
-      preset: 'user-operations',
+      description: '负责用户反馈收集、分析与闭环跟进',
+      goals: ['收集并分析用户反馈', '闭环跟进问题'],
       feishu: 'disabled',
       role: 'chief',
     });
@@ -87,7 +90,8 @@ describe('FactoryApplication', () => {
       id: 'worker',
       name: '执行者',
       runtime: 'claude',
-      preset: 'user-operations',
+      description: '负责用户反馈收集、分析与闭环跟进',
+      goals: ['收集并分析用户反馈', '闭环跟进问题'],
       feishu: 'disabled',
     });
     const summaries = await app.listAgents();
@@ -102,7 +106,8 @@ describe('FactoryApplication', () => {
       id: 'user-operations',
       name: '用户运营专员',
       runtime: 'claude',
-      preset: 'user-operations',
+      description: '负责用户反馈收集、分析与闭环跟进',
+      goals: ['收集并分析用户反馈', '闭环跟进问题'],
       feishu: 'disabled',
     });
     await app.addSkillStoreRepository({
@@ -139,7 +144,8 @@ describe('FactoryApplication', () => {
       id: 'user-operations',
       name: '用户运营专员',
       runtime: 'claude',
-      preset: 'user-operations',
+      description: '负责用户反馈收集、分析与闭环跟进',
+      goals: ['收集并分析用户反馈', '闭环跟进问题'],
       feishu: 'disabled',
     });
 

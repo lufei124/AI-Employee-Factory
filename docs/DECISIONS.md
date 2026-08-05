@@ -285,4 +285,21 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 
 ---
 
+## D-029：描述生成员工 + 拓宽自进化（移除预设）
+
+- 状态：Accepted（已实施，TASK-032）
+- 日期：2026-08-05
+- 背景：用户提出方向转变——创建员工不应靠预设（用户运营/商业化等），而应由用户按需描述、AI 自动生成可编辑的员工蓝图；且员工应能在使用中自我进化、减少人工修改的模块。调研确认现创建是纯预设驱动、且无任何「模型生成」能力。
+- 决定：
+  - **描述 → 生成员工蓝图**：用户在 Web（或 CLI `--describe`）一句话描述员工用法 → 调用本地 Claude CLI（`claude -p --output-format json`，用户默认环境，**不设 CLAUDE_CONFIG_DIR**，与员工隔离 runtime 无关）→ 生成结构化蓝图（`id`/`name`/`description`/`goals`/`responsibilities`/`policies`/`escalation_conditions`/`skills`）→ 表单可编辑 → 确认创建。新模块 `src/core/employee-generator.ts`，复用 `parseStructuredResult` 抽正文、剥离 markdown 代码围栏后按 `generatedProfileSchema` 校验；失败抛 `OPERATION_FAILED`，remediation 提示重试或手动 `--description/--goal`。
+  - **完全移除预设**：删除 `presets/*.yaml` 与 `loadPreset`；`CreateAgentInput` 去 `preset` 字段，新增 `responsibilities/policies/escalation_conditions/skills`；`resolvePreset` → `synthesizeProfile`（始终从 `description`+`goals` 合成，缺省 responsibilities/policies/skills 有安全默认）。`presets/cc-switch-allowlist.json`（CC Switch 白名单）与员工预设无关，保留。
+  - **拓宽自进化**：`commitSelfEvolution` 从四份身份文档扩展到内容目录 `skills/**`、`workflows/**`、`knowledge/**`——员工在一次 run/chat/job 中新建/修改的任何内容（含未跟踪新文件）自动单文件提交，沿用 `git add -- <relPath>`，绝不用 `add -A`。不扫 `tasks/`、`reports/`、`scripts/`、`config/`、`logs/`（gitignore 已排除敏感/派生文件）。
+- 边界：
+  - 生成 prompt 仅含用户本人输入的描述，不读秘密；模型被要求只输出 JSON；蓝图权限边界（policies）由系统提示锁定为 workspace 沙箱内 + 高危操作人工审批。
+  - 自进化只扫内容目录，单文件提交，不收未提交流程产物；员工权限不变（workspace 沙箱，生产写入/对外发布/推 Git/删数据须审批），员工仍不可改 `.claude/settings.json` 扩大权限。
+- 原因：预设是「固定岗位模板」，无法覆盖用户的长尾自定义需求；让员工按需一次性描述、AI 生成蓝图，并把「员工自我进化」从文档扩展到员工写的所有内容，是最小人工的路径。
+- 影响：新增 `generateEmployeeProfile`/`generateProfile`；Web 创建页步骤 0 改为「描述 + AI 生成 + 可编辑表单」；CLI `create` 加 `--describe`、去 `--preset`；自进化钩子覆盖内容目录。
+
+---
+
 > 后续决策按 `D-XXX - 标题` 格式追加。模板见 [.agent/decisions/ADR-0000-template.md](../.agent/decisions/ADR-0000-template.md)。重要技术取舍（架构、API、数据、依赖、跨模块规则）须记录于此。

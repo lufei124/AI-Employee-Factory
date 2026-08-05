@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { agentConfigSchema, agentIdSchema } from '../src/schemas/agent-schema.js';
 import { jobConfigSchema } from '../src/schemas/job-schema.js';
 import { presetSchema } from '../src/schemas/preset-schema.js';
+import { generatedProfileSchema } from '../src/core/employee-generator.js';
 
 const validAgent = {
   schema_version: 1,
@@ -70,8 +71,8 @@ describe('agent schemas', () => {
   });
 });
 
-describe('preset and job schemas', () => {
-  it('accepts a portable preset', () => {
+describe('profile and job schemas', () => {
+  it('accepts a profile container (Preset shape)', () => {
     expect(
       presetSchema.parse({
         schema_version: 1,
@@ -84,6 +85,22 @@ describe('preset and job schemas', () => {
         escalation_conditions: ['数据丢失'],
       }).id,
     ).toBe('user-operations');
+  });
+
+  it('accepts a generated employee profile and defaults optional arrays (D-029)', () => {
+    const parsed = generatedProfileSchema.parse({
+      name: '内容运营',
+      description: '负责内容选题与撰写',
+      goals: ['每周输出'],
+    });
+    expect(parsed.name).toBe('内容运营');
+    expect(parsed.responsibilities).toEqual([]);
+    expect(parsed.policies).toEqual([]);
+    expect(parsed.skills).toEqual([]);
+    // 缺 goals 或 name → 拒绝。
+    expect(() =>
+      generatedProfileSchema.parse({ name: 'x', description: 'y', goals: [] }),
+    ).toThrow();
   });
 
   it('validates daily agent jobs and rejects shell strings', () => {

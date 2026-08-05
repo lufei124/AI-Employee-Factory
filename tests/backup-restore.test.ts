@@ -27,7 +27,8 @@ async function setup() {
     id: 'user-operations',
     name: '用户运营专员',
     runtime: 'claude',
-    preset: 'user-operations',
+    description: '负责用户反馈收集、分析与闭环跟进',
+    goals: ['收集并分析用户反馈', '闭环跟进问题'],
     feishu: 'dedicated',
   });
   return { root, paths, registry, service: new BackupService(paths, registry) };

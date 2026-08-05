@@ -10,7 +10,7 @@ AI Employee Factory 为 macOS 个人用户提供统一的本地 AI 员工创建�
 
 ## 主要业务流程
 
-1. 通过 `agentctl init` 或 Web 首次向导初始化控制面。2. 用 preset 或自定义岗位创建员工。3. Claude 同步 CC Switch 当前 Provider，Codex 在专属 runtime home 登录，并在终端授权飞书。4. 通过 CLI 或 Web 执行任务、启停 Bridge 和定时任务。5. 使用 doctor、日志和备份恢复进行运维。
+1. 通过 `agentctl init` 或 Web 首次向导初始化控制面。2. 用一句话描述员工用法，AI 生成可编辑的员工蓝图（Web 或 `agentctl create --describe`）后创建员工。3. Claude 同步 CC Switch 当前 Provider，Codex 在专属 runtime home 登录，并在终端授权飞书。4. 通过 CLI 或 Web 执行任务、启停 Bridge 和定时任务。5. 使用 doctor、日志和备份恢复进行运维。
 
 ## 当前阶段
 

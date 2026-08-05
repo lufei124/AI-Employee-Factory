@@ -74,7 +74,8 @@ describe('FactoryApplication experience extraction (OP1 Stage D)', () => {
       id: 'user-operations',
       name: '用户运营专员',
       runtime: 'claude',
-      preset: 'user-operations',
+      description: '负责用户反馈收集、分析与闭环跟进',
+      goals: ['收集并分析用户反馈', '闭环跟进问题'],
       feishu: 'dedicated',
     });
     // 打开 transcript_persist（Stage C 前置）与 experience_extraction。

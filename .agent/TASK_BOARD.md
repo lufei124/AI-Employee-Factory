@@ -37,6 +37,7 @@ Coordinator: codex-20260803-01
 | TASK-029 | 派发进度反馈（A+C）+ 员工自我进化（岗位/目标/工作系统/规则 + knowledge 自动提交）                                                                | claude-20260803-01 | DONE        | main                               | src/core/operation-manager.ts(summary)+factory-application.ts(dispatchItem 阶段事件+dispatchPlan summary+orchestrate onProgress+commitSelfEvolution+prepareRuntime 放行)+cli-program.ts(\r 进度)+web api/OperationsDrawer+styles(summary)+current-state.ts(ensureAgentDocsAllowed)+ENTRY.md.tmpl(自我进化节) + tests/orchestration.test.ts(3 新测)+self-evolution.test.ts(新 4 测) + ARCHITECTURE/DECISIONS(D-026)/README + .agent 簿记                                                                                                | 用户批准的 A+C 派发进度 / 允许改 POLICIES / 规划门不豁免 / knowledge 一并提交                                      | 2026-08-05 18:00 +0800 |
 | TASK-030 | 移除 Chief 编排 / Todo 状态机 / MCP 接入（D-027：用户拍板「都去掉，不是我想要的东西」）                                                          | claude-20260803-01 | DONE        | main                               | 删除 src/schemas/task-schema.ts+src/core/task-store.ts+src/mcp/mcp-server.ts+factory-application plan/编排方法+process-runner skipSelfEvolution+operation-manager summary+cli-program plan/chief 组+web-server mcp/task-plans/chief-run 路由+start.ts enableMcp+api.ts plan 类型/方法+AgentDetailPage Todo/Chief 视图+OperationsDrawer summary+styles+package.json MCP 依赖 + 删除 4 测试文件 + 裁剪 self-evolution/web-ui/web-server/cli-structure 测试 + git.ts 死导出 + DECISIONS(D-027)/ARCHITECTURE/README/GLOSSARY + .agent 簿记 | 用户批准（TASK-030 计划：三块移除 + 共享基础设施保留）                                                             | 2026-08-05 21:00 +0800 |
 | TASK-031 | 员工自我配置定时任务（D-028：managed_by 标记 + 自动生效 + 文件 YAML 自我进化）                                                                   | claude-20260803-01 | IN_PROGRESS | main                               | job-schema managed_by+scheduler listTolerant+core/job-reconcile.ts 新+factory-application reconcile 钩子+prepareRuntime 放行 automation/jobs/**+templates ENTRY 定时任务节+automation/jobs/README 种子+web JobConfig managed_by+任务 tab 徽标+styles + tests/job-reconcile.test.ts 新(5)+schemas/self-evolution 增测 + DECISIONS(D-028)/ARCHITECTURE/README/GLOSSARY + .agent 簿记                                                                                                                                                     | 用户批准（TASK-031 计划：managed_by/自动生效/文件 YAML 自我进化）                                                  | 2026-08-05 21:30 +0800 |
+| TASK-032 | 描述生成员工 + 自进化拓宽（D-029：移除预设、描述→AI 生成蓝图、commitSelfEvolution 扩展到 skills/workflows/knowledge）                            | claude-20260803-01 | IN_PROGRESS | main                               | src/core/employee-generator.ts 新+create-agent 去 preset/synthesizeProfile+templates 去 loadPreset+factory-application generateProfile+commitSelfEvolution 拓宽+web server generate 路由+web api+CreateAgentPage 重构+cli --describe/去 --preset+styles + tests/employee-generator 新(5)+迁移+self-evolution 增测+cli-structure+web-ui 增测 + DECISIONS(D-029)/ARCHITECTURE/README/GLOSSARY + .agent 簿记；删除 presets/{user-operations,growth,monetization,engineering}.yaml（保留 cc-switch-allowlist.json）                        | 用户批准（TASK-032 计划：描述生成模型=本地 Claude CLI / 迭代范围=生成+自进化拓宽 / 完全移除预设 / 入口=Web+CLI）   | 2026-08-05 22:00 +0800 |
 
 ## TASK-025 详情
 
@@ -564,6 +565,28 @@ Acceptance criteria:
   - /code-review（Standards+Spec 双轴）通过；任务完成即 commit（不 push）
 Started at: 2026-08-05 21:00 +0800
 Updated at: 2026-08-05 21:00 +0800
+```
+
+## TASK-032 详情
+
+```text
+Task ID: TASK-032
+Title: 描述生成员工 + 自进化拓宽（D-029）
+Owner agent: claude-20260803-01
+Status: IN_PROGRESS
+Branch/worktree: main
+Allowed scope: src/core/employee-generator.ts 新增 + src/core/create-agent.ts（去 preset、synthesizeProfile）+ src/core/templates.ts（去 loadPreset、renderSkills source 标签）+ src/application/factory-application.ts（generateProfile、commitSelfEvolution 拓宽）+ src/web/server.ts（/api/v1/agents/generate）+ web/src/api.ts + web/src/pages/CreateAgentPage.tsx + src/cli-program.ts（--describe、去 --preset）+ web/src/styles.css + tests（employee-generator 新、迁移、增测）+ docs/DECISIONS.md(D-029) + docs/ARCHITECTURE.md + docs/GLOSSARY.md + README.md + .agent 簿记
+Forbidden scope: presets/cc-switch-allowlist.json（CC Switch 白名单，独立功能，勿删）；员工 runtime/Bridge 隔离语义；单文件 git add -- 纪律（绝不用 add -A）
+Dependencies: 用户批准（TASK-032 计划：描述生成模型=本地 Claude CLI / 迭代范围=生成+自进化拓宽 / 完全移除预设 / 入口=Web+CLI）
+Expected output: 创建不再用预设——用户一句话描述员工用法 → generateEmployeeProfile 调本地 Claude CLI（claude -p --output-format json，用户默认环境、不设 CLAUDE_CONFIG_DIR）生成结构化蓝图（id/name/description/goals/responsibilities/policies/escalation_conditions/skills），剥离 markdown 围栏后按 generatedProfileSchema 校验，Web 创建页与 CLI --describe 均可生成、编辑后确认；CreateAgentInput 去 preset，resolveProfile 始终从 description+goals 合成蓝图（缺省 responsibilities/policies/skills 有安全默认）；presets/*.yaml 与 loadPreset 已删除；commitSelfEvolution 从四份身份文档扩展到内容目录 skills/**、workflows/**、knowledge/**，员工新建/修改的任何内容（含未跟踪新文件）自动单文件提交，不扫 tasks/reports/scripts/config/logs
+Acceptance criteria:
+  - npx tsc --noEmit（tsconfig.json + tsconfig.web.json）+ npm run lint（含 prettier）全绿
+  - 全量 npm test 290 过（含新增 employee-generator 5 用例 + web-ui 手动回退 1 用例 + 迁移 preset 骨架 + self-evolution 拓宽）
+  - 无孤儿引用：grep preset/loadPreset/resolvePreset 无残留；presets/cc-switch-allowlist.json 保留
+  - /code-review（Standards+Spec 双轴）通过；任务完成即 commit（不 push）
+Outcome: /code-review 双轴通过——Standards 0 硬违规（仅 judgement-call 口味：slug/id-regex 跨模块重复、unused timeoutMs、create-agent 残留 preset 变量名，均保留）；Spec 0 确认缺陷，但修复 1 个设计缺口：Web 创建页在 AI 生成失败时无手动回退路径（表单被 generated 门控），改为表单常显、AI 生成仅预填，并新增 web-ui 手动回退回归测试。commitSelfEvolution 单文件纪律经核实安全（gitStatusShort 逐文件返回，'.' 守卫足够）。全量单测 290 过 42 文件；tsc/lint 全绿；孤儿引用无残留。已 commit main（未 push）。
+Started at: 2026-08-05 22:00 +0800
+Updated at: 2026-08-05 22:00 +0800
 ```
 
 ## 任务详情模板

@@ -2,25 +2,14 @@ import fs from 'fs-extra';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
-import { AgentCtlError } from './errors.js';
 import { digestSkillDirectory } from './skills.js';
 import { renderAuthorityStance } from './authority.js';
 import { renderNewSeed as renderCurrentStateSeed } from './current-state.js';
 import type { AgentConfig, RuntimeProvider } from '../schemas/agent-schema.js';
-import { presetSchema, type Preset } from '../schemas/preset-schema.js';
+import type { Preset } from '../schemas/preset-schema.js';
 
 export function packageRoot(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-}
-
-export async function loadPreset(id: string): Promise<Preset> {
-  const file = path.join(packageRoot(), 'presets', `${id}.yaml`);
-  if (!(await fs.pathExists(file))) {
-    throw new AgentCtlError('NOT_FOUND', `Preset 不存在：${id}`, {
-      remediation: '请运行 agentctl create --help 或检查 presets/ 目录。',
-    });
-  }
-  return presetSchema.parse(YAML.parse(await fs.readFile(file, 'utf8')));
 }
 
 function render(template: string, values: Record<string, string>): string {
@@ -201,7 +190,7 @@ async function renderSkills(
       YAML.stringify({
         name,
         version: '0.1.0',
-        source: 'preset',
+        source: 'generated',
         installed_at: new Date().toISOString(),
         digest: await digestSkillDirectory(target),
       }),

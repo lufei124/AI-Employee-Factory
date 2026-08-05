@@ -22,3 +22,5 @@
 - **Job（定时任务）**：定义在员工 workspace `automation/jobs/*.yaml`、由 launchd plist 定时触发 `agentctl _service job run` 的脚本/Agent 任务。
 - **managed_by**：Job 的来源标记（`admin`/`employee`，缺省 admin）。`employee` 任务由 `reconcileEmployeeJobs` 自动调度与反注册；`admin` 任务仅管理员经 `agentctl job`/Web「任务」页管理。
 - **员工 Job**：`managed_by: employee` 的定时任务——员工在任务中写 YAML 自我配置，系统自动安装调度、单文件 git 提交（D-028）。
+- **员工蓝图**：创建员工前，`generateEmployeeProfile` 用一句话描述经本地 Claude CLI（`claude -p --output-format json`）生成的结构化 profile（`id/name/description/goals/responsibilities/policies/escalation_conditions/skills`）。Web 创建页与 CLI `--describe` 均走此流程，生成后可编辑再确认（D-029）。取代旧的 Preset 预设文件。
+- **描述生成**：用户一句话描述员工用法 → AI 生成员工蓝图（D-029）。创建不再依赖预设；员工后续在 `agent/` 身份文档与 `skills/`、`workflows/`、`knowledge/` 内容目录中自我进化。

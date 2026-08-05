@@ -18,6 +18,7 @@ vi.mock('../web/src/api.js', () => ({
     initializeFactory: vi.fn(),
     dashboard: vi.fn(),
     createAgent: vi.fn(),
+    generateEmployeeProfile: vi.fn(),
     getAgent: vi.fn(),
     terminalGuidance: vi.fn(),
     lifecycle: vi.fn(),
@@ -69,7 +70,7 @@ describe('Web console core flows', () => {
     expect(await screen.findByText('尚未创建 AI 员工')).toBeInTheDocument();
   });
 
-  it('creates an employee through a reviewable multi-step wizard', async () => {
+  it('creates an employee via AI blueprint generation and a reviewable wizard', async () => {
     const writeText = vi.fn().mockRejectedValue(new Error('clipboard permission denied'));
     const execCommand = vi.fn().mockReturnValue(true);
     Object.defineProperty(document, 'execCommand', {
@@ -80,6 +81,16 @@ describe('Web console core flows', () => {
       id: 'content-operator',
       workspace: '/tmp/agents/content-operator',
     });
+    vi.mocked(api.generateEmployeeProfile).mockResolvedValue({
+      id: 'content-operator',
+      name: '内容运营',
+      description: '负责内容选题与撰写',
+      goals: ['每周输出报告'],
+      responsibilities: ['选题策划'],
+      policies: ['对外发布须审批'],
+      escalation_conditions: ['需要管理决策'],
+      skills: [],
+    });
     const user = userEvent.setup();
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -87,6 +98,9 @@ describe('Web console core flows', () => {
     });
 
     render(<CreateAgentPage />);
+    await user.type(screen.getByLabelText('员工描述'), '帮我建一个内容运营');
+    await user.click(screen.getByRole('button', { name: 'AI 生成蓝图' }));
+    // 生成后预填字段，用户可编辑名称（id 由名称派生）。
     await user.clear(screen.getByLabelText('员工名称'));
     await user.type(screen.getByLabelText('员工名称'), 'Content Operator');
     expect(screen.getByLabelText('Agent ID')).toHaveValue('content-operator');
@@ -100,8 +114,13 @@ describe('Web console core flows', () => {
       id: 'content-operator',
       name: 'Content Operator',
       runtime: 'claude',
-      preset: 'user-operations',
       feishu: 'dedicated',
+      description: '负责内容选题与撰写',
+      goals: ['每周输出报告'],
+      responsibilities: ['选题策划'],
+      policies: ['对外发布须审批'],
+      escalation_conditions: ['需要管理决策'],
+      skills: [],
     });
     expect(await screen.findByText('员工创建完成')).toBeInTheDocument();
     expect(screen.getByText('agentctl runtime sync content-operator')).toBeInTheDocument();
@@ -116,6 +135,37 @@ describe('Web console core flows', () => {
     expect(writeText).toHaveBeenCalledWith('agentctl runtime sync content-operator');
     expect(execCommand).toHaveBeenCalledWith('copy');
     expect(await screen.findByText('已复制')).toBeInTheDocument();
+  });
+
+  it('allows manual blueprint entry without AI generation (D-029 fallback)', async () => {
+    vi.mocked(api.createAgent).mockResolvedValue({
+      id: 'manual-ops',
+      workspace: '/tmp/agents/manual-ops',
+    });
+    const user = userEvent.setup();
+
+    render(<CreateAgentPage />);
+    // 不点「AI 生成蓝图」：表单可直接手动填写。
+    await user.type(screen.getByLabelText('员工名称'), 'Manual Ops');
+    await user.clear(screen.getByLabelText('Agent ID'));
+    await user.type(screen.getByLabelText('Agent ID'), 'manual-ops');
+    await user.type(screen.getByLabelText('职责描述'), '手工创建的员工');
+    await user.type(screen.getByLabelText('核心目标（每行一条）'), '目标一');
+    await user.click(screen.getByRole('button', { name: '下一步' }));
+    await user.click(screen.getByLabelText('Claude Code'));
+    await user.click(screen.getByRole('button', { name: '下一步' }));
+    await user.click(screen.getByRole('button', { name: '创建员工' }));
+
+    expect(api.generateEmployeeProfile).not.toHaveBeenCalled();
+    expect(api.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'manual-ops',
+        name: 'Manual Ops',
+        description: '手工创建的员工',
+        goals: ['目标一'],
+      }),
+    );
+    expect(await screen.findByText('员工创建完成')).toBeInTheDocument();
   });
 
   it('opens the operation center without a page-blocking backdrop', async () => {

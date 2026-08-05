@@ -19,11 +19,25 @@ export interface CreateAgentRequest {
   id: string;
   name: string;
   runtime: 'claude' | 'codex';
-  preset?: string;
   feishu: 'dedicated' | 'disabled';
   description?: string;
   goals?: string[];
+  responsibilities?: string[];
+  policies?: string[];
+  escalation_conditions?: string[];
+  skills?: string[];
   model?: string;
+}
+
+export interface GeneratedProfile {
+  id?: string;
+  name: string;
+  description: string;
+  goals: string[];
+  responsibilities: string[];
+  policies: string[];
+  escalation_conditions: string[];
+  skills: string[];
 }
 
 export interface OperationDto {
@@ -177,6 +191,11 @@ export const api = {
     request<{ id: string; workspace: string }>('/agents', {
       method: 'POST',
       body: JSON.stringify(input),
+    }),
+  generateEmployeeProfile: (brief: string) =>
+    request<GeneratedProfile>('/agents/generate', {
+      method: 'POST',
+      body: JSON.stringify({ brief }),
     }),
   getAgent: (id: string) => request<AgentDetail>(`/agents/${encodeURIComponent(id)}`),
   terminalGuidance: (id: string) =>

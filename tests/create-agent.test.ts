@@ -40,14 +40,15 @@ afterEach(async () => {
 });
 
 describe('CreateAgentService', () => {
-  it('creates an isolated Claude employee from the user-operations preset', async () => {
+  it('creates an isolated Claude employee from a description-driven profile', async () => {
     const { paths, registry, service } = await setup();
 
     const created = await service.create({
       id: 'user-operations',
       name: '用户运营专员',
       runtime: 'claude',
-      preset: 'user-operations',
+      description: '负责用户反馈收集、分析与闭环跟进',
+      goals: ['收集并分析用户反馈', '闭环跟进问题'],
       feishu: 'dedicated',
     });
 
@@ -62,7 +63,7 @@ describe('CreateAgentService', () => {
     expect(await fs.pathExists(path.join(created.workspace, 'CLAUDE.md'))).toBe(true);
     expect(await fs.pathExists(path.join(created.workspace, 'AGENTS.md'))).toBe(false);
     expect(await fs.pathExists(path.join(created.workspace, '.codex'))).toBe(false);
-    // preset 无内置 skill，skills 目录为空
+    // 描述驱动，未给 skills → 空目录
     expect(await fs.pathExists(path.join(created.workspace, 'skills'))).toBe(true);
     expect(await fs.readdir(path.join(created.workspace, 'skills'))).toEqual([]);
     expect(await fs.pathExists(path.join(created.workspace, '.claude/skills'))).toBe(true);
@@ -97,7 +98,8 @@ describe('CreateAgentService', () => {
       id: 'claude-stance',
       name: 'Claude Stance',
       runtime: 'claude',
-      preset: 'user-operations',
+      description: '负责用户反馈收集、分析与闭环跟进',
+      goals: ['收集并分析用户反馈', '闭环跟进问题'],
       feishu: 'dedicated',
     });
     const claudeConfig = agentConfigSchema.parse(
@@ -115,7 +117,8 @@ describe('CreateAgentService', () => {
       id: 'codex-stance',
       name: 'Codex Stance',
       runtime: 'codex',
-      preset: 'user-operations',
+      description: '负责用户反馈收集、分析与闭环跟进',
+      goals: ['收集并分析用户反馈', '闭环跟进问题'],
       feishu: 'disabled',
     });
     const codexPrompt = await fs.readFile(path.join(codex.workspace, 'AGENTS.md'), 'utf8');
@@ -132,7 +135,8 @@ describe('CreateAgentService', () => {
       id: 'chief',
       name: '主管',
       runtime: 'claude',
-      preset: 'user-operations',
+      description: '负责用户反馈收集、分析与闭环跟进',
+      goals: ['收集并分析用户反馈', '闭环跟进问题'],
       feishu: 'disabled',
       role: 'chief',
     });
@@ -145,7 +149,8 @@ describe('CreateAgentService', () => {
       id: 'worker',
       name: '执行者',
       runtime: 'claude',
-      preset: 'user-operations',
+      description: '负责用户反馈收集、分析与闭环跟进',
+      goals: ['收集并分析用户反馈', '闭环跟进问题'],
       feishu: 'disabled',
     });
     const workerConfig = agentConfigSchema.parse(
@@ -160,7 +165,8 @@ describe('CreateAgentService', () => {
       id: 'user-operations',
       name: '用户运营专员',
       runtime: 'claude' as const,
-      preset: 'user-operations',
+      description: '负责用户反馈收集、分析与闭环跟进',
+      goals: ['收集并分析用户反馈', '闭环跟进问题'],
       feishu: 'dedicated' as const,
     };
     await service.create(input);
@@ -169,5 +175,52 @@ describe('CreateAgentService', () => {
     expect(
       (await fs.readdir(paths.workspaceRoot)).filter((name) => name.startsWith('.staging-')),
     ).toEqual([]);
+  });
+
+  it('synthesizes default responsibilities/policies from description+goals and renders skills (D-029)', async () => {
+    const { service } = await setup();
+    const created = await service.create({
+      id: 'gen-profile',
+      name: '内容运营',
+      runtime: 'claude',
+      feishu: 'disabled',
+      description: '负责内容选题、撰写与效果复盘',
+      goals: ['每周输出报告', '提升内容转化'],
+      responsibilities: ['选题策划', '内容撰写'],
+      policies: ['对外发布须审批'],
+      skills: ['content-writing'],
+    });
+    const role = await fs.readFile(path.join(created.workspace, 'agent/ROLE.md'), 'utf8');
+    const goalsMd = await fs.readFile(path.join(created.workspace, 'agent/GOALS.md'), 'utf8');
+    const policiesMd = await fs.readFile(path.join(created.workspace, 'agent/POLICIES.md'), 'utf8');
+    // 显式 responsibilities 渲染进 ROLE；goals 渲染进 GOALS；显式 policies 覆盖默认。
+    expect(role).toContain('- 选题策划');
+    expect(role).toContain('- 内容撰写');
+    expect(goalsMd).toContain('- 每周输出报告');
+    expect(policiesMd).toContain('- 对外发布须审批');
+    expect(policiesMd).not.toContain('生产写入、对外发布、Git push');
+    // skills 渲染为占位 skill 目录（含 .codex 投影）。
+    expect(
+      await fs.pathExists(path.join(created.workspace, 'skills/content-writing/SKILL.md')),
+    ).toBe(true);
+    expect(
+      await fs.pathExists(path.join(created.workspace, '.claude/skills/content-writing')),
+    ).toBe(true);
+    // 缺 responsibilities/policies 时用默认（description 作职责、默认审批策略）。
+    const minimal = await service.create({
+      id: 'minimal-profile',
+      name: '最小员工',
+      runtime: 'codex',
+      feishu: 'disabled',
+      description: '仅描述',
+      goals: ['目标一'],
+    });
+    const minimalRole = await fs.readFile(path.join(minimal.workspace, 'agent/ROLE.md'), 'utf8');
+    const minimalPolicies = await fs.readFile(
+      path.join(minimal.workspace, 'agent/POLICIES.md'),
+      'utf8',
+    );
+    expect(minimalRole).toContain('- 仅描述');
+    expect(minimalPolicies).toContain('生产写入、对外发布、Git push 和删除数据必须经人工审批');
   });
 });

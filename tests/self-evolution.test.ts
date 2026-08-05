@@ -59,7 +59,8 @@ async function setup() {
     id: 'worker-a',
     name: '员工 A',
     runtime: 'claude',
-    preset: 'user-operations',
+    description: '负责用户反馈收集、分析与闭环跟进',
+    goals: ['收集并分析用户反馈', '闭环跟进问题'],
     feishu: 'disabled',
   });
   // 预置 0600 降级凭据（OP5-B）：prepareRuntime 在无 CC Switch 源时读它，避免真实 CLI 依赖。
@@ -175,5 +176,49 @@ describe('员工自我进化（TASK-029）', () => {
       reject: false,
     });
     expect(status.stdout).not.toContain('lessons/batch.md');
+  });
+
+  it('employee-authored skills/workflows/knowledge content is auto-committed (D-029 broaden)', async () => {
+    const { app, paths } = await setup();
+    const workspace = path.join(paths.workspaceRoot, 'worker-a');
+
+    // 员工在一次 run 中新建内容文件（未跟踪），系统应在 runAgent 后自动单文件提交。
+    const reportsDirty = path.join(workspace, 'skills/reporting/SKILL.md');
+    const workflowFile = path.join(workspace, 'workflows/review.md');
+    const knowledgeFile = path.join(workspace, 'knowledge/lessons/batch-processing.md');
+    await fs.outputFile(
+      reportsDirty,
+      '---\nname: reporting\ndescription: 生成日报\n---\n# Reporting\n',
+    );
+    await fs.outputFile(workflowFile, '# 复盘流程\n');
+    await fs.outputFile(knowledgeFile, '# 经验\n- 批量处理更快。\n');
+    // 非内容目录（tasks/）不应被自动提交。
+    const tasksDirty = path.join(workspace, 'tasks/ACTIVE.md');
+    await fs.appendFile(tasksDirty, '\n- 进行中的任务\n');
+
+    const { ProcessRunner } = await import('../src/core/process-runner.js');
+    vi.spyOn(ProcessRunner.prototype, 'runLogged').mockResolvedValue(fakeResult('完成。'));
+
+    await app.runAgent('worker-a', '产出内容');
+
+    for (const rel of [
+      'skills/reporting/SKILL.md',
+      'workflows/review.md',
+      'knowledge/lessons/batch-processing.md',
+    ]) {
+      const log = await gitLog(workspace, rel);
+      expect(log.some((line) => line.includes('evolve:'))).toBe(true);
+    }
+    // 内容目录已提交，不再 dirty；tasks/ 未提交，仍 dirty。
+    const status = await execa('git', ['status', '--short'], {
+      cwd: workspace,
+      shell: false,
+      extendEnv: false,
+      reject: false,
+    });
+    expect(status.stdout).not.toContain('skills/reporting');
+    expect(status.stdout).not.toContain('workflows/review.md');
+    expect(status.stdout).not.toContain('lessons/batch-processing');
+    expect(status.stdout).toContain('tasks/ACTIVE.md');
   });
 });

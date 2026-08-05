@@ -69,18 +69,20 @@ CC Switch Provider 同步、Codex 登录、飞书扫码/App 授权和交互聊�
 
 每个员工的 `agent/CURRENT_STATE.md` 由系统与员工共同维护：运行器登录、飞书授权、服务启停、归档/恢复等生命周期事件会自动更新状态行并单文件 git 提交；员工（AI）在工作开始/结束时按运行指南更新「工作进展」段（claude 侧已放行编辑该文件）。任务/对话完成不自动写状态。
 
-员工（AI）可在任务执行中自我进化：按运行指南更新自己的岗位（`agent/ROLE.md`）、目标（`agent/GOALS.md`）、工作系统（`agent/OPERATING_SYSTEM.md`）与规则（`agent/POLICIES.md`），或写回工作过程中的经验到 `knowledge/`——系统会自动检测并单文件 git 提交（`evolve:` 前缀），让下次执行更准确。
+员工（AI）可在任务执行中自我进化：按运行指南更新自己的岗位（`agent/ROLE.md`）、目标（`agent/GOALS.md`）、工作系统（`agent/OPERATING_SYSTEM.md`）与规则（`agent/POLICIES.md`），或写回工作过程中的经验到 `knowledge/`、沉淀 `skills/` 与 `workflows/`——系统会自动检测并单文件 git 提交（`evolve:` 前缀），让下次执行更准确。
 
-## 创建用户运营专员
+## 创建员工（描述 → AI 生成蓝图）
+
+用一句话描述员工用法，AI 自动生成可编辑的岗位蓝图（岗位名、职责、目标、权限边界），确认后创建。不需要、也没有预设：
 
 ```bash
 agentctl create \
-  --id user-operations \
-  --name "用户运营专员" \
+  --describe "帮我建一个负责收集用户反馈、分析并闭环跟进的产品运营" \
   --runtime claude \
-  --preset user-operations \
   --feishu dedicated
 ```
+
+`--describe` 先用本地 Claude CLI 生成蓝图，再创建；`--dry-run` 可先预览。也可跳过 AI，手动给 `--description` 和 `--goal`。Web 管理台创建页提供同一流程：输入描述 → 「AI 生成蓝图」→ 编辑字段 → 确认创建。
 
 Claude 默认使用 CC Switch 当前启用的 Provider。创建后将 Provider 同步到员工隔离环境：
 

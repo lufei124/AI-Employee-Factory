@@ -10,7 +10,8 @@
 - `src/runtimes/`：Claude/Codex 命令和 ExecutionContext，不直接执行进程。
 - `src/services/`：ServiceAdapter、launchd 实现与按 `service_provider` 分发的工厂（`createServiceFactory`）；systemd 适配器为桩（`install()` 抛 `DEPENDENCY_MISSING`），实现不得改变 CLI 语义。
 - `src/schemas/`：版本化 Zod 数据合同。
-- `presets/` 与 `templates/`：可审查、不含 Secret 的生成源。
+- `presets/`: 仅存 CC Switch 白名单（`cc-switch-allowlist.json`，随 Claude Code 版本更新）；员工预设已移除。
+- `templates/`：可审查、不含 Secret 的生成源（角色身份文档、ENTRY 引导、运行时文件）。
 
 ## 依赖与数据流
 
@@ -47,6 +48,8 @@ Web 仅绑定 `127.0.0.1`：启动 URL fragment 中的一次性 token 交换为 
 **员工自我进化（D-026）**：员工（AI）可在任务执行阶段更新 `agent/ROLE.md`（岗位）、`GOALS.md`（目标）、`OPERATING_SYSTEM.md`（工作系统）、`POLICIES.md`（规则）与 `knowledge/` 知识做自我进化——`prepareRuntime` 幂等放行编辑（`ensureAgentDocsAllowed`），`runAgent`/`runChat`/`runJob` 成功后 `commitSelfEvolution` 单文件自动提交（`evolve: 更新 <basename>`），`knowledgeWrite`（含经验提取写回 `knowledge/lessons/`）提交 `evolve: 更新知识`；均 best-effort 不阻断主流程。员工不可修改 `.claude/settings.json` 扩大自身权限，单文件提交绝不用 `add -A`。
 
 **员工自我配置定时任务（D-028）**：员工可写 `automation/jobs/*.yaml`（`managed_by: employee` + `enabled: true`）给自己配置定时任务，`jobConfigSchema` 用 `managed_by`（缺省 admin）区分来源。`runAgent`/`runChat`/`runJob` 结束后经 `reconcileEmployeeJobs`（`src/core/job-reconcile.ts`，best-effort）自动 reconcile：`enabled: true` 的 job 安装 launchd 调度（`jobLaunchdService(...).enableScheduled()`），删除或 `enabled: false` 反注册（bootout + 删 plist），`schedule.time` 变更先反注册再重装；`schedules/<agent>/.employee-jobs.json` 记录上次调度集合与时间用于变化检测。新增/变更的 employee job YAML 单文件 git 提交（`job: 更新 <id>`）。`prepareRuntime` 幂等放行 `automation/jobs/**` 与 `automation/prompts/**`。只对 employee job 生效，管理员 job 不受自动 reconcile 影响；单 job 校验失败（schema/路径逃逸）仅跳过不阻断。
+
+**描述生成员工 + 自进化拓宽（D-029）**：创建不再用预设。用户一句话描述员工用法 → `generateEmployeeProfile`（`src/core/employee-generator.ts`）调本地 Claude CLI（`claude -p --output-format json`，用户默认环境、不设 CLAUDE_CONFIG_DIR）生成结构化蓝图（`id/name/description/goals/responsibilities/policies/escalation_conditions/skills`），剥离 markdown 围栏后按 `generatedProfileSchema` 校验，失败抛 `OPERATION_FAILED`。Web 创建页与 CLI `--describe` 均走此流程，生成后可编辑再确认。`CreateAgentInput` 去 `preset`，`resolveProfile` 始终从 `description`+`goals` 合成蓝图（缺省 responsibilities/policies/skills 有安全默认）。`presets/*.yaml` 与 `loadPreset` 已删除（`presets/cc-switch-allowlist.json` 保留，与员工预设无关）。自进化 `commitSelfEvolution` 从四份身份文档扩展到内容目录 `skills/**`、`workflows/**`、`knowledge/**`——员工新建/修改的任何内容（含未跟踪新文件）自动单文件提交，不扫 `tasks/`、`reports/`、`scripts/`、`config/`、`logs/`。
 
 飞书采用 `lark-coding-agent-bridge` 官方 PersonalAgent 注册与 WebSocket 长连接。Factory 保持每员工独立 `LARK_CHANNEL_HOME`，并在授权和启动边界把 profile 权限固定为 `workspace/workspace`；不使用 Bridge 自带 daemon，也不把 App Secret 放入 argv、plist 或日志。
 

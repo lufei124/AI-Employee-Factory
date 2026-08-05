@@ -2,19 +2,19 @@
 
 ## 身份
 
-Task ID: TASK-031
+Task ID: TASK-032
 
-Task title: 员工自我配置定时任务（D-028）
+Task title: 描述生成员工 + 自进化拓宽（D-029）
 
 Outgoing/current agent: claude-20260803-01
 
-Intended next role/agent: 用户或后续维护者（TASK-031 已实施并提交；后续增强：任务完成自动写状态、飞书入站等其他立项）
+Intended next role/agent: 用户或后续维护者（TASK-032 已实施，待验证 commit；后续增强：任务完成自动写状态、飞书入站等其他立项）
 
 Branch/worktree: main
 
-Status: managed_by 标记 + 自动生效 reconcile + 文件 YAML 自我进化，已提交 main
+Status: 描述→AI 生成蓝图 + 移除预设 + commitSelfEvolution 拓宽到 skills/workflows/knowledge，已提交 main（未 push）
 
-更新时间：2026-08-05 21:30 +0800
+更新时间：2026-08-05 22:00 +0800
 
 ## 已完成
 
