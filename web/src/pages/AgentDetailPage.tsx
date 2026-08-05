@@ -8,6 +8,7 @@ import {
   Bot,
   CheckCircle2,
   FileText,
+  ListTodo,
   LockKeyhole,
   MessageSquare,
   Play,
@@ -19,6 +20,7 @@ import {
   Terminal,
   Trash2,
   Upload,
+  XCircle,
 } from 'lucide-react';
 import {
   api,
@@ -28,6 +30,8 @@ import {
   type OperationDto,
   type SkillMetadata,
   type SkillScope,
+  type TaskItem,
+  type TaskPlan,
 } from '../api.js';
 import { CopyButton } from '../components/CopyButton.js';
 
@@ -35,7 +39,7 @@ interface AgentDetailPageProps {
   agentId: string;
 }
 
-const tabs = ['概览', '身份文档', '任务', 'Skills', '日志', '备份', '诊断'] as const;
+const tabs = ['概览', '身份文档', '任务', 'Todo', 'Skills', '日志', '备份', '诊断'] as const;
 type Tab = (typeof tabs)[number];
 
 const documentKeys = [
@@ -648,6 +652,244 @@ function JobsTab({ agentId }: { agentId: string }) {
   );
 }
 
+const planStateLabel: Record<TaskPlan['status'], string> = {
+  draft: '待确认',
+  active: '执行中',
+  completed: '已完成',
+  cancelled: '已驳回',
+};
+
+const planStateClass: Record<TaskPlan['status'], string> = {
+  draft: 'queued',
+  active: 'running',
+  completed: 'succeeded',
+  cancelled: 'failed',
+};
+
+const itemStateLabel: Record<TaskItem['status'], string> = {
+  pending: '待处理',
+  queued: '排队中',
+  planning: '规划中',
+  awaiting_confirmation: '待确认',
+  developing: '执行中',
+  awaiting_review: '待审查',
+  completed: '已完成',
+  failed: '失败',
+  cancelled: '已取消',
+};
+
+const itemStateClass: Record<TaskItem['status'], string> = {
+  pending: '',
+  queued: 'queued',
+  planning: 'queued',
+  awaiting_confirmation: 'queued',
+  developing: 'running',
+  awaiting_review: 'queued',
+  completed: 'succeeded',
+  failed: 'failed',
+  cancelled: 'failed',
+};
+
+function TodoTab({ agentId }: { agentId: string }) {
+  const [plans, setPlans] = useState<TaskPlan[]>([]);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState<string>();
+  const [error, setError] = useState('');
+  const [feedback, setFeedback] = useState('');
+  const busyRef = useRef(false);
+  const refresh = async () => {
+    try {
+      setPlans(await api.listTaskPlans(agentId));
+      setError('');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+  useEffect(() => {
+    void refresh();
+    const timer = setInterval(() => {
+      if (!busyRef.current) void refresh();
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [agentId]);
+  const run = async (label: string, action: () => Promise<unknown>, success?: string) => {
+    busyRef.current = true;
+    setBusy(label);
+    setError('');
+    setFeedback('');
+    try {
+      await action();
+      await refresh();
+      if (success) setFeedback(success);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      busyRef.current = false;
+      setBusy(undefined);
+    }
+  };
+  const toggle = (planId: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(planId)) next.delete(planId);
+      else next.add(planId);
+      return next;
+    });
+  return (
+    <section className="panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Todo 任务</h2>
+          <span>计划状态机 · 2 秒轮询刷新</span>
+        </div>
+        <button className="button ghost" onClick={() => void run('refresh', refresh)}>
+          <RefreshCw size={15} />
+          刷新
+        </button>
+      </div>
+      {error && <div className="notice danger">{error}</div>}
+      {feedback && (
+        <div className="notice info" role="status">
+          {feedback}
+        </div>
+      )}
+      {plans.length === 0 ? (
+        <div className="empty-state">
+          <ListTodo size={26} />
+          <h3>暂无 Todo 计划</h3>
+          <p>通过 CLI 的 plan / chief 命令创建计划后，在此确认、派发与合并审查。</p>
+        </div>
+      ) : (
+        <div className="todo-list">
+          {plans.map((plan) => (
+            <article className="todo-plan" key={plan.id}>
+              <div className="todo-plan-head">
+                <button className="todo-plan-toggle" onClick={() => toggle(plan.id)}>
+                  <span className={`status-badge ${planStateClass[plan.status]}`}>
+                    {planStateLabel[plan.status]}
+                  </span>
+                  <strong>{plan.name}</strong>
+                  <small>
+                    {plan.id} · items {plan.items.length}
+                  </small>
+                </button>
+                <div className="button-row">
+                  {plan.status === 'draft' && (
+                    <>
+                      <button
+                        className="button primary"
+                        disabled={Boolean(busy)}
+                        onClick={() =>
+                          void run(
+                            `confirm:${plan.id}`,
+                            () => api.confirmPlan(agentId, plan.id),
+                            `已确认计划 ${plan.id}，可派发执行。`,
+                          )
+                        }
+                      >
+                        <CheckCircle2 size={15} />
+                        确认计划
+                      </button>
+                      <button
+                        className="button ghost danger-text"
+                        disabled={Boolean(busy)}
+                        onClick={async () => {
+                          const note = window.prompt(`驳回计划 ${plan.id}（可附理由）：`) ?? '';
+                          await run(
+                            `reject:${plan.id}`,
+                            () => api.rejectPlan(agentId, plan.id, note || undefined),
+                            `已驳回计划 ${plan.id}。`,
+                          );
+                        }}
+                      >
+                        <XCircle size={15} />
+                        驳回计划
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+              {plan.note && <p className="muted">驳回/取消理由：{plan.note}</p>}
+              {expanded.has(plan.id) && (
+                <div className="todo-items">
+                  {plan.items.map((item) => (
+                    <article className="todo-item" key={item.id}>
+                      <div className="todo-item-head">
+                        <div>
+                          <strong>{item.title}</strong>
+                          <span>
+                            {item.agent} · {item.id}
+                          </span>
+                        </div>
+                        <span className={`status-badge ${itemStateClass[item.status]}`}>
+                          {itemStateLabel[item.status]}
+                        </span>
+                      </div>
+                      <p className="todo-prompt">{item.prompt}</p>
+                      {item.status === 'awaiting_review' && (
+                        <div className="todo-review">
+                          <div className="panel-heading">
+                            <h3>审查结论</h3>
+                          </div>
+                          {item.review ? (
+                            <p className="muted">
+                              <span
+                                className={`status-badge ${item.review.verdict === 'approved' ? 'succeeded' : 'failed'}`}
+                              >
+                                {item.review.verdict === 'approved' ? '已通过' : '已驳回'}
+                              </span>
+                              {item.review.note ?? '（无补充说明）'}
+                            </p>
+                          ) : (
+                            <p className="muted">尚未发起 Chief 交叉审查（CLI：chief review）。</p>
+                          )}
+                          <div className="button-row">
+                            <button
+                              className="button primary"
+                              disabled={Boolean(busy)}
+                              onClick={() =>
+                                void run(
+                                  `merge:${item.id}`,
+                                  () => api.confirmReview(agentId, plan.id, item.id),
+                                  `已确认合并 ${item.id}。`,
+                                )
+                              }
+                            >
+                              <CheckCircle2 size={15} />
+                              确认合并
+                            </button>
+                            <button
+                              className="button ghost danger-text"
+                              disabled={Boolean(busy)}
+                              onClick={async () => {
+                                const note =
+                                  window.prompt(`驳回任务 ${item.id} 返工（可附理由）：`) ?? '';
+                                await run(
+                                  `reject-review:${item.id}`,
+                                  () =>
+                                    api.rejectReview(agentId, plan.id, item.id, note || undefined),
+                                  `已驳回 ${item.id} 返工。`,
+                                );
+                              }}
+                            >
+                              <XCircle size={15} />
+                              驳回返工
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              )}
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function SkillsTab({ agentId }: { agentId: string }) {
   const [skills, setSkills] = useState<SkillMetadata[]>([]);
   const [scope, setScope] = useState<SkillScope>('project');
@@ -955,6 +1197,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
       {tab === '概览' && <OverviewTab detail={detail} guidance={guidance} reload={load} />}
       {tab === '身份文档' && <DocumentsTab agentId={agentId} />}
       {tab === '任务' && <JobsTab agentId={agentId} />}
+      {tab === 'Todo' && <TodoTab agentId={agentId} />}
       {tab === 'Skills' && <SkillsTab agentId={agentId} />}
       {tab === '日志' && <LogsTab agentId={agentId} />}
       {tab === '备份' && <BackupTab agentId={agentId} />}

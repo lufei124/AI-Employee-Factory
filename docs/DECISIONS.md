@@ -172,6 +172,14 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 - 边界：脱敏约束由应用 seam 保证——`AgentConfig`/`RegistryAgent` 均不含原始 Secret（token/app_secret 不进入便携配置），MCP 层不新增任何 secret 读取面；测试固定「读工具不泄露注入工作区的 secret 形态 token」作为回归守卫。`list_operations`/`run_task_plan`/`read_latest_log` 的过滤/并发/行长参数为 spec 之外的合理性 affordance，不改变 spec 工具语义。
 - 原因：spec 阶段 3 的 grilling Q9 明确读+编排写工具集；thin-adapter 保证三面（CLI/Web/MCP）共用同一行为与脱敏约束，避免 MCP 形成第二套逻辑。JSON 主路径响应降低 MCP 客户端（Claude Code/Cursor/VS Code）轮询成本，SSE 增强路径（请求内 progress）与推送路径（subscriptions/listen）均留作后续。
 
+## D-022：Web Todo 视图渲染审查结论，不持久化原始 diff
+
+- 状态：Accepted（已实施，issue 07）
+- 日期：2026-08-05
+- 决定：Web 员工详情页「Todo」标签渲染**已存储的审查结论** `item.review { verdict, note }`（verdict 本地化为已通过/已驳回），**不展示原始 diff**。原因：按 D-017，`reviewTaskPlan` 由编排器从 worker workspace **实时读取** `diff.patch` 与运行日志、脱敏后喂 Chief，原始 diff **不写回计划文件**——计划文件只持久化 Chief 返回的结构化 verdict+note。因此 Web 无从读取 diff（它只读计划文件），展示 verdict+note 是唯一不新增网面的选择。
+- 边界：issue 07 的「走完 Todo 流程」只含看状态、确认/驳回计划、确认合并/驳回审查——**Web 不实现派发（run）与计划/任务项创建**（创建走 CLI `plan`/`chief run`，派发走 `agentctl plan run`）。若需 Web 展示原始 diff，属后续增强（读 worker 产物路径，见 ARCHITECTURE「Chief 编排与 Todo 状态机」）。
+- 原因：避免 scope creep（派发是 CLI 范畴）与避免为展示 diff 而放开隔离语义/新增读面；保持 Web 只读 + 两种闸门（计划级确认/驳回、审查级合并/驳回）的最小网面。
+
 ## D-001 - 引入多 Agent 协作骨架
 
 - 状态：Accepted

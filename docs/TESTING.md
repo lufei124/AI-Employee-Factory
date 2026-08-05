@@ -16,7 +16,7 @@ npm run test:e2e
 - 文件系统集成：Registry 原子更新与备份、锁、Agent 模板、备份恢复、doctor。
 - CLI smoke：在临时 `HOME`、`AI_EMPLOYEES_HOME` 和 `AI_EMPLOYEES_WORKSPACE_ROOT` 中运行构建产物。
 - Fastify 注入测试：会话交换、Host/Origin/CSRF、Zod 错误、确认对象、文档/Skill/备份路径边界和 Operation 状态。
-- React 组件测试：首次初始化、员工创建、状态展示、Markdown 编辑和空状态。
+- React 组件测试：首次初始化、员工创建、状态展示、Markdown 编辑、空状态，以及员工详情「Todo」标签（计划/任务项状态渲染、2 秒轮询刷新、计划级确认/驳回门、审查门确认合并/驳回返工）。
 - Playwright E2E：使用临时 HOME 启动真实 `agentctl web --no-open`，完成初始化、`user-operations` 创建、Doctor、备份和 `--new-id` 恢复。
 
 自动测试不登录 Claude/Codex，不请求飞书 API，不安装真实 launchd 服务。外部进程边界使用临时脚本或参数生成断言；E2E 不触碰个人 `~/.claude`、`~/.codex` 或 Bridge home。

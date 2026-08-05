@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -10,7 +10,7 @@ import { AgentDetailPage } from '../web/src/pages/AgentDetailPage.js';
 import { SkillStorePage } from '../web/src/pages/SkillStorePage.js';
 import { OperationsDrawer } from '../web/src/components/OperationsDrawer.js';
 import { BackupsPage } from '../web/src/pages/BackupsPage.js';
-import { api } from '../web/src/api.js';
+import { api, type TaskPlan } from '../web/src/api.js';
 
 vi.mock('../web/src/api.js', () => ({
   api: {
@@ -37,6 +37,12 @@ vi.mock('../web/src/api.js', () => ({
     listTrash: vi.fn(),
     restoreTrash: vi.fn(),
     listBackups: vi.fn(),
+    listTaskPlans: vi.fn(),
+    getTaskPlan: vi.fn(),
+    confirmPlan: vi.fn(),
+    rejectPlan: vi.fn(),
+    confirmReview: vi.fn(),
+    rejectReview: vi.fn(),
   },
 }));
 
@@ -511,5 +517,164 @@ describe('Web console core flows', () => {
     expect(api.removeSkill).toHaveBeenCalledWith('ops', 'research-helper', 'project');
     // 卸载后列表刷新（getAgent 重载 + listSkills 重新拉取）
     expect(await screen.findByText('暂无 项目级 Skill')).toBeInTheDocument();
+  });
+
+  it('Todo 标签展示待确认计划并可确认/驳回', async () => {
+    vi.mocked(api.getAgent).mockResolvedValue({
+      registry: {
+        id: 'ops',
+        name: '运营专员',
+        status: 'stopped',
+        runtime_home: { path: '/private/runtimes/ops/claude' },
+        bridge: { enabled: true, authorization: 'ready', home: '/private/bridges/ops' },
+      },
+      agent: { description: '负责用户运营', runtime: { provider: 'claude', locked: true } },
+    } as never);
+    vi.mocked(api.terminalGuidance).mockResolvedValue({
+      runtimeLogin: 'agentctl runtime sync ops',
+      bridgeAuthorize: 'agentctl bridge authorize ops',
+      chat: 'agentctl chat ops',
+    });
+    const plan: TaskPlan = {
+      schema_version: 1,
+      id: 'plan-1',
+      name: '整合用户反馈',
+      creator: 'ops',
+      status: 'draft',
+      items: [
+        {
+          id: 'item-1',
+          title: '收集反馈',
+          agent: 'ops',
+          prompt: '读取并整理今日用户反馈',
+          status: 'pending',
+          dependencies: [],
+          created_at: '2026-08-05T00:00:00.000Z',
+          updated_at: '2026-08-05T00:00:00.000Z',
+          finished_at: null,
+        },
+      ],
+      created_at: '2026-08-05T00:00:00.000Z',
+      updated_at: '2026-08-05T00:00:00.000Z',
+    };
+    vi.mocked(api.listTaskPlans).mockResolvedValue([plan]);
+    vi.mocked(api.confirmPlan).mockResolvedValue(plan);
+    vi.mocked(api.rejectPlan).mockResolvedValue(plan);
+    const prompt = vi.spyOn(window, 'prompt').mockReturnValue(null);
+    const user = userEvent.setup();
+
+    render(<AgentDetailPage agentId="ops" />);
+    await user.click(await screen.findByRole('button', { name: 'Todo' }));
+
+    expect(await screen.findByText('整合用户反馈')).toBeInTheDocument();
+    expect(screen.getByText('待确认')).toBeInTheDocument();
+    await user.click(screen.getByText('确认计划'));
+    expect(api.confirmPlan).toHaveBeenCalledWith('ops', 'plan-1');
+    expect(await screen.findByText('已确认计划 plan-1，可派发执行。')).toBeInTheDocument();
+
+    // 驳回计划（带反馈 note）——计划级驳回门
+    prompt.mockReturnValue('合并前需补充数据');
+    await user.click(screen.getByText('驳回计划'));
+    expect(api.rejectPlan).toHaveBeenCalledWith('ops', 'plan-1', '合并前需补充数据');
+    expect(await screen.findByText('已驳回计划 plan-1。')).toBeInTheDocument();
+  });
+
+  it('Todo 标签对待审查任务渲染审查结论并可确认合并/驳回', async () => {
+    vi.mocked(api.getAgent).mockResolvedValue({
+      registry: {
+        id: 'ops',
+        name: '运营专员',
+        status: 'stopped',
+        runtime_home: { path: '/private/runtimes/ops/claude' },
+        bridge: { enabled: true, authorization: 'ready', home: '/private/bridges/ops' },
+      },
+      agent: { description: '负责用户运营', runtime: { provider: 'claude', locked: true } },
+    } as never);
+    vi.mocked(api.terminalGuidance).mockResolvedValue({
+      runtimeLogin: 'agentctl runtime sync ops',
+      bridgeAuthorize: 'agentctl bridge authorize ops',
+      chat: 'agentctl chat ops',
+    });
+    const plan: TaskPlan = {
+      schema_version: 1,
+      id: 'plan-2',
+      name: '发布公告',
+      creator: 'ops',
+      status: 'active',
+      items: [
+        {
+          id: 'item-2',
+          title: '撰写公告',
+          agent: 'writer',
+          prompt: '撰写本周产品公告',
+          status: 'awaiting_review',
+          dependencies: [],
+          review: { verdict: 'approved', note: '内容完整，可以发布' },
+          created_at: '2026-08-05T00:00:00.000Z',
+          updated_at: '2026-08-05T00:00:00.000Z',
+          finished_at: null,
+        },
+      ],
+      created_at: '2026-08-05T00:00:00.000Z',
+      updated_at: '2026-08-05T00:00:00.000Z',
+    };
+    vi.mocked(api.listTaskPlans).mockResolvedValue([plan]);
+    vi.mocked(api.confirmReview).mockResolvedValue(plan);
+    vi.mocked(api.rejectReview).mockResolvedValue(plan);
+    const prompt = vi.spyOn(window, 'prompt').mockReturnValue(null);
+    const user = userEvent.setup();
+
+    render(<AgentDetailPage agentId="ops" />);
+    await user.click(await screen.findByRole('button', { name: 'Todo' }));
+    await user.click(await screen.findByText('发布公告')); // 展开计划
+
+    expect(await screen.findByText('待审查')).toBeInTheDocument();
+    expect(screen.getByText('内容完整，可以发布')).toBeInTheDocument();
+    await user.click(screen.getByText('确认合并'));
+    expect(api.confirmReview).toHaveBeenCalledWith('ops', 'plan-2', 'item-2');
+    expect(await screen.findByText('已确认合并 item-2。')).toBeInTheDocument();
+
+    // 驳回返工（带反馈 note）——审查门驳回
+    prompt.mockReturnValue('需要补充标题');
+    await user.click(screen.getByText('驳回返工'));
+    expect(api.rejectReview).toHaveBeenCalledWith('ops', 'plan-2', 'item-2', '需要补充标题');
+    expect(await screen.findByText('已驳回 item-2 返工。')).toBeInTheDocument();
+  });
+
+  it('Todo 标签每 2 秒轮询刷新状态列表', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(api.getAgent).mockResolvedValue({
+        registry: {
+          id: 'ops',
+          name: '运营专员',
+          status: 'stopped',
+          runtime_home: { path: '/private/runtimes/ops/claude' },
+          bridge: { enabled: true, authorization: 'ready', home: '/private/bridges/ops' },
+        },
+        agent: { description: '负责用户运营', runtime: { provider: 'claude', locked: true } },
+      } as never);
+      vi.mocked(api.terminalGuidance).mockResolvedValue({
+        runtimeLogin: 'agentctl runtime sync ops',
+        bridgeAuthorize: 'agentctl bridge authorize ops',
+        chat: 'agentctl chat ops',
+      });
+      vi.mocked(api.listTaskPlans).mockResolvedValue([]);
+
+      render(<AgentDetailPage agentId="ops" />);
+      await act(async () => {});
+      fireEvent.click(screen.getByRole('button', { name: 'Todo' }));
+      await act(async () => {});
+      await act(async () => {});
+      const afterLoad = vi.mocked(api.listTaskPlans).mock.calls.length;
+      expect(afterLoad).toBeGreaterThanOrEqual(1);
+
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+      });
+      expect(vi.mocked(api.listTaskPlans).mock.calls.length).toBeGreaterThanOrEqual(afterLoad + 1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

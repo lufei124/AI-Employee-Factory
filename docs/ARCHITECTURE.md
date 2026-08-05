@@ -44,6 +44,16 @@ Web 仅绑定 `127.0.0.1`：启动 URL fragment 中的一次性 token 交换为 
 
 飞书采用 `lark-coding-agent-bridge` 官方 PersonalAgent 注册与 WebSocket 长连接。Factory 保持每员工独立 `LARK_CHANNEL_HOME`，并在授权和启动边界把 profile 权限固定为 `workspace/workspace`；不使用 Bridge 自带 daemon，也不把 App Secret 放入 argv、plist 或日志。
 
+## Chief 编排与 Todo 状态机
+
+`role` 为 `chief` 的员工可编排多名 `worker`，顶层一句话闭环：拆解 → 计划确认门 → 波次派发 → Chief 交叉审查单向搬运 → 人工合并。计划按「创建者」落在其自有 workspace 的 `tasks/plans/`（`TaskStore`），不跨员工共享实时目录。
+
+- **计划级状态机** `draft → [active, cancelled]`：`draft` 是人工确认门（`confirmPlan` 确认可派发 / `rejectPlan` 驳回可附 note）；`active` 可派发，`completed/cancelled` 为终态。
+- **任务项状态机**（7+2）：`pending → queued → planning → awaiting_confirmation → developing → awaiting_review → completed`，外加终止态 `failed/cancelled`。`runTaskPlan` 波次派发：依赖阻塞、失败不阻塞同级、已成功跳过、可选并发（1–8）；中断孤儿项经 `reconcile` 标记失败。
+- **审查门（D-017 单向搬运）**：`reviewTaskPlan` 由编排器读 worker 的 `diff.patch` 与 `logs/<worker>/runs/<slug>/stdout.log`，经 `redactSecrets` 脱敏后喂 Chief，Chief 返回结构化 `verdict+note` 写入 `item.review`；item 停留 `awaiting_review` 待人工确认合并（`confirmReview`→completed）或驳回返工（`rejectReview`→developing）。Chief 全程零 worker 文件系统访问，D-003 隔离不变。
+- **Web 视图**：员工详情页「Todo 任务」标签（与「任务」= 定时 Job 区分）按 2 秒轮询展示计划与任务项状态；`draft` 计划提供确认/驳回门，`awaiting_review` 项渲染审查结论并提供确认合并/驳回返工。add/派发仍由 CLI `plan`/`chief run` 完成，Web 只读 + 两种闸门。
+- **MCP**：`POST/GET /mcp` 以静态 bearer 认证注册 13 个工具（读 8 + 编排写 5），薄适配器穿过 `FactoryApplication` 单一 seam，与 Web/CLI 共享行为与脱敏约束（D-018/D-021）。
+
 ## OP1 Stage E：archival 后端前置约束
 
 外部/持久化 archival 后端（`local-sqlite` / `external`）当前**仅定义契约、不实现**（`src/core/archival.ts`，默认 `none`）。任何后端落地前必须满足 D-014 的 frozen 写入不变量：写入前经 `SECRET_PATTERN` 过滤、用户显式 per-entry 授权、只归档工作区可迁移身份知识（不传输 `runtime_home` / `bridge` 内容）、网络面与多租户威胁模型经安全评审。本地归档区（`archive`/`trash`/`PruneService.archives`）是另一概念，语义不受影响。

@@ -965,6 +965,94 @@ textarea:focus {
   color: var(--muted);
   font-size: 10px;
 }
+.todo-list {
+  display: grid;
+  gap: 10px;
+}
+.todo-plan {
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 12px 14px;
+  display: grid;
+  gap: 10px;
+}
+.todo-plan-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+}
+.todo-plan-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  flex: 1;
+  min-width: 0;
+}
+.todo-plan-toggle strong {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.todo-plan-toggle small {
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.todo-items {
+  display: grid;
+  gap: 8px;
+}
+.todo-item {
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 11px 13px;
+  display: grid;
+  gap: 8px;
+}
+.todo-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.todo-item-head > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.todo-item-head strong {
+  font-size: 12px;
+}
+.todo-item-head span {
+  color: var(--muted);
+  font-size: 10px;
+}
+.todo-prompt {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+.todo-review {
+  border-top: 1px dashed var(--line);
+  padding-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+.todo-review .panel-heading {
+  padding: 0;
+}
+.todo-review .panel-heading h3 {
+  font-size: 12px;
+  margin: 0;
+}
 .danger-text {
   color: var(--red) !important;
 }

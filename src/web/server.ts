@@ -631,6 +631,65 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
     },
   );
 
+  // Web Todo 视图（spec-chief-todo-mcp issue 07）：计划列表 + 计划级确认/驳回门 + 审查门人工合并/驳回。
+  server.get<{ Params: { id: string } }>('/api/v1/agents/:id/task-plans', async (request) => ({
+    data: await options.application.listTaskPlans(request.params.id),
+  }));
+
+  server.get<{ Params: { id: string; planId: string } }>(
+    '/api/v1/agents/:id/task-plans/:planId',
+    async (request) => ({
+      data: await options.application.getTaskPlan(request.params.id, request.params.planId),
+    }),
+  );
+
+  server.post<{ Params: { id: string; planId: string } }>(
+    '/api/v1/agents/:id/task-plans/:planId/actions/confirm',
+    async (request) => ({
+      data: await options.application.confirmPlan(request.params.id, request.params.planId),
+    }),
+  );
+
+  server.post<{ Params: { id: string; planId: string } }>(
+    '/api/v1/agents/:id/task-plans/:planId/actions/reject',
+    async (request) => {
+      const body = z.object({ note: z.string().optional() }).parse(request.body);
+      return {
+        data: await options.application.rejectPlan(
+          request.params.id,
+          request.params.planId,
+          body.note,
+        ),
+      };
+    },
+  );
+
+  server.post<{ Params: { id: string; planId: string; itemId: string } }>(
+    '/api/v1/agents/:id/task-plans/:planId/items/:itemId/actions/confirm-review',
+    async (request) => ({
+      data: await options.application.confirmReview(
+        request.params.id,
+        request.params.planId,
+        request.params.itemId,
+      ),
+    }),
+  );
+
+  server.post<{ Params: { id: string; planId: string; itemId: string } }>(
+    '/api/v1/agents/:id/task-plans/:planId/items/:itemId/actions/reject-review',
+    async (request) => {
+      const body = z.object({ note: z.string().optional() }).parse(request.body);
+      return {
+        data: await options.application.rejectReview(
+          request.params.id,
+          request.params.planId,
+          request.params.itemId,
+          body.note,
+        ),
+      };
+    },
+  );
+
   server.get('/api/v1/backups', async () => ({ data: await options.application.listBackups() }));
 
   server.post('/api/v1/backups/import', async (request, reply) => {

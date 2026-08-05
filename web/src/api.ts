@@ -102,6 +102,46 @@ export interface AgentDetail {
   };
 }
 
+export type TaskItemState =
+  | 'pending'
+  | 'queued'
+  | 'planning'
+  | 'awaiting_confirmation'
+  | 'developing'
+  | 'awaiting_review'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface TaskItem {
+  id: string;
+  title: string;
+  agent: string;
+  prompt: string;
+  status: TaskItemState;
+  dependencies: string[];
+  exit_code?: number;
+  artifact?: string;
+  review?: { verdict: 'approved' | 'rejected'; note?: string };
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
+}
+
+export type TaskPlanStatus = 'draft' | 'active' | 'completed' | 'cancelled';
+
+export interface TaskPlan {
+  schema_version: 1;
+  id: string;
+  name: string;
+  creator: string;
+  status: TaskPlanStatus;
+  note?: string;
+  items: TaskItem[];
+  created_at: string;
+  updated_at: string;
+}
+
 export type SkillScope = 'project' | 'user';
 
 export interface SkillMetadata {
@@ -330,5 +370,29 @@ export const api = {
   operationEvents: (id: string, after = 0) =>
     request<Array<{ seq: number; kind: string; message?: string; progress?: number }>>(
       `/operations/${id}/events?after=${after}`,
+    ),
+  listTaskPlans: (id: string) =>
+    request<TaskPlan[]>(`/agents/${encodeURIComponent(id)}/task-plans`),
+  getTaskPlan: (id: string, planId: string) =>
+    request<TaskPlan>(`/agents/${encodeURIComponent(id)}/task-plans/${encodeURIComponent(planId)}`),
+  confirmPlan: (id: string, planId: string) =>
+    request<TaskPlan>(
+      `/agents/${encodeURIComponent(id)}/task-plans/${encodeURIComponent(planId)}/actions/confirm`,
+      { method: 'POST' },
+    ),
+  rejectPlan: (id: string, planId: string, note?: string) =>
+    request<TaskPlan>(
+      `/agents/${encodeURIComponent(id)}/task-plans/${encodeURIComponent(planId)}/actions/reject`,
+      { method: 'POST', body: JSON.stringify(note ? { note } : {}) },
+    ),
+  confirmReview: (id: string, planId: string, itemId: string) =>
+    request<TaskPlan>(
+      `/agents/${encodeURIComponent(id)}/task-plans/${encodeURIComponent(planId)}/items/${encodeURIComponent(itemId)}/actions/confirm-review`,
+      { method: 'POST' },
+    ),
+  rejectReview: (id: string, planId: string, itemId: string, note?: string) =>
+    request<TaskPlan>(
+      `/agents/${encodeURIComponent(id)}/task-plans/${encodeURIComponent(planId)}/items/${encodeURIComponent(itemId)}/actions/reject-review`,
+      { method: 'POST', body: JSON.stringify(note ? { note } : {}) },
     ),
 };

@@ -30,6 +30,31 @@ Coordinator: codex-20260803-01
 | TASK-022 | Chief 编排核心闭环（spec-chief-orchestration 4 票：01 计划+派发 + 02 规划门脏审计 + 03 审查门单向搬运 + 04 拆解回落与 orchestrate）              | claude-20260803-01 | DONE        | main (TASK-022 commit)             | task-store 扩展/factory-application 编排动作/cli-program plan+chief 命令组/orchestration.test.ts/cli-structure.test.ts + .agent 簿记 + docs/DECISIONS.md ADR(可选)                                                                                                   | 用户批准的 spec-chief-orchestration 与 4 票计划（.scratch/chief-orchestration/issues/）                            | 2026-08-05 12:35 +0800 |
 | TASK-023 | 编排 Operation 可观测性（spec-chief-todo-mcp user story 16/23/25：runTaskPlan/orchestrate 注册 Operation 返回 OperationDto + cancel 单例复用）   | claude-20260803-01 | DONE        | main (TASK-023 commit)             | operation-manager 迁移 core/factory-application 编排可观测/cli-program 展示/start.ts 共享实例/errors CANCELLED 码/orchestration.test.ts + .agent 簿记                                                                                                                | 用户批准的 spec-chief-todo-mcp 切片（编排 Operation 可观测性）                                                     | 2026-08-05 12:55 +0800 |
 | TASK-024 | MCP 工具集（spec-chief-todo-mcp 阶段3 issue 12/13：读 8 + 编排写 5 工具，薄适配器穿应用 seam，静态 bearer）                                      | claude-20260803-01 | DONE        | main (TASK-024 commit)             | mcp-server 工具注册/server 传应用/mcp.test.ts 集成测/web-mcp.test.ts JSON 响应 + DECISIONS(D-021) + README + .agent 簿记                                                                                                                                             | 用户批准的 spec-chief-todo-mcp 切片（MCP 工具集）                                                                  | 2026-08-05 14:00 +0800 |
+| TASK-025 | Web Todo 视图（spec-chief-todo-mcp issue 07：员工详情 Todo 标签 + 计划级确认/驳回门 + 审查门合并/驳回 + 2s 轮询）                                | claude-20260803-01 | DONE        | main (TASK-025 commit)             | web/server.ts task-plans 路由/api.ts 客户端/AgentDetailPage TodoTab/styles.css + web-ui.test.tsx 覆盖 + ARCHITECTURE/TESTING/DECISIONS + .agent 簿记                                                                                                                 | 用户批准的 spec-chief-todo-mcp 切片（Web Todo 标签）、TASK-022（编排核心闭环）、TASK-023（OperationDto 底座）      | 2026-08-05 14:35 +0800 |
+
+## TASK-025 详情
+
+```text
+Task ID: TASK-025
+Title: Web Todo 视图（spec-chief-todo-mcp issue 07：员工详情 Todo 标签 + 计划级确认/驳回门 + 审查门合并/驳回 + 2s 轮询）
+Owner agent: claude-20260803-01
+Status: DONE
+Branch/worktree: main
+Allowed scope: src/web/server.ts（task-plans 路由）、web/src/api.ts（TaskPlan/TaskItem 类型与方法）、web/src/pages/AgentDetailPage.tsx（TodoTab + 标签）、web/src/styles.css（todo 设计系统类）、tests/web-ui.test.tsx（覆盖标签渲染/2s 轮询/两闸门确认与驳回）、docs/ARCHITECTURE.md（Chief 编排与 Todo 状态机段）、docs/TESTING.md、docs/DECISIONS.md(D-022)、.agent 簿记
+Forbidden scope: Web 派发执行（run/dispatch 属 CLI 范畴，issue 07 明确「走完流程」不含派发）、Web Chief 编排视图（issue 10，独立切片）、MCP 增强路径、用户真实服务状态、个人凭据
+Dependencies: TASK-022（编排核心闭环）、TASK-023（OperationDto 底座）、用户批准的 spec-chief-todo-mcp 切片（Web Todo 标签）
+Expected output: 员工详情页新增「Todo 任务」标签（与「任务」= 定时 Job 区分），列表展示计划/任务项状态，2 秒轮询；draft 计划提供确认/驳回门（带反馈），awaiting_review 项渲染审查结论并提供确认合并/驳回返工
+Acceptance criteria:
+  - 员工详情页新增「Todo 任务」标签（与「任务」= 定时 Job 区分）
+  - 列表展示每个任务的状态，2s 轮询刷新
+  - 「待确认」态（draft 计划）展开计划文本 + 确认计划/驳回计划（带反馈）
+  - 「待审查」态渲染审查结论 + 确认合并/驳回返工（D-017 审查结果 verdict+note；原始 diff 不持久化，见 D-022）
+  - 与既有运行/Job 面板风格一致（复用 status-badge/panel 设计系统）
+  - 新增 UI 测试覆盖标签渲染、2s 轮询刷新、两种闸门的确认与驳回
+  - /code-review（Standards+Spec 双轴）通过；全量单测通过（仅既有 date-sensitive experience.test.ts 失败除外）；任务完成即 commit（不 push）
+Started at: 2026-08-05 14:20 +0800
+Updated at: 2026-08-05 14:35 +0800
+```
 
 ## TASK-024 详情
 
