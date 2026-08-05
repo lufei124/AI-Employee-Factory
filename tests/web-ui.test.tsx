@@ -677,4 +677,333 @@ describe('Web console core flows', () => {
       vi.useRealTimers();
     }
   });
+
+  it('Chief 编排视图展示目标流水线（阶段条 + 聚合进度），worker 不显示该标签', async () => {
+    vi.mocked(api.getAgent).mockResolvedValue({
+      registry: {
+        id: 'chief-1',
+        name: '首席工程师',
+        role: 'chief',
+        status: 'running',
+        runtime_home: { path: '/private/runtimes/chief-1/claude' },
+        bridge: { enabled: false, authorization: 'ready', home: '/private/bridges/chief-1' },
+      },
+      agent: { description: '负责拆解与审查', runtime: { provider: 'claude', locked: true } },
+    } as never);
+    vi.mocked(api.terminalGuidance).mockResolvedValue({
+      runtimeLogin: 'agentctl runtime sync chief-1',
+      bridgeAuthorize: 'agentctl bridge authorize chief-1',
+      chat: 'agentctl chat chief-1',
+    });
+    const plan: TaskPlan = {
+      schema_version: 1,
+      id: 'plan-c1',
+      name: '发布新版产品',
+      creator: 'chief-1',
+      status: 'active',
+      items: [
+        {
+          id: 'w1',
+          title: '撰写发布说明',
+          agent: 'writer',
+          prompt: '草拟发布说明',
+          status: 'completed',
+          dependencies: [],
+          created_at: '2026-08-05T00:00:00.000Z',
+          updated_at: '2026-08-05T00:00:00.000Z',
+          finished_at: null,
+        },
+        {
+          id: 'w2',
+          title: '核对发布清单',
+          agent: 'qa',
+          prompt: '核对清单',
+          status: 'completed',
+          dependencies: [],
+          created_at: '2026-08-05T00:00:00.000Z',
+          updated_at: '2026-08-05T00:00:00.000Z',
+          finished_at: null,
+        },
+        {
+          id: 'w3',
+          title: '发布公告',
+          agent: 'ops',
+          prompt: '发布公告',
+          status: 'awaiting_review',
+          dependencies: [],
+          created_at: '2026-08-05T00:00:00.000Z',
+          updated_at: '2026-08-05T00:00:00.000Z',
+          finished_at: null,
+        },
+      ],
+      created_at: '2026-08-05T00:00:00.000Z',
+      updated_at: '2026-08-05T00:00:00.000Z',
+    };
+    vi.mocked(api.listTaskPlans).mockResolvedValue([plan]);
+    const user = userEvent.setup();
+
+    render(<AgentDetailPage agentId="chief-1" />);
+    await user.click(await screen.findByRole('button', { name: 'Chief 编排' }));
+
+    expect(await screen.findByText('发布新版产品')).toBeInTheDocument();
+    // 聚合整体进度（2 完成 + 1 待审查）
+    expect(screen.getByText(/2\/3 完成 · 1 待审查/)).toBeInTheDocument();
+    // 阶段条按序点亮：拆解 → 计划确认 → 执行 → 审查 → 结果
+    expect(screen.getByLabelText('编排流水线')).toHaveTextContent(
+      /拆解.*计划确认.*执行.*审查.*结果/,
+    );
+    // 聚合整体状态徽章
+    expect(screen.getByText('待审查')).toBeInTheDocument();
+
+    // worker（role=worker）不显示 Chief 编排标签
+    cleanup();
+    vi.mocked(api.getAgent).mockResolvedValue({
+      registry: {
+        id: 'worker-1',
+        name: '普通员工',
+        role: 'worker',
+        status: 'stopped',
+        runtime_home: { path: '/private/runtimes/worker-1/claude' },
+        bridge: { enabled: false, authorization: 'ready', home: '/private/bridges/worker-1' },
+      },
+      agent: { description: '执行任务', runtime: { provider: 'claude', locked: true } },
+    } as never);
+    render(<AgentDetailPage agentId="worker-1" />);
+    expect(await screen.findByText('普通员工')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Chief 编排' })).not.toBeInTheDocument();
+  });
+
+  it('Chief 编排阶段条是累计到达门：完成计划五段全亮，中途终止亮到执行，驳回未派发只亮拆解', async () => {
+    vi.mocked(api.getAgent).mockResolvedValue({
+      registry: {
+        id: 'chief-1',
+        name: '首席工程师',
+        role: 'chief',
+        status: 'running',
+        runtime_home: { path: '/private/runtimes/chief-1/claude' },
+        bridge: { enabled: false, authorization: 'ready', home: '/private/bridges/chief-1' },
+      },
+      agent: { description: '负责拆解与审查', runtime: { provider: 'claude', locked: true } },
+    } as never);
+    vi.mocked(api.terminalGuidance).mockResolvedValue({
+      runtimeLogin: 'agentctl runtime sync chief-1',
+      bridgeAuthorize: 'agentctl bridge authorize chief-1',
+      chat: 'agentctl chat chief-1',
+    });
+    const completedPlan: TaskPlan = {
+      schema_version: 1,
+      id: 'plan-done',
+      name: '已完成目标',
+      creator: 'chief-1',
+      status: 'completed',
+      items: [
+        {
+          id: 'w1',
+          title: '任务一',
+          agent: 'writer',
+          prompt: '任务一',
+          status: 'completed',
+          dependencies: [],
+          created_at: '2026-08-05T00:00:00.000Z',
+          updated_at: '2026-08-05T00:00:00.000Z',
+          finished_at: null,
+        },
+      ],
+      created_at: '2026-08-05T00:00:00.000Z',
+      updated_at: '2026-08-05T00:00:00.000Z',
+    };
+    const rejectedPlan: TaskPlan = {
+      schema_version: 1,
+      id: 'plan-no',
+      name: '被驳回目标',
+      creator: 'chief-1',
+      status: 'cancelled',
+      items: [
+        {
+          id: 'w2',
+          title: '任务二',
+          agent: 'writer',
+          prompt: '任务二',
+          status: 'pending',
+          dependencies: [],
+          created_at: '2026-08-05T00:00:00.000Z',
+          updated_at: '2026-08-05T00:00:00.000Z',
+          finished_at: null,
+        },
+      ],
+      created_at: '2026-08-05T00:00:00.000Z',
+      updated_at: '2026-08-05T00:00:00.000Z',
+    };
+    const abortedPlan: TaskPlan = {
+      schema_version: 1,
+      id: 'plan-stop',
+      name: '中途终止目标',
+      creator: 'chief-1',
+      status: 'cancelled',
+      items: [
+        {
+          id: 'w3',
+          title: '任务三',
+          agent: 'writer',
+          prompt: '任务三',
+          status: 'developing',
+          dependencies: [],
+          created_at: '2026-08-05T00:00:00.000Z',
+          updated_at: '2026-08-05T00:00:00.000Z',
+          finished_at: null,
+        },
+        {
+          id: 'w4',
+          title: '任务四',
+          agent: 'writer',
+          prompt: '任务四',
+          status: 'cancelled',
+          dependencies: [],
+          created_at: '2026-08-05T00:00:00.000Z',
+          updated_at: '2026-08-05T00:00:00.000Z',
+          finished_at: null,
+        },
+      ],
+      created_at: '2026-08-05T00:00:00.000Z',
+      updated_at: '2026-08-05T00:00:00.000Z',
+    };
+    vi.mocked(api.listTaskPlans).mockResolvedValue([completedPlan, rejectedPlan, abortedPlan]);
+    const user = userEvent.setup();
+
+    render(<AgentDetailPage agentId="chief-1" />);
+    await user.click(await screen.findByRole('button', { name: 'Chief 编排' }));
+
+    expect(await screen.findByText('已完成目标')).toBeInTheDocument();
+    expect(screen.getByText('被驳回目标')).toBeInTheDocument();
+    expect(screen.getByText('中途终止目标')).toBeInTheDocument();
+
+    // 已完成目标：执行阶段已到达即常亮，不因执行结束熄灭
+    const doneStage = screen
+      .getByText('已完成目标')
+      .closest('article')!
+      .querySelector('[aria-label="编排流水线"]')!;
+    expect(doneStage.querySelector('.pipeline-stage.done')).toHaveTextContent('拆解');
+    expect(doneStage.querySelectorAll('.pipeline-stage.done')).toHaveLength(5);
+
+    // 驳回未派发计划：未过计划确认门，仅拆解亮
+    const rejectedStage = screen
+      .getByText('被驳回目标')
+      .closest('article')!
+      .querySelector('[aria-label="编排流水线"]')!;
+    expect(rejectedStage.querySelectorAll('.pipeline-stage.done')).toHaveLength(1);
+    expect(rejectedStage.querySelector('.pipeline-stage.done')).toHaveTextContent('拆解');
+
+    // 中途终止计划：确认后曾派发（有项曾执行）→ 拆解/计划确认/执行三亮，审查/结果不亮
+    const abortedStage = screen
+      .getByText('中途终止目标')
+      .closest('article')!
+      .querySelector('[aria-label="编排流水线"]')!;
+    const abortedDone = abortedStage.querySelectorAll('.pipeline-stage.done');
+    expect(abortedDone).toHaveLength(3);
+    expect(abortedDone[0]).toHaveTextContent('拆解');
+    expect(abortedDone[1]).toHaveTextContent('计划确认');
+    expect(abortedDone[2]).toHaveTextContent('执行');
+    // 审查/结果未点亮（未被查询为 done）
+    expect(abortedStage.querySelectorAll('.pipeline-stage')).toHaveLength(5);
+  });
+
+  it('Chief 编排展开显示任务项审查结论并可确认合并/驳回', async () => {
+    vi.mocked(api.getAgent).mockResolvedValue({
+      registry: {
+        id: 'chief-1',
+        name: '首席工程师',
+        role: 'chief',
+        status: 'running',
+        runtime_home: { path: '/private/runtimes/chief-1/claude' },
+        bridge: { enabled: false, authorization: 'ready', home: '/private/bridges/chief-1' },
+      },
+      agent: { description: '负责拆解与审查', runtime: { provider: 'claude', locked: true } },
+    } as never);
+    vi.mocked(api.terminalGuidance).mockResolvedValue({
+      runtimeLogin: 'agentctl runtime sync chief-1',
+      bridgeAuthorize: 'agentctl bridge authorize chief-1',
+      chat: 'agentctl chat chief-1',
+    });
+    const plan: TaskPlan = {
+      schema_version: 1,
+      id: 'plan-c2',
+      name: '发布公告',
+      creator: 'chief-1',
+      status: 'active',
+      items: [
+        {
+          id: 'item-c2',
+          title: '撰写公告',
+          agent: 'writer',
+          prompt: '撰写本周产品公告',
+          status: 'awaiting_review',
+          dependencies: [],
+          review: { verdict: 'approved', note: '内容完整，可以发布' },
+          created_at: '2026-08-05T00:00:00.000Z',
+          updated_at: '2026-08-05T00:00:00.000Z',
+          finished_at: null,
+        },
+      ],
+      created_at: '2026-08-05T00:00:00.000Z',
+      updated_at: '2026-08-05T00:00:00.000Z',
+    };
+    vi.mocked(api.listTaskPlans).mockResolvedValue([plan]);
+    vi.mocked(api.confirmReview).mockResolvedValue(plan);
+    vi.mocked(api.rejectReview).mockResolvedValue(plan);
+    const prompt = vi.spyOn(window, 'prompt').mockReturnValue(null);
+    const user = userEvent.setup();
+
+    render(<AgentDetailPage agentId="chief-1" />);
+    await user.click(await screen.findByRole('button', { name: 'Chief 编排' }));
+    await user.click(await screen.findByText('发布公告')); // 展开计划
+
+    expect(await screen.findByText('内容完整，可以发布')).toBeInTheDocument();
+    await user.click(screen.getByText('确认合并'));
+    expect(api.confirmReview).toHaveBeenCalledWith('chief-1', 'plan-c2', 'item-c2');
+    expect(await screen.findByText('已确认合并 item-c2。')).toBeInTheDocument();
+
+    // 驳回返工（带反馈 note）——审查门驳回
+    prompt.mockReturnValue('需要补充标题');
+    await user.click(screen.getByText('驳回返工'));
+    expect(api.rejectReview).toHaveBeenCalledWith('chief-1', 'plan-c2', 'item-c2', '需要补充标题');
+    expect(await screen.findByText('已驳回 item-c2 返工。')).toBeInTheDocument();
+  });
+
+  it('Chief 编排视图每 2 秒轮询刷新', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(api.getAgent).mockResolvedValue({
+        registry: {
+          id: 'chief-1',
+          name: '首席工程师',
+          role: 'chief',
+          status: 'running',
+          runtime_home: { path: '/private/runtimes/chief-1/claude' },
+          bridge: { enabled: false, authorization: 'ready', home: '/private/bridges/chief-1' },
+        },
+        agent: { description: '负责拆解与审查', runtime: { provider: 'claude', locked: true } },
+      } as never);
+      vi.mocked(api.terminalGuidance).mockResolvedValue({
+        runtimeLogin: 'agentctl runtime sync chief-1',
+        bridgeAuthorize: 'agentctl bridge authorize chief-1',
+        chat: 'agentctl chat chief-1',
+      });
+      vi.mocked(api.listTaskPlans).mockResolvedValue([]);
+
+      render(<AgentDetailPage agentId="chief-1" />);
+      await act(async () => {});
+      fireEvent.click(screen.getByRole('button', { name: 'Chief 编排' }));
+      await act(async () => {});
+      await act(async () => {});
+      const afterLoad = vi.mocked(api.listTaskPlans).mock.calls.length;
+      expect(afterLoad).toBeGreaterThanOrEqual(1);
+
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+      });
+      expect(vi.mocked(api.listTaskPlans).mock.calls.length).toBeGreaterThanOrEqual(afterLoad + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

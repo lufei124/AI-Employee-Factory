@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, Fragment } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useNavigate } from 'react-router-dom';
 import YAML from 'yaml';
@@ -20,6 +20,7 @@ import {
   Terminal,
   Trash2,
   Upload,
+  Workflow,
   XCircle,
 } from 'lucide-react';
 import {
@@ -40,7 +41,7 @@ interface AgentDetailPageProps {
 }
 
 const tabs = ['概览', '身份文档', '任务', 'Todo', 'Skills', '日志', '备份', '诊断'] as const;
-type Tab = (typeof tabs)[number];
+type Tab = (typeof tabs)[number] | 'Chief 编排';
 
 const documentKeys = [
   ['role', '岗位'],
@@ -690,9 +691,10 @@ const itemStateClass: Record<TaskItem['status'], string> = {
   cancelled: 'failed',
 };
 
-function TodoTab({ agentId }: { agentId: string }) {
+// 共享任务计划轮询 + 闸门执行（TodoTab 与 ChiefPipelineTab 复用）。
+// 2s 轮询；busyRef 在闸门操作期间暂停轮询，避免刷新覆盖操作结果。
+function useTaskPlansPolling(agentId: string) {
   const [plans, setPlans] = useState<TaskPlan[]>([]);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState('');
   const [feedback, setFeedback] = useState('');
@@ -728,6 +730,12 @@ function TodoTab({ agentId }: { agentId: string }) {
       setBusy(undefined);
     }
   };
+  return { plans, busy, error, feedback, refresh, run };
+}
+
+// 展开/收起一组 plan 的共享状态（TodoTab 与 ChiefPipelineTab 复用）。
+function useExpandSet() {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const toggle = (planId: string) =>
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -735,6 +743,12 @@ function TodoTab({ agentId }: { agentId: string }) {
       else next.add(planId);
       return next;
     });
+  return { expanded, toggle };
+}
+
+function TodoTab({ agentId }: { agentId: string }) {
+  const { plans, busy, error, feedback, refresh, run } = useTaskPlansPolling(agentId);
+  const { expanded, toggle } = useExpandSet();
   return (
     <section className="panel">
       <div className="panel-heading">
@@ -813,77 +827,310 @@ function TodoTab({ agentId }: { agentId: string }) {
               {expanded.has(plan.id) && (
                 <div className="todo-items">
                   {plan.items.map((item) => (
-                    <article className="todo-item" key={item.id}>
-                      <div className="todo-item-head">
-                        <div>
-                          <strong>{item.title}</strong>
-                          <span>
-                            {item.agent} · {item.id}
-                          </span>
-                        </div>
-                        <span className={`status-badge ${itemStateClass[item.status]}`}>
-                          {itemStateLabel[item.status]}
-                        </span>
-                      </div>
-                      <p className="todo-prompt">{item.prompt}</p>
-                      {item.status === 'awaiting_review' && (
-                        <div className="todo-review">
-                          <div className="panel-heading">
-                            <h3>审查结论</h3>
-                          </div>
-                          {item.review ? (
-                            <p className="muted">
-                              <span
-                                className={`status-badge ${item.review.verdict === 'approved' ? 'succeeded' : 'failed'}`}
-                              >
-                                {item.review.verdict === 'approved' ? '已通过' : '已驳回'}
-                              </span>
-                              {item.review.note ?? '（无补充说明）'}
-                            </p>
-                          ) : (
-                            <p className="muted">尚未发起 Chief 交叉审查（CLI：chief review）。</p>
-                          )}
-                          <div className="button-row">
-                            <button
-                              className="button primary"
-                              disabled={Boolean(busy)}
-                              onClick={() =>
-                                void run(
-                                  `merge:${item.id}`,
-                                  () => api.confirmReview(agentId, plan.id, item.id),
-                                  `已确认合并 ${item.id}。`,
-                                )
-                              }
-                            >
-                              <CheckCircle2 size={15} />
-                              确认合并
-                            </button>
-                            <button
-                              className="button ghost danger-text"
-                              disabled={Boolean(busy)}
-                              onClick={async () => {
-                                const note =
-                                  window.prompt(`驳回任务 ${item.id} 返工（可附理由）：`) ?? '';
-                                await run(
-                                  `reject-review:${item.id}`,
-                                  () =>
-                                    api.rejectReview(agentId, plan.id, item.id, note || undefined),
-                                  `已驳回 ${item.id} 返工。`,
-                                );
-                              }}
-                            >
-                              <XCircle size={15} />
-                              驳回返工
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </article>
+                    <TaskItemRow
+                      key={item.id}
+                      agentId={agentId}
+                      plan={plan}
+                      item={item}
+                      busy={busy}
+                      run={run}
+                    />
                   ))}
                 </div>
               )}
             </article>
           ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// 共享任务项卡片：worker/状态徽章 + 审查结论 + 确认合并/驳回返工门（TodoTab 与 ChiefPipelineTab 复用）。
+function TaskItemRow({
+  agentId,
+  plan,
+  item,
+  busy,
+  run,
+}: {
+  agentId: string;
+  plan: TaskPlan;
+  item: TaskItem;
+  busy: string | undefined;
+  run: (label: string, action: () => Promise<unknown>, success?: string) => Promise<void>;
+}) {
+  return (
+    <article className="todo-item">
+      <div className="todo-item-head">
+        <div>
+          <strong>{item.title}</strong>
+          <span>
+            {item.agent} · {item.id}
+          </span>
+        </div>
+        <span className={`status-badge ${itemStateClass[item.status]}`}>
+          {itemStateLabel[item.status]}
+        </span>
+      </div>
+      <p className="todo-prompt">{item.prompt}</p>
+      {item.status === 'awaiting_review' && (
+        <div className="todo-review">
+          <div className="panel-heading">
+            <h3>审查结论</h3>
+          </div>
+          {item.review ? (
+            <p className="muted">
+              <span
+                className={`status-badge ${item.review.verdict === 'approved' ? 'succeeded' : 'failed'}`}
+              >
+                {item.review.verdict === 'approved' ? '已通过' : '已驳回'}
+              </span>
+              {item.review.note ?? '（无补充说明）'}
+            </p>
+          ) : (
+            <p className="muted">尚未发起 Chief 交叉审查（CLI：chief review）。</p>
+          )}
+          <div className="button-row">
+            <button
+              className="button primary"
+              disabled={Boolean(busy)}
+              onClick={() =>
+                void run(
+                  `merge:${item.id}`,
+                  () => api.confirmReview(agentId, plan.id, item.id),
+                  `已确认合并 ${item.id}。`,
+                )
+              }
+            >
+              <CheckCircle2 size={15} />
+              确认合并
+            </button>
+            <button
+              className="button ghost danger-text"
+              disabled={Boolean(busy)}
+              onClick={async () => {
+                const note = window.prompt(`驳回任务 ${item.id} 返工（可附理由）：`) ?? '';
+                await run(
+                  `reject-review:${item.id}`,
+                  () => api.rejectReview(agentId, plan.id, item.id, note || undefined),
+                  `已驳回 ${item.id} 返工。`,
+                );
+              }}
+            >
+              <XCircle size={15} />
+              驳回返工
+            </button>
+          </div>
+        </div>
+      )}
+    </article>
+  );
+}
+
+// 目标流水线阶段（issue 10）：拆解 → 计划确认 → 执行 → 审查 → 结果。
+// 纯派生，不含副作用，便于测试。
+interface PipelineStageFlags {
+  decomposeDone: boolean;
+  gateDone: boolean;
+  executing: boolean;
+  reviewing: boolean;
+  resultDone: boolean;
+}
+
+function derivePipeline(plan: TaskPlan): PipelineStageFlags {
+  const nonCancelled = plan.items.filter((item) => item.status !== 'cancelled');
+  const allDone =
+    nonCancelled.length > 0 && nonCancelled.every((item) => item.status === 'completed');
+  // 已派发：任一任务实际运行过（离开 pending 且非 cancelled）；计划内被单独取消的项不算派发。
+  const anyDispatched = plan.items.some(
+    (item) => item.status !== 'pending' && item.status !== 'cancelled',
+  );
+  // 计划确认门已过：active/completed，或 cancelled 但曾派发（中途终止）；驳回未派发（全项 pending）不算。
+  const gateDone =
+    plan.status === 'active' ||
+    plan.status === 'completed' ||
+    (plan.status === 'cancelled' && anyDispatched);
+  // 审查门已到达：有待审查项/已存审查结论，或计划已结束（审查是必经门，完成后不熄灭）。
+  const reviewing =
+    plan.status === 'completed' ||
+    allDone ||
+    plan.items.some(
+      (item) =>
+        item.status === 'awaiting_review' || (item.status !== 'cancelled' && Boolean(item.review)),
+    );
+  return {
+    // 阶段点亮语义为「已到达」：一旦达成即常亮，不随执行结束熄灭（拆解/执行/审查/结果均如此）。
+    decomposeDone: plan.items.length > 0,
+    gateDone,
+    executing: gateDone && anyDispatched,
+    reviewing,
+    resultDone: plan.status === 'completed' || allDone,
+  };
+}
+
+// 目标整体派生状态 + 进度文本（按 item 状态分布计数）。
+function summarizePlan(plan: TaskPlan): { label: string; cls: string; progress: string } {
+  let completed = 0;
+  let awaitingReview = 0;
+  let developing = 0;
+  let failed = 0;
+  for (const item of plan.items) {
+    if (item.status === 'cancelled') continue; // 取消项不进任何桶也不进分母（不可能完成）
+    if (item.status === 'completed') completed++;
+    else if (item.status === 'awaiting_review') awaitingReview++;
+    else if (item.status === 'developing' || item.status === 'queued' || item.status === 'planning')
+      developing++;
+    else if (item.status === 'failed') failed++;
+    // 其余 pending / awaiting_confirmation 未派发，不单独计数
+  }
+  const total = plan.items.filter((item) => item.status !== 'cancelled').length;
+  if (plan.status === 'cancelled')
+    return { label: '已取消', cls: 'failed', progress: `计划已取消 · ${plan.items.length} 个任务` };
+  if (plan.status === 'completed' || (total > 0 && completed === total))
+    return { label: '已完成', cls: 'succeeded', progress: `${completed}/${total} 完成` };
+  if (failed > 0)
+    return {
+      label: '有失败',
+      cls: 'failed',
+      progress: `${completed}/${total} 完成 · ${failed} 失败${developing > 0 ? ` · ${developing} 执行中` : ''}`,
+    };
+  if (awaitingReview > 0)
+    return {
+      label: '待审查',
+      cls: 'queued',
+      progress: `${completed}/${total} 完成 · ${awaitingReview} 待审查`,
+    };
+  if (plan.status === 'draft')
+    return { label: '待确认', cls: 'queued', progress: `${completed}/${total} 完成 · 待计划确认` };
+  if (developing === 0 && completed === 0)
+    return { label: '待派发', cls: 'queued', progress: `已确认 · ${total} 个任务待派发` };
+  return {
+    label: '执行中',
+    cls: 'running',
+    progress: `${completed}/${total} 完成 · ${developing} 执行中`,
+  };
+}
+
+const pipelineStagesMeta: { key: keyof PipelineStageFlags; label: string }[] = [
+  { key: 'decomposeDone', label: '拆解' },
+  { key: 'gateDone', label: '计划确认' },
+  { key: 'executing', label: '执行' },
+  { key: 'reviewing', label: '审查' },
+  { key: 'resultDone', label: '结果' },
+];
+
+function PipelineStages({ stages }: { stages: PipelineStageFlags }) {
+  return (
+    <div className="pipeline-stages" aria-label="编排流水线">
+      {pipelineStagesMeta.map(({ key, label }, i) => (
+        <Fragment key={key}>
+          {i > 0 && <span className="pipeline-arrow">→</span>}
+          <span className={`pipeline-stage ${stages[key] ? 'done' : ''}`}>{label}</span>
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
+// Chief 视角页（issue 10）：对一个目标看整条编排流水线（计划→执行→审查→结果），
+// 聚合整体进度 + 阶段点亮，2s 轮询。纯流水线视图——发起/派发仍走 CLI（D-022 边界）。
+function ChiefPipelineTab({ agentId }: { agentId: string }) {
+  const { plans, busy, error, feedback, refresh, run } = useTaskPlansPolling(agentId);
+  const { expanded, toggle } = useExpandSet();
+  return (
+    <section className="panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Chief 编排</h2>
+          <span>目标流水线 · 拆解 → 计划确认 → 执行 → 审查 → 结果 · 2 秒轮询</span>
+        </div>
+        <button className="button ghost" onClick={() => void run('refresh', refresh)}>
+          <RefreshCw size={15} />
+          刷新
+        </button>
+      </div>
+      {error && <div className="notice danger">{error}</div>}
+      {feedback && (
+        <div className="notice info" role="status">
+          {feedback}
+        </div>
+      )}
+      {plans.length === 0 ? (
+        <div className="empty-state">
+          <Workflow size={26} />
+          <h3>暂无编排目标</h3>
+          <p>通过 CLI 的 chief run 发起目标编排后，在此查看整条流水线。</p>
+        </div>
+      ) : (
+        <div className="todo-list">
+          {plans.map((plan) => {
+            const summary = summarizePlan(plan);
+            return (
+              <article className="todo-plan" key={plan.id}>
+                <div className="todo-plan-head">
+                  <button className="todo-plan-toggle" onClick={() => toggle(plan.id)}>
+                    <span className={`status-badge ${summary.cls}`}>{summary.label}</span>
+                    <strong>{plan.name}</strong>
+                    <small>
+                      {plan.id} · {summary.progress}
+                    </small>
+                  </button>
+                  <div className="button-row">
+                    {plan.status === 'draft' && (
+                      <>
+                        <button
+                          className="button primary"
+                          disabled={Boolean(busy)}
+                          onClick={() =>
+                            void run(
+                              `confirm:${plan.id}`,
+                              () => api.confirmPlan(agentId, plan.id),
+                              `已确认计划 ${plan.id}，可派发执行。`,
+                            )
+                          }
+                        >
+                          <CheckCircle2 size={15} />
+                          确认计划
+                        </button>
+                        <button
+                          className="button ghost danger-text"
+                          disabled={Boolean(busy)}
+                          onClick={async () => {
+                            const note = window.prompt(`驳回计划 ${plan.id}（可附理由）：`) ?? '';
+                            await run(
+                              `reject:${plan.id}`,
+                              () => api.rejectPlan(agentId, plan.id, note || undefined),
+                              `已驳回计划 ${plan.id}。`,
+                            );
+                          }}
+                        >
+                          <XCircle size={15} />
+                          驳回计划
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+                {plan.note && <p className="muted">驳回/取消理由：{plan.note}</p>}
+                <PipelineStages stages={derivePipeline(plan)} />
+                {expanded.has(plan.id) && (
+                  <div className="todo-items">
+                    {plan.items.map((item) => (
+                      <TaskItemRow
+                        key={item.id}
+                        agentId={agentId}
+                        plan={plan}
+                        item={item}
+                        busy={busy}
+                        run={run}
+                      />
+                    ))}
+                  </div>
+                )}
+              </article>
+            );
+          })}
         </div>
       )}
     </section>
@@ -1176,6 +1423,9 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   if (error) return <div className="notice danger">{error}</div>;
   if (!detail || !guidance) return <div className="skeleton-page">正在读取员工配置…</div>;
   const registry = detail.registry;
+  // Chief 编排视图仅对 role=chief 的员工展示（issue 10）。
+  const visibleTabs: Tab[] =
+    registry.role === 'chief' ? [...tabs.slice(0, 4), 'Chief 编排', ...tabs.slice(4)] : [...tabs];
   return (
     <div className="page-stack">
       <header className="agent-hero">
@@ -1188,7 +1438,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
         <span className={`status-badge ${registry.status}`}>{registry.status}</span>
       </header>
       <nav className="tabs">
-        {tabs.map((item) => (
+        {visibleTabs.map((item) => (
           <button className={item === tab ? 'active' : ''} onClick={() => setTab(item)} key={item}>
             {item}
           </button>
@@ -1198,6 +1448,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
       {tab === '身份文档' && <DocumentsTab agentId={agentId} />}
       {tab === '任务' && <JobsTab agentId={agentId} />}
       {tab === 'Todo' && <TodoTab agentId={agentId} />}
+      {tab === 'Chief 编排' && registry.role === 'chief' && <ChiefPipelineTab agentId={agentId} />}
       {tab === 'Skills' && <SkillsTab agentId={agentId} />}
       {tab === '日志' && <LogsTab agentId={agentId} />}
       {tab === '备份' && <BackupTab agentId={agentId} />}

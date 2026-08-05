@@ -2,42 +2,43 @@
 
 ## 身份
 
-Task ID: TASK-025
+Task ID: TASK-026
 
-Task title: Web Todo 视图（spec-chief-todo-mcp issue 07：员工详情 Todo 标签 + 计划级确认/驳回门 + 审查门合并/驳回 + 2s 轮询）
+Task title: Chief Web 编排流水线视图（spec-chief-todo-mcp issue 10：纯流水线视图——目标流水线卡片 + 阶段条 + 聚合进度 + role 门控 + 2s 轮询）
 
 Outgoing/current agent: claude-20260803-01
 
-Intended next role/agent: 用户或后续维护者（spec-chief-todo-mcp 承接：Web Chief 编排视图 issue 10，MCP 增强路径——请求内 SSE progress / 推送订阅）
+Intended next role/agent: 用户或后续维护者（spec-chief-todo-mcp 承接：MCP 增强路径——请求内 SSE progress / 推送订阅；如需 Web 发起编排（创建目标/派发），须先放开 D-022/D-023 边界并拆同步 orchestrate）
 
 Branch/worktree: main
 
 Status: DONE（切片已实现并通过 /code-review，提交后更新）
 
-更新时间：2026-08-05 14:35 +0800（本地已提交，未 push）
+更新时间：2026-08-05 15:08 +0800（本地已提交，未 push）
 
 ## 已完成
 
-- **Web Todo 标签（issue 07）**：`web/src/pages/AgentDetailPage.tsx` 新增「Todo」标签（与「任务」= 定时 Job 区分），`TodoTab` 组件 2 秒 `setInterval` 轮询 `api.listTaskPlans`（`busyRef` 在闸门操作期间暂停轮询）。draft 计划展开后展示任务项状态，计划级提供**确认计划/驳回计划**（驳回带 window.prompt 反馈 note）；`awaiting_review` 项渲染审查结论（`item.review.verdict+note`，verdict 本地化为已通过/已驳回）并提供**确认合并/驳回返工**。复用既有 status-badge/panel 设计系统类。
-- **服务端路由**：`src/web/server.ts` 新增 `/api/v1/agents/:id/task-plans`（GET 列表/单计划）+ `actions/confirm`、`actions/reject`（计划级门）+ `items/:itemId/actions/confirm-review`、`reject-review`（审查门），全部经 `options.application` 单一 seam 透传。**未实现 Web 派发执行**（run 属 CLI 范畴，issue 07 不含派发，避免 scope creep，见 D-022 边界）。
-- **客户端**：`web/src/api.ts` 新增 `TaskItemState`/`TaskItem`/`TaskPlan`/`TaskPlanStatus` 类型与 `listTaskPlans`/`getTaskPlan`/`confirmPlan`/`rejectPlan`/`confirmReview`/`rejectReview` 方法。
-- **测试**：`tests/web-ui.test.tsx` 新增 3 个测试——Todo 标签展示待确认计划并可确认/驳回、待审查任务渲染审查结论并可确认合并/驳回、2 秒轮询刷新（`vi.useFakeTimers` + `advanceTimersByTime`）。覆盖两种闸门的确认**与**驳回路径（window.prompt spy）。
-- **文档**：`docs/ARCHITECTURE.md` 增「Chief 编排与 Todo 状态机」段（计划/任务项状态机 + D-017 单向搬运 + Web 视图 + MCP）；`docs/TESTING.md` React 组件测试补 Todo 标签覆盖；`docs/DECISIONS.md` 记 D-022（Web Todo 视图渲染存储的审查结论 verdict+note，原始 diff 不持久化）。
+- **Chief 编排视图（issue 10）**：`web/src/pages/AgentDetailPage.tsx` 新增「Chief 编排」标签（仅 `detail.registry.role === 'chief'` 时插入标签并渲染，worker 不显示）。`ChiefPipelineTab` 把 Chief 拥有的每个目标（plan）渲染成流水线卡片：**阶段条**（拆解 → 计划确认 → 执行 → 审查 → 结果，按派生状态点亮）+ **聚合整体进度**（`summarizePlan`：如 `2/3 完成 · 1 待审查`）。展开复用任务项渲染与两种闸门（计划级确认/驳回、审查级确认合并/驳回返工），2s 轮询。
+- **纯派生（不落盘、不改后端）**：`derivePipeline`/`summarizePlan` 从 plan.status + item 状态分布纯计算，无副作用；`getAgent` 响应本就含 `registry.role`（RegistryAgent），仅补 web 端 `AgentDetail.registry.role` 类型声明——**后端零改动、零新端点**（D-023）。
+- **共享抽取**：轮询/闸门执行逻辑抽为 `useTaskPlansPolling` hook（TodoTab 与 ChiefPipelineTab 复用）；任务项卡片抽为 `TaskItemRow`（两标签复用）；展开状态抽为 `useExpandSet`（两标签复用）。Standards 评审三项 judgement call（run/轮询重复、PipelineStages 接口与组件同名、展开状态重复）均已修复。
+- **样式**：`web/src/styles.css` 新增 `.pipeline-stages/.pipeline-stage(.done)/.pipeline-arrow`，复用 panel/status-badge/button 设计系统。
+- **测试**：`tests/web-ui.test.tsx` 19 过（含新增 4 个 Chief 测试——流水线渲染+role 门控（worker 不显示）、展开审查结论+确认合并/驳回返工、2s 轮询、阶段条累计到达门回归）。
+- **文档**：ARCHITECTURE「Chief 编排与 Todo 状态机」Web 视图段补 Chief 编排视图；TESTING 补覆盖；DECISIONS 记 D-023（派生状态不落盘 + 不新增写面 + 阶段语义）。
 
 ## 验证
 
-| 命令/检查                              | 结果   | 相关输出                                                                                                                                                   |
-| -------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run build`                        | 通过   | vite 产物 + tsc 全绿                                                                                                                                       |
-| `npx tsc --noEmit`                     | 通过   | 全绿                                                                                                                                                       |
-| `npx vitest run tests/web-ui.test.tsx` | 15 过  | 含新增 3 个 Todo 测试（确认+驳回+轮询）                                                                                                                    |
-| `npm test`                             | 1 失败 | 305/306 过；唯一失败为既有 date-sensitive `tests/experience.test.ts`（硬编码 2026-08-04，非本任务引入）                                                    |
-| lint + prettier                        | 通过   | eslint 无错误；本切片源文件 prettier 全绿                                                                                                                  |
-| /code-review                           | 通过   | Standards（无硬违规；补 ARCHITECTURE/TESTING 文档同步门禁）+ Spec（修 R2 缺口补驳回测试、R3 移除派发 scope creep、R5 审查结论中文本地化、R7 轮询遇忙暂停） |
+| 命令/检查                              | 结果   | 相关输出                                                                                                                                                                                                                                                                                |
+| -------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run build`                        | 通过   | tsc + vite 全绿（含 web tsconfig exactOptionalPropertyTypes，busy prop 用 `string \| undefined`）                                                                                                                                                                                       |
+| `npx tsc --noEmit`                     | 通过   | 全绿                                                                                                                                                                                                                                                                                    |
+| `npx vitest run tests/web-ui.test.tsx` | 19 过  | 含新增 4 个 Chief 测试（流水线渲染+role 门控、展开审查门、2s 轮询、阶段条累计到达门回归）                                                                                                                                                                                               |
+| `npm test`                             | 1 失败 | 310 过 1 失败；唯一失败为既有 date-sensitive `tests/experience.test.ts`（硬编码 2026-08-04，非本任务引入）                                                                                                                                                                              |
+| lint + prettier                        | 通过   | eslint 无错误；源文件 prettier 全绿（.agent/TASK_BOARD.md 表格行宽与既有提交宽度对齐，diff 仅 +1 行）                                                                                                                                                                                   |
+| /code-review                           | 通过   | Standards（无硬违规；修 3 项 judgement call：hook 抽取 useTaskPlansPolling、PipelineStages→PipelineStageFlags、展开状态抽 useExpandSet）+ Spec（修 4：进度分母排除 cancelled、anyDispatched 排除单独取消项、active 未派发显示「待派发」、有失败进度补执行中；阶段条累计语义记入 D-023） |
 
 ## 安全边界与限制
 
-- 未改动备份/回收站/CC Switch/隔离层语义；worker workspace 保持编排器只读（D-017/D-003 未放开）。
-- **Web 仅闸门 + 只读**：Todo 标签不实现派发（run）与计划/任务项创建——创建走 CLI `plan`/`chief run`，派发走 `agentctl plan run`（issue 07 明确「走完 Todo 流程」只含看状态、确认/驳回计划、确认合并/驳回审查）。Web Chief 编排视图（issue 10）留待后续切片。
-- **审查 diff 边界（D-022）**：Web 渲染 `item.review`（verdict+note）——原始 diff 由 `reviewTaskPlan` 从 worker workspace 实时读取、脱敏后喂 Chief，不持久化进计划文件；若需 Web 展示原始 diff，属后续增强（读 worker 产物路径）。
+- **纯流水线视图（D-023）**：Web 只读 + 两种闸门，**不含发起编排入口**——目标创建/派发走 CLI `agentctl chief run`；后端 `src/` 零改动；原始 diff 仍不持久化（D-022）。
+- **派生语义**：阶段「拆解完成 = plan.items 非空」（不区分 Chief 拆解 vs 手工创建，plan 不持久化 source）；「结果 = 全部非 cancelled 项 completed」；「曾派发 = 任一任务离开 pending 且非 cancelled」（单独取消的项不算派发，D-023）。若未来需要「是否来自 Chief 拆解」指示，须先加持久化字段（D-023 记录）。
+- Chief 编排视图与 Todo 标签并存：前者目标级流水线仪表，后者逐项操作视图，不互相替代。
 - 未 push；按用户常驻规则「任务完成即 commit」只提交不推送。

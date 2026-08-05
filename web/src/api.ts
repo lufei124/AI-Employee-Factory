@@ -87,6 +87,7 @@ export interface AgentDetail {
   registry: {
     id: string;
     name: string;
+    role: 'worker' | 'chief';
     status: 'stopped' | 'running' | 'error' | 'archived';
     archived: boolean;
     runtime_home: { path: string };

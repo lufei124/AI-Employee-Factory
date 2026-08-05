@@ -180,6 +180,15 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 - 边界：issue 07 的「走完 Todo 流程」只含看状态、确认/驳回计划、确认合并/驳回审查——**Web 不实现派发（run）与计划/任务项创建**（创建走 CLI `plan`/`chief run`，派发走 `agentctl plan run`）。若需 Web 展示原始 diff，属后续增强（读 worker 产物路径，见 ARCHITECTURE「Chief 编排与 Todo 状态机」）。
 - 原因：避免 scope creep（派发是 CLI 范畴）与避免为展示 diff 而放开隔离语义/新增读面；保持 Web 只读 + 两种闸门（计划级确认/驳回、审查级合并/驳回）的最小网面。
 
+## D-023：Chief Web 编排流水线视图——派生状态，不新增写面
+
+- 状态：Accepted（已实施，issue 10）
+- 日期：2026-08-05
+- 决定：Web 新增「Chief 编排」视图（仅 `role=chief` 员工显示该标签），把 Chief 拥有的每个目标（plan）渲染成一条流水线卡片：**阶段条**（拆解 → 计划确认 → 执行 → 审查 → 结果）与**聚合整体进度**（如 `2/3 完成 · 1 待审查`）。阶段点亮与整体状态均为**纯派生**（`derivePipeline`/`summarizePlan`，从 plan.status + item 状态分布计算，无副作用、可单测）——不落盘、不改后端 schema、不新增端点，计划文件仍是唯一事实源。
+- 阶段条语义（**累计到达门**）：每个阶段一旦达成即常亮、不随执行结束熄灭——完成计划的五段全亮，中途终止（cancelled 且曾派发）亮到已执行阶段，驳回未派发（cancelled 且全项 pending）仅亮「拆解」。**「曾派发」= 任一任务实际运行过（离开 pending 且非 cancelled）**——计划内被单独取消的项不算派发。进度聚合排除 cancelled 项（不进分母，不可能完成）。
+- 边界：延续 D-022——Web 只读 + 两种闸门，**不含发起编排入口**（目标创建/派发走 CLI `agentctl chief run`）；Chief 视角不替代 Todo 标签（Todo 是逐项操作视图，Chief 编排是目标级流水线仪表）。
+- 原因：issue 07 已覆盖任务项级渲染，issue 10 的真正增量是目标为中心的流水线呈现与进度聚合；派生态避免为「是否来自 Chief 拆解」新增持久化字段（plan 有 items 即视为拆解完成），保持切片最小。
+
 ## D-001 - 引入多 Agent 协作骨架
 
 - 状态：Accepted
