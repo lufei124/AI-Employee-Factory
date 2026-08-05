@@ -147,6 +147,22 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 - 边界（本批短期语义）：`credential_provider` **不进便携文件** `agent.yaml`——属 Registry 本机绑定侧（守 D-006 与 OP3-A「agent.yaml 为 runtime 唯一真相」的便携面），换机不迁移该绑定；`--provider live` 显式清除。不实现「自动读取 live」外的任何多 Provider 指纹校验（研究提案 C5 明确不采用 `pinned_provider` 指纹方案）。doctor 短期为 warn（非 fail），长期语义（provider 不匹配 fail）留待后续批次。
 - 原因：让不同员工可绑定不同 CC Switch Provider（如 A 员工用 DeepSeek、B 员工用 Kimi），独立于当前 live Provider 切换，且不复制凭据到便携文件、不改任何既有 live 同步语义（缺省 providerName 时零行为变更）。CI 无 sqlite3 时的 NOT_FOUND 回退符合「显式绑定不可达则失败」的最小惊讶原则，避免静默同步到错误 Provider。
 
+## D-017：Chief 交叉审查用编排器单向搬运，不放开 D-003
+
+- 状态：Accepted（grilling 待实施）
+- 日期：2026-08-05
+- 决定：Todo/Chief 的「等待审查」态由 Chief 交叉审查，但 Chief **不直接读写任一 worker 的 workspace**。Node 编排器读 worker 的 `diff.patch`（受控工件）+ `logs/<workerId>/runs/<slug>/stdout.log`，经 `redactSecrets` 脱敏后拼进 Chief 的 REVIEW_PROMPT，Chief 返回评审结论。编排器单向搬运文本，Chief 自始至终零 worker 文件系统访问。
+- 边界：D-003（「Agent 永不共享实时目录」）保持不动，无需放开。拒绝「显式授权只读挂载」方案（需新只读 runtime 模式，claude 无只读 flag / codex sandbox 写死 workspace-write，工程量大且直接放宽隔离）。
+- 原因：Chief 交叉审查（用户选择）与 D-003 隔离模型冲突；编排器单向搬运是唯一两全路径——Chief 的「看到」是编排器喂文本，不是开文件系统。工人产物写自己 workspace（git 版本化），编排器只读受控工件 + 日志，脱敏后喂给 Chief。
+
+## D-018：MCP 认证——MVP 用静态 bearer，OAuth AS 自建降级为后续阶段
+
+- 状态：Accepted（已实施，T11）
+- 日期：2026-08-05
+- 决定：MCP 接入挂到现有 Fastify `POST/GET /mcp`，MVP 认证用**静态 bearer token**（随 `startWebConsole` 生成并打印，客户端用 `Authorization: Bearer <token>` 连接）。实现采用 `@modelcontextprotocol/sdk@^1.30.0` 的 `StreamableHTTPServerTransport`，经 `request.raw`/`reply.raw` 直接接到既有 Fastify 实例（共享进程生命周期）；认证为手写 `mcpAuthorized`（`Bearer` 正则 + `crypto.timingSafeEqual` 恒定时间比较）；loopback 边界复用既有全局 `onRequest` 的 127.0.0.1 校验。自建 OAuth Authorization Server（token 签发 + DCR + 授权码/设备流程）降级为后续阶段。
+- 边界：MCP 是同一 loopback 边界上的第二个认证面——D-005「不提供账号系统」针对 Web 的语义不变，MCP 加 bearer 不改其语义（仍无账号、仍 loopback-only）。`/mcp` 不在 `/api/v1/*` 的 CSRF 钩子范围内（server.ts onRequest L136 对非 /api/v1/ 直接 return），互不干扰。
+- 原因：用户最初倾向「OAuth 2.1 为主」，但经逐包核实，`@modelcontextprotocol/server@2.0.0` 只提供 **Resource Server（token 校验）侧**（`OAuthTokenVerifier` 接口、`verifyBearerToken`、RFC 9728 metadata），**不含 Authorization Server**——无 token 签发、无 DCR、无授权码流程，且 `@modelcontextprotocol/oauth` 包不存在（404）。「OAuth 为主」意味着从零自建 AS，远超 MCP 最小切片。Static bearer 是 MCP 三端（Claude Code/Cursor/VS Code）共同支持的最低公分母，先把能力接通。实现时另核实 `@modelcontextprotocol/fastify@2.0.0` 的 `createMcpFastifyApp` 会自建独立 Fastify 实例（无法挂进既有 /api/v1 控制台），且 `@modelcontextprotocol/server` 的 bearer 校验叠加非必要 OAuth 依赖链，故以 `@modelcontextprotocol/sdk` 的 StreamableHTTP transport + 手写恒定时间 bearer 落地（D-018 决定行据此于实施期修订）。OAuth AS 留作独立后续阶段。
+
 ## D-001 - 引入多 Agent 协作骨架
 
 - 状态：Accepted

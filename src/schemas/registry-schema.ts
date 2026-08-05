@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { agentIdSchema, runtimeProviderSchema } from './agent-schema.js';
+import { agentIdSchema, agentRoleSchema, runtimeProviderSchema } from './agent-schema.js';
 
 export const REGISTRY_VERSION = 2 as const;
 
@@ -7,6 +7,8 @@ export const REGISTRY_VERSION = 2 as const;
 export const registryAgentSchema = z.object({
   id: agentIdSchema,
   name: z.string().min(1),
+  // T08：角色（worker 默认 / chief）。optional 向后兼容旧 registry（缺失视为 worker）。
+  role: agentRoleSchema.default('worker'),
   status: z.enum(['stopped', 'running', 'error', 'archived']),
   archived: z.boolean(),
   workspace: z.object({ path: z.string().min(1), git_repository: z.boolean() }),

@@ -5,6 +5,7 @@ import { execa } from 'execa';
 import { z } from 'zod';
 import { AgentCtlError } from './errors.js';
 import { FileLock } from './locks.js';
+import { gitAddCommit } from './git.js';
 import { assertInside, type FactoryPaths } from './paths.js';
 import { type RegistryStore } from './registry.js';
 import { loadPreset, renderAgentWorkspace } from './templates.js';
@@ -12,6 +13,7 @@ import { computeConfigHash } from './agents.js';
 import {
   agentConfigSchema,
   agentIdSchema,
+  agentRoleSchema,
   runtimeProviderSchema,
   type AgentConfig,
 } from '../schemas/agent-schema.js';
@@ -27,6 +29,8 @@ export const createAgentInputSchema = z.object({
   description: z.string().min(1).optional(),
   goals: z.array(z.string().min(1)).optional(),
   model: z.string().min(1).optional(),
+  // T08：角色（worker 默认 / chief）。创建时指定为 chief 即成为编排主管。
+  role: agentRoleSchema.optional(),
 });
 
 export type CreateAgentInput = z.infer<typeof createAgentInputSchema>;
@@ -103,6 +107,18 @@ export class CreateAgentService {
         cwd: stages.workspace,
         shell: false,
       });
+      // OP6-A（T01）：基线提交，解锁后续 diff 审查。缺 git user 配置时不阻断创建（可恢复提示）。
+      const scaffoldCommitted = await gitAddCommit(stages.workspace, 'chore: initial scaffold', {
+        requireIdentity: false,
+      });
+      if (!scaffoldCommitted) {
+        console.warn(
+          `警告：员工 "${input.name}" 的初始提交未完成（缺少 git user.name / user.email 配置）。` +
+            `员工仍已创建，但后续 diff 审查将无可比基线。` +
+            `请在 git 全局或 ${stages.workspace}/.git/config 配置身份后，` +
+            `在该工作区执行 \`git add -A && git commit -m "chore: initial scaffold"\` 恢复。`,
+        );
+      }
       await fs.ensureDir(path.dirname(workspace));
       for (const [stage, target] of [
         [stages.workspace, workspace],
@@ -165,6 +181,7 @@ export class CreateAgentService {
       id: input.id,
       name: input.name,
       description: preset.description,
+      role: input.role ?? 'worker',
       runtime,
       identity: {
         role_file: 'agent/ROLE.md',
@@ -223,6 +240,7 @@ export class CreateAgentService {
     return {
       id: input.id,
       name: input.name,
+      role: input.role ?? 'worker',
       status: 'stopped',
       archived: false,
       workspace: { path: workspace, git_repository: true },

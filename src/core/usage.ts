@@ -113,3 +113,50 @@ export function parseStructuredUsage(
 ): RunUsage | undefined {
   return provider === 'claude' ? parseClaudeUsage(stdout) : parseCodexUsage(stdout);
 }
+
+// OP6-A（T02）：结构化 result 正文取回（Chief 拆解、Cross-review 读取 worker 结论用）。
+// 与 parseStructuredUsage 同源但语义不同——usage 抽用量，result 抽「真正产出的文本结论」。
+// - Claude：`claude -p --output-format json` 单对象的 `result` 字段。
+// - Codex：`codex exec --json` JSONL 事件流，取末个含 `agent_message.text` 的事件正文。
+// 纯函数、零 I/O，解析失败返回 undefined（调用方优雅降级）。
+
+/** 解析 `claude -p --output-format json` 单对象的 `result` 文本字段。 */
+export function parseClaudeResult(stdout: string): string | undefined {
+  let json: { result?: unknown };
+  try {
+    json = JSON.parse(stdout.trim()) as { result?: unknown };
+  } catch {
+    return undefined;
+  }
+  if (typeof json.result !== 'string') return undefined;
+  return json.result;
+}
+
+/** 解析 `codex exec --json` JSONL 事件流，取末个 agent 消息文本。 */
+export function parseCodexResult(stdout: string): string | undefined {
+  let last: string | undefined;
+  for (const line of stdout.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const event = JSON.parse(trimmed) as {
+        item?: { type?: string; text?: string };
+      };
+      // Codex 事件 schema：agent 消息位于 `item.type === 'agent_message'` 的 `item.text`。
+      if (event?.item?.type === 'agent_message' && typeof event.item.text === 'string') {
+        last = event.item.text;
+      }
+    } catch {
+      // 非 JSON 行（如退出码提示）跳过，best-effort。
+    }
+  }
+  return last;
+}
+
+/** 按 provider 分派结构化 result 正文解析。解析失败返回 undefined（调用方降级）。 */
+export function parseStructuredResult(
+  provider: StructuredOutputProvider,
+  stdout: string,
+): string | undefined {
+  return provider === 'claude' ? parseClaudeResult(stdout) : parseCodexResult(stdout);
+}

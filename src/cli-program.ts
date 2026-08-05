@@ -57,6 +57,8 @@ async function createInputFromOptions(options: Record<string, unknown>): Promise
   if (typeof options.description === 'string') result.description = options.description;
   if (Array.isArray(options.goal)) result.goals = options.goal as string[];
   if (typeof options.model === 'string') result.model = options.model;
+  // T08：角色（worker 默认 / chief）。options.role 总带默认，显式校验仅接受合法值。
+  if (typeof options.role === 'string') result.role = options.role as CreateAgentInput['role'];
   return result;
 }
 
@@ -70,7 +72,8 @@ export function createProgram(): Command {
     .description('启动本机 Web 管理控制台')
     .option('--port <port>', '本机端口，0 表示自动选择', '0')
     .option('--no-open', '不自动打开浏览器')
-    .action(async (options: { port: string; open: boolean }) => {
+    .option('--mcp', '启用 MCP Streamable HTTP 端点（/mcp，静态 bearer 认证）')
+    .action(async (options: { port: string; open: boolean; mcp?: boolean }) => {
       const port = Number(options.port);
       if (!Number.isInteger(port) || port < 0 || port > 65535) {
         throw new AgentCtlError('VALIDATION_ERROR', 'port 必须是 0 到 65535 的整数。');
@@ -81,6 +84,7 @@ export function createProgram(): Command {
         port,
         openBrowser: options.open,
         handleSignals: true,
+        ...(options.mcp ? { enableMcp: true } : {}),
       });
       console.log(chalk.green('✓ Web 管理控制台已启动'));
       console.log(`地址：${running.url}`);
@@ -116,6 +120,7 @@ export function createProgram(): Command {
     .option('--description <description>')
     .option('--goal <goal...>')
     .option('--model <model>')
+    .option('--role <role>', 'worker 或 chief（默认 worker）', 'worker')
     .option('--dry-run')
     .action(async (options: Record<string, unknown>) => {
       const { paths, application } = context();
@@ -149,7 +154,7 @@ export function createProgram(): Command {
       const agents = await application.listAgents();
       if (!agents.length) return console.log('尚未创建 AI 员工。');
       for (const agent of agents)
-        console.log(`${agent.id}\t${agent.name}\t${agent.runtime}\t${agent.status}`);
+        console.log(`${agent.id}\t${agent.name}\t${agent.role}\t${agent.runtime}\t${agent.status}`);
     });
 
   program

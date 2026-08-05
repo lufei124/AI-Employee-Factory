@@ -44,7 +44,7 @@ import {
   syncCcSwitchClaudeProvider,
   type SyncCache,
 } from '../core/runtime.js';
-import type { AgentConfig, RuntimeProvider } from '../schemas/agent-schema.js';
+import type { AgentConfig, AgentRole, RuntimeProvider } from '../schemas/agent-schema.js';
 import type { JobConfig } from '../schemas/job-schema.js';
 import type { RegistryAgent } from '../schemas/registry-schema.js';
 import { bridgeLaunchdService, jobLaunchdService } from '../services/factory-services.js';
@@ -62,6 +62,8 @@ export type AgentDocumentKey = (typeof agentDocumentKeys)[number];
 export interface AgentSummary {
   id: string;
   name: string;
+  // T08：角色（worker / chief）。来自 Registry（role 在 agent.yaml 与 registry 双写，列表读 registry 免 N+1）。
+  role: AgentRole;
   status: RegistryAgent['status'];
   archived: boolean;
   // OP3-A 长期：provider 从 agent.yaml 实时读取（N+1）；缺失/无效 yaml 容错为 'unknown'。
@@ -889,6 +891,7 @@ export class FactoryApplication {
     return {
       id: agent.id,
       name: agent.name,
+      role: agent.role,
       status: agent.status,
       archived: agent.archived,
       runtime,

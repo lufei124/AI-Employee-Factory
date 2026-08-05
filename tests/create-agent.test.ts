@@ -1,6 +1,7 @@
 import fs from 'fs-extra';
 import os from 'node:os';
 import path from 'node:path';
+import { execa } from 'execa';
 import YAML from 'yaml';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CreateAgentService } from '../src/core/create-agent.js';
@@ -10,9 +11,18 @@ import { agentConfigSchema } from '../src/schemas/agent-schema.js';
 
 const tempDirs: string[] = [];
 
+// 为基线提交断言提供确定性 git 身份（CI 无全局 git config 时也能过）。
+const prevGitConfigGlobal = process.env.GIT_CONFIG_GLOBAL;
+
 async function setup() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-create-'));
   tempDirs.push(root);
+  const gitConfig = path.join(root, 'gitconfig');
+  await fs.writeFile(
+    gitConfig,
+    '[user]\n\tname = Test\n\temail = test@example.com\n[init]\n\tdefaultBranch = main\n',
+  );
+  process.env.GIT_CONFIG_GLOBAL = gitConfig;
   const paths = resolveFactoryPaths({
     HOME: root,
     AI_EMPLOYEES_HOME: path.join(root, 'private'),
@@ -25,6 +35,8 @@ async function setup() {
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => fs.remove(dir)));
+  if (prevGitConfigGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+  else process.env.GIT_CONFIG_GLOBAL = prevGitConfigGlobal;
 });
 
 describe('CreateAgentService', () => {
@@ -41,6 +53,12 @@ describe('CreateAgentService', () => {
 
     expect(created.workspace).toBe(path.join(paths.workspaceRoot, 'user-operations'));
     expect(await fs.pathExists(path.join(created.workspace, '.git'))).toBe(true);
+    // OP6-A（T01）：创建后应有基线提交（解锁后续 diff 审查）。
+    const { stdout } = await execa('git', ['log', '--oneline', '-1', '--format=%s'], {
+      cwd: created.workspace,
+      shell: false,
+    });
+    expect(stdout.trim()).toBe('chore: initial scaffold');
     expect(await fs.pathExists(path.join(created.workspace, 'CLAUDE.md'))).toBe(true);
     expect(await fs.pathExists(path.join(created.workspace, 'AGENTS.md'))).toBe(false);
     expect(await fs.pathExists(path.join(created.workspace, '.codex'))).toBe(false);
@@ -85,6 +103,34 @@ describe('CreateAgentService', () => {
     const codexPrompt = await fs.readFile(path.join(codex.workspace, 'AGENTS.md'), 'utf8');
     expect(codexPrompt).toContain('## 记忆权威顺序');
     expect(codexPrompt).toContain('1. agent（岗位正式文件');
+  });
+
+  it('creates a Chief from --role chief and defaults new agents to worker (T08)', async () => {
+    const { service } = await setup();
+    const chief = await service.create({
+      id: 'chief',
+      name: '主管',
+      runtime: 'claude',
+      preset: 'user-operations',
+      feishu: 'disabled',
+      role: 'chief',
+    });
+    const chiefConfig = agentConfigSchema.parse(
+      YAML.parse(await fs.readFile(path.join(chief.workspace, 'agent.yaml'), 'utf8')),
+    );
+    expect(chiefConfig.role).toBe('chief');
+
+    const worker = await service.create({
+      id: 'worker',
+      name: '执行者',
+      runtime: 'claude',
+      preset: 'user-operations',
+      feishu: 'disabled',
+    });
+    const workerConfig = agentConfigSchema.parse(
+      YAML.parse(await fs.readFile(path.join(worker.workspace, 'agent.yaml'), 'utf8')),
+    );
+    expect(workerConfig.role).toBe('worker');
   });
 
   it('does not leave a staging workspace after duplicate creation', async () => {

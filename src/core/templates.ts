@@ -93,7 +93,9 @@ export async function renderAgentWorkspace(input: {
   await fs.writeFile(path.join(workspace, 'config/env.example'), '# 不要在此文件写入真实 Secret\n');
   await fs.writeFile(
     path.join(workspace, '.gitignore'),
-    '.env\n.env.*\n!.env.example\n*.pem\n*.key\n*.p12\n*.token\nconfig/env.local\nlogs/*\n!logs/.gitkeep\nknowledge/.index.json\n.DS_Store\n',
+    // T01：基线提交不应跟踪运行时敏感配置。.claude/settings.json 由模板生成（permissions 默认），
+    // 属本机运行时产物、备份按 basename 排除为敏感文件，故从 Git 跟踪中剔除。
+    '.env\n.env.*\n!.env.example\n*.pem\n*.key\n*.p12\n*.token\nconfig/env.local\n.claude/settings.json\nlogs/*\n!logs/.gitkeep\nknowledge/.index.json\n.DS_Store\n',
   );
   await fs.ensureFile(path.join(workspace, 'logs/.gitkeep'));
   // OP1 Stage B：knowledge/ 目录约定。以 frontmatter（title/summary/keywords/updated_at/authority_layer）

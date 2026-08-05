@@ -72,6 +72,29 @@ describe('FactoryApplication', () => {
     expect((await app.listAgents())[0]?.runtime).toBe('unknown');
   });
 
+  it('surfaces role (worker default / chief) in list summaries (T08)', async () => {
+    const { app } = setup();
+    await app.initialize();
+    await app.createAgent({
+      id: 'chief',
+      name: '主管',
+      runtime: 'claude',
+      preset: 'user-operations',
+      feishu: 'disabled',
+      role: 'chief',
+    });
+    await app.createAgent({
+      id: 'worker',
+      name: '执行者',
+      runtime: 'claude',
+      preset: 'user-operations',
+      feishu: 'disabled',
+    });
+    const summaries = await app.listAgents();
+    expect(summaries.find((agent) => agent.id === 'chief')?.role).toBe('chief');
+    expect(summaries.find((agent) => agent.id === 'worker')?.role).toBe('worker');
+  });
+
   it('installAllSkillFromStore installs all skills and skips already-installed ones', async () => {
     const { app, paths } = setup();
     await app.initialize();

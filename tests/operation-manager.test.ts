@@ -222,4 +222,50 @@ describe('OperationManager', () => {
     await manager.wait(operation.id);
     expect(sink.spans[0]!.endAttrs).toEqual({});
   });
+
+  describe('cancel(id) (T03)', () => {
+    it('cancels a single running operation by id', async () => {
+      const manager = new OperationManager();
+      let releaseStart!: () => void;
+      const started = new Promise<void>((resolve) => {
+        releaseStart = resolve;
+      });
+      const operation = manager.start('run', 'ops', async ({ signal }) => {
+        releaseStart();
+        await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve()));
+        return { exitCode: 130 };
+      });
+      await started;
+      manager.cancel(operation.id);
+      await manager.wait(operation.id);
+      expect(manager.get(operation.id).state).toBe('cancelled');
+    });
+
+    it('cancels a single queued operation by id before it starts', async () => {
+      const manager = new OperationManager();
+      const operation = manager.start('run', 'ops', async ({ signal }) => {
+        await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve()));
+        return { exitCode: 130 };
+      });
+      // 立即取消（仍在 queued 阶段）——execute 首步会检测到已 abort 并走 cancelled 分支。
+      manager.cancel(operation.id);
+      await manager.wait(operation.id);
+      expect(manager.get(operation.id).state).toBe('cancelled');
+    });
+
+    it('throws a clear error for a non-existent operation', () => {
+      const manager = new OperationManager();
+      expect(() => manager.cancel('missing-id')).toThrow(AgentCtlError);
+      expect(() => manager.cancel('missing-id')).toThrow('不存在');
+    });
+
+    it('refuses to re-cancel an already-finished operation', async () => {
+      const manager = new OperationManager();
+      const operation = manager.start('run', 'ops', async () => ({ exitCode: 0 }));
+      await manager.wait(operation.id);
+      expect(manager.get(operation.id).state).toBe('succeeded');
+      expect(() => manager.cancel(operation.id)).toThrow(AgentCtlError);
+      expect(() => manager.cancel(operation.id)).toThrow('已结束');
+    });
+  });
 });

@@ -21,6 +21,10 @@ export const portableRelativePathSchema = z
 
 export const runtimeProviderSchema = z.enum(['claude', 'codex']);
 
+// T08：员工角色。chief=编排主管（复用完整生命周期，编排中扮演主管）；worker=执行者（默认）。
+export const agentRoleSchema = z.enum(['worker', 'chief']);
+export type AgentRole = z.infer<typeof agentRoleSchema>;
+
 // OP1 Stage A：authority_order 的层枚举。schema 为 source of truth，authority.ts 镜像复用。
 export const AUTHORITY_LAYERS = [
   'agent',
@@ -60,6 +64,8 @@ export const agentConfigSchema = z.object({
   id: agentIdSchema,
   name: z.string().min(1),
   description: z.string().min(1),
+  // T08：角色（worker 默认 / chief）。optional 向后兼容旧 agent.yaml（缺失视为 worker）。
+  role: agentRoleSchema.default('worker'),
   runtime: z.object({
     provider: runtimeProviderSchema,
     locked: z.literal(true),

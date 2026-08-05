@@ -2,38 +2,43 @@
 
 ## 身份
 
-Task ID: TASK-018
+Task ID: TASK-021
 
-Task title: Skill 作用域(项目级/用户级) + Skill 商店(GitHub 远程源)
+Task title: Chief/Todo/MCP 骨架（多 Agent 协作 spec 前端 6 票：T01/T02/T03/T04/T08/T11）
 
 Outgoing/current agent: claude-20260803-01
 
-Intended next role/agent: 用户或后续维护者
+Intended next role/agent: 用户或后续维护者（spec-chief-todo-mcp 剩余 7 票：T05-T07/T09/T10/T12/T13）
 
-Branch/worktree: master（TASK-018 commit）
+Branch/worktree: main
 
-Status: DONE
+Status: IN_PROGRESS（前端 6 票已实现并通过 /code-review，待提交）
 
-更新时间：2026-08-04 18:25 +0800
+更新时间：2026-08-05 11:48 +0800
 
 ## 已完成
 
-- Skill 引入显式作用域两级：**项目级（project）** 存 `workspace/skills/` 并投影 `workspace/.claude/skills` / `workspace/.codex/skills`，随工作区 git 与默认备份；**用户级（user）** 原位存 `runtimeHome/skills/`（运行器原生用户级发现目录），仅随包含 Runtime 的备份打包。`SkillService.install/list/remove` 均支持 scope，默认 project 不改既有行为。
-- 新增 Skill 商店：`SkillStoreService` 把 `config.yaml` 声明的 GitHub 仓库源浅克隆到 `~/.ai-employees/skill-store/cache/<name>/`，用 `agent-skills.yaml/json` 清单或扫描 `SKILL.md` 发现技能，安装复用 `SkillService.install`（传递源路径）。仅接受 `https://github.com/` 公开仓库；内置默认源 superpowers、anthropic-skills。
-- Web 新增「Skill 商店」顶级页（仓库增删/刷新/浏览技能/安装，`?agent=` 预选员工）+ 员工详情 SkillsTab 按项目级/用户级分组展示并带「从商店安装」入口；CLI 新增 `skill-store` 命令组 + `skill list/install/remove` 的 `--scope` 旗标。
-- 文档：docs/DECISIONS.md D-003 演进为作用域分离 + D-008 商店 ADR；ARCHITECTURE/README/GLOSSARY 同步。
+- **T01 Git 基础**：`src/core/git.ts`(新增) 受控封装（`gitStatusShort`/`gitAddCommit`/`gitDiff`/`snapshotWorkspaceHash`，execa `shell:false`、cwd 内、经审查门读工作区状态）。create-agent 在 git init 后做基线提交（`requireIdentity:false`），缺 git 身份不阻断创建，返回 false 时 `console.warn` 可恢复提示（说明如何补提交）。新增 `git.test.ts` no-identity 可恢复路径用例。
+- **T02 结构化 result**：`src/core/usage.ts` 增 `parseClaudeResult`/`parseCodexResult`/`parseStructuredResult` 纯函数。修正 codex JSONL 事件 schema 读取（`event.item.type === 'agent_message'` → `event.item.text`）。
+- **T03 取消单操作**：`src/web/operation-manager.ts` 增 `OperationManager.cancel(id)`（NOT_FOUND / CONFLICT 守卫 + `controller.abort()`）。
+- **T04 Todo 领域核心**：`src/schemas/task-schema.ts`(新增) 7+2 状态机（`TASK_ITEM_STATES`/`TASK_ITEM_TRANSITIONS`/纯函数 `canTransition`）+ `taskItemSchema`/`taskPlanSchema`；`src/core/task-store.ts`(新增) `TaskStore`（`workspace/tasks/plans`，list/get/create/transitionItem/remove/reconcile，`derivePlanStatus` 从 nextItems 派生），原子落盘（沿用 JobStore 模式）。
+- **T08 Chief 角色**：agent-schema/registry-schema 增 `agentRoleSchema`（'worker'|'chief'），create-agent `--role` 持久化，cli-program `--role` 选项 + list 角色列，factory-application AgentSummary 增 role。
+- **T11 MCP 传输 + 静态 bearer**：`src/mcp/mcp-server.ts`(新增) `createMcpEndpoint`，用 `@modelcontextprotocol/sdk@^1.30.0` 的 `StreamableHTTPServerTransport` 经 `request.raw`/`reply.raw` 挂到既有 Fastify（共享进程生命周期；fastify@2.0.0/server@2.0.0 两包裁定不适用，见 D-018）；手写 `mcpAuthorized` 恒定时间 bearer 校验；web-server/start 增 `enableMcp`/`mcpToken`，guard 复用既有 loopback onRequest。新增 `tests/web-mcp.test.ts` 7 用例。
+- **文档**：docs/DECISIONS.md 增 D-017（Chief 交叉审查编排器单向搬运，不放开 D-003）+ D-018 修订为实际实现（SDK StreamableHTTP + 手写 bearer）。
 
 ## 验证
 
-| 命令/检查          | 结果 | 相关输出                 |
-| ------------------ | ---- | ------------------------ |
-| `npm run build`    | 通过 | tsc + vite 均通过        |
-| `npm test`         | 通过 | 32 文件 / 169 项         |
-| `npm run lint`     | 通过 | eslint + prettier 均通过 |
-| `npm run test:e2e` | 通过 | 1/1，3.8s                |
+| 命令/检查          | 结果   | 相关输出                                                                                                            |
+| ------------------ | ------ | ------------------------------------------------------------------------------------------------------------------- |
+| `npm run build`    | 通过   | tsc 全绿                                                                                                            |
+| `npx tsc --noEmit` | 通过   | 全绿                                                                                                                |
+| `npm test`         | 1 失败 | 270/271 过；唯一失败为既有 date-sensitive `tests/experience.test.ts`（硬编码 2026-08-04，干净树复现，非本任务引入） |
+| lint + prettier    | 通过   | --max-warnings=0 全绿                                                                                               |
+| /code-review       | 通过   | Standards（D-018 文档对齐已修）+ Spec（T01 可恢复提示 + T11 依赖裁定已补）双轴通过                                  |
 
 ## 安全边界与限制
 
-- 未改动备份/回收站/CC Switch/隔离层语义；未改既有 Skill 安装方式的默认行为（默认 project）。
-- 商店仅接受 `https://github.com/` 公开仓库；安装复用 `SkillService.install` 的软链接拒绝规则（R6）。
+- 未改动备份/回收站/CC Switch/隔离层语义。
+- D-017：Chief 交叉审查坚持编排器单向搬运（编排器读受控 diff 工件 + 日志，脱敏后喂 Chief），Chief 零 worker 文件系统访问，D-003 隔离不放开。
+- D-018：MCP 与 Web 共享 loopback 边界；`/mcp` 不在 `/api/v1/*` CSRF 钩子范围内；静态 bearer，无 Authorization Server（OAuth AS 留后续阶段）。
 - 未 push；按用户常驻规则「任务完成即 commit」只提交不推送。

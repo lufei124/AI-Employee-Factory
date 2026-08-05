@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { parseClaudeUsage, parseCodexUsage, parseStructuredUsage } from '../src/core/usage.js';
+import {
+  parseClaudeResult,
+  parseCodexResult,
+  parseClaudeUsage,
+  parseCodexUsage,
+  parseStructuredResult,
+  parseStructuredUsage,
+} from '../src/core/usage.js';
 
 describe('parseClaudeUsage (claude -p --output-format json)', () => {
   it('extracts usage/model/cost from a full result object', () => {
@@ -84,5 +91,45 @@ describe('parseStructuredUsage dispatch', () => {
     });
     expect(parseStructuredUsage('claude', claude)?.inputTokens).toBe(1);
     expect(parseStructuredUsage('codex', codex)?.outputTokens).toBe(2);
+  });
+});
+
+describe('parseStructuredResult (OP6-A/T02)', () => {
+  it('extracts the result text field from a claude JSON object', () => {
+    const stdout = JSON.stringify({ is_error: false, result: 'ok', usage: { input_tokens: 1 } });
+    expect(parseClaudeResult(stdout)).toBe('ok');
+  });
+
+  it('returns undefined for claude JSON without a string result', () => {
+    expect(parseClaudeResult('plain text')).toBeUndefined();
+    expect(parseClaudeResult(JSON.stringify({ result: 42 }))).toBeUndefined();
+    expect(parseClaudeResult('{"result":')).toBeUndefined();
+  });
+
+  it('extracts the last agent message text from codex JSONL', () => {
+    const stdout = [
+      JSON.stringify({ type: 'thread.started' }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'first' } }),
+      JSON.stringify({
+        type: 'item.completed',
+        item: { type: 'agent_message', text: 'final ans' },
+      }),
+      'non-json footer',
+    ].join('\n');
+    expect(parseCodexResult(stdout)).toBe('final ans');
+  });
+
+  it('returns undefined for codex JSONL without an agent message', () => {
+    expect(parseCodexResult(JSON.stringify({ type: 'thread.started' }))).toBeUndefined();
+  });
+
+  it('routes by provider', () => {
+    expect(parseStructuredResult('claude', JSON.stringify({ result: 'c' }))).toBe('c');
+    expect(
+      parseStructuredResult(
+        'codex',
+        JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'x' } }),
+      ),
+    ).toBe('x');
   });
 });

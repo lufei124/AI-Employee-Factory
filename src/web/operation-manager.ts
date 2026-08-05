@@ -162,6 +162,18 @@ export class OperationManager {
     }
   }
 
+  // T03：按 id 取消单个操作（MCP 取消工具与 Todo 取消任务的基础）。仅能取消
+  // 排队/运行中的操作；已结束（成功/失败/已取消）的操作不可重复取消。
+  cancel(id: string): OperationDto {
+    const operation = this.operations.get(id);
+    if (!operation) throw new AgentCtlError('NOT_FOUND', `操作不存在：${id}`);
+    if (operation.dto.state !== 'queued' && operation.dto.state !== 'running') {
+      throw new AgentCtlError('CONFLICT', `操作已结束，无法取消：${id}`);
+    }
+    operation.controller.abort();
+    return clone(operation.dto);
+  }
+
   private async execute(operation: InternalOperation, task: OperationTask): Promise<void> {
     const span = this.sink.spanStart('operation', {
       operation_id: operation.dto.id,

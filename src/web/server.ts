@@ -16,6 +16,7 @@ import { jobConfigSchema } from '../schemas/job-schema.js';
 import type { SkillScope } from '../core/skills.js';
 import { OperationManager } from './operation-manager.js';
 import { OperationStore } from '../core/operation-store.js';
+import { createMcpEndpoint } from '../mcp/mcp-server.js';
 
 const skillScopeSchema = z.enum(['project', 'user']);
 
@@ -24,6 +25,10 @@ export interface BuildWebServerOptions {
   bootstrapToken: string;
   operationManager?: OperationManager;
   publicDir?: string;
+  // T11（D-018）：启用 MCP Streamable HTTP 端点（POST/GET /mcp），静态 bearer 认证。
+  // mcpToken 随服务启动生成并打印；无/错 token 的 /mcp 请求被 401 拒绝。
+  enableMcp?: boolean;
+  mcpToken?: string;
 }
 
 interface SessionState {
@@ -85,6 +90,15 @@ function authenticated(request: FastifyRequest, state: SessionState): boolean {
   return Boolean(cookieValue && state.sessionToken && secureEqual(cookieValue, state.sessionToken));
 }
 
+// T11（D-018）：MCP 静态 bearer 认证。请求须带 `Authorization: Bearer <token>`，
+// 与启动时生成的 mcpToken 恒定时间比较；缺失/错误 → 401。
+function mcpAuthorized(request: FastifyRequest, token: string): boolean {
+  const header = request.headers.authorization;
+  if (!header || typeof header !== 'string') return false;
+  const match = /^Bearer\s+(.+)$/i.exec(header);
+  return Boolean(match?.[1] && secureEqual(match[1], token));
+}
+
 export function buildWebServer(options: BuildWebServerOptions): FastifyInstance {
   const server = Fastify({
     logger: false,
@@ -98,6 +112,11 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
   const operations =
     options.operationManager ??
     new OperationManager({ store: new OperationStore(options.application.paths.logsDir) });
+  // T11（D-018）：MCP 端点共享进程生命周期。启用时生成/取用静态 bearer token，挂 POST/GET /mcp。
+  const mcpToken = options.enableMcp
+    ? (options.mcpToken ?? randomBytes(32).toString('base64url'))
+    : undefined;
+  const mcp = options.enableMcp ? createMcpEndpoint() : undefined;
   void server.register(cookie);
   void server.register(multipart, {
     preservePath: true,
@@ -114,6 +133,8 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
 
   server.addHook('onClose', async () => {
     operations.cancelAll();
+    // T11：MCP 端点随进程关闭，避免 SSE 连接悬空。
+    await mcp?.transport.close().catch(() => undefined);
   });
 
   server.addHook('onSend', async (request, reply, payload) => {
@@ -198,6 +219,20 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
   server.get('/api/v1/session', async () => ({
     data: { csrfToken: state.csrfToken as string },
   }));
+
+  // T11（D-018）：MCP Streamable HTTP 端点。POST=JSON-RPC，GET=SSE。静态 bearer 认证，
+  // 复用全局 onRequest 的 127.0.0.1 校验；非 /api/v1/* 天然绕过 CSRF/会话校验，由本处独立把关。
+  if (mcp && mcpToken) {
+    const mcpHandler = async (request: FastifyRequest, reply: FastifyReply) => {
+      if (!mcpAuthorized(request, mcpToken)) {
+        return apiError(reply, 401, 'AUTH_REQUIRED', 'MCP 请求缺少或携带无效的 bearer token。');
+      }
+      await mcp.handle(request, reply);
+      return reply;
+    };
+    server.post('/mcp', mcpHandler);
+    server.get('/mcp', mcpHandler);
+  }
 
   server.get('/api/v1/factory/status', async () => ({
     data: await options.application.factoryStatus(),
