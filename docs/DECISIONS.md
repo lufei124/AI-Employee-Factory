@@ -201,7 +201,18 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 - 边界：**本视图本身仍纯派生**（阶段点亮/聚合进度不落盘、不改 schema）；Web 编排写面由 D-024 放开（创建/派发/Chief 发起走 Web，均后台 Operation）——本决策的「不含发起编排入口」措辞被 D-024 取代，但派生语义不变；Chief 视角不替代 Todo 标签（Todo 是逐项操作视图，Chief 编排是目标级流水线仪表）。
 - 原因：issue 07 已覆盖任务项级渲染，issue 10 的真正增量是目标为中心的流水线呈现与进度聚合；派生态避免为「是否来自 Chief 拆解」新增持久化字段（plan 有 items 即视为拆解完成），保持切片最小。
 
-## D-001 - 引入多 Agent 协作骨架
+## D-025：CURRENT_STATE.md 自动更新——系统侧生命周期事件 + 员工自维护，自动 git 提交
+
+- 状态：Accepted（已实施，TASK-028）
+- 日期：2026-08-05
+- 决定：`agent/CURRENT_STATE.md` 从「创建时写一次、之后全靠 Web 人工编辑」升级为**系统自动维护 + 员工自维护**双通道：
+  - **文件结构**：`<!-- factory-auto:begin -->`/`<!-- factory-auto:end -->` 标记块内为行级 KV（状态/运行器/飞书/最近事件），由系统管理；块外「工作进展」段由员工维护，系统不覆盖。
+  - **系统侧覆盖面 = 仅关键状态**：运行器登录成功（`runtimeAuth`）、飞书授权成功（`bridgeAuthorize`）、服务启停（`lifecycleAction`）、归档与恢复（`archiveAgent`/`restoreTrash`/`restoreBackup`）时自动更新标记块内相关行；**任务/对话完成不自动写**（避免频繁刷屏，任务进展属「工作进展」段员工自维护）。
+  - **更新语义**：有标记块只重写目标 key 的行、块外内容原样保留；无标记块且内容等于旧种子模板 → 自动升级为标记块格式；无标记块且被人工改过 → **跳过并警告**（永不覆盖他人成果）。
+  - **自动 git 提交**：系统更新后 `git add -- agent/CURRENT_STATE.md` + commit（**绝不用 `add -A`**，防误收员工未提交的工作成果；缺 git 身份不阻断，best-effort）。Web 人工保存**不触发**自动提交（保持「Git 未提交」badge 语义——badge 是单文件 `git status`，自动提交后不再因系统写入常亮）。
+  - **员工侧通道 = 引导约定 + 权限放行**：CLAUDE.md/AGENTS.md 模板追加「工作开始/结束时更新工作进展段」指令（标记块为系统管理勿改、无需手动 git 提交）；claude 侧工作区 `.claude/settings.json` 放行 `Edit/Write(agent/CURRENT_STATE.md)`（`defaultMode` 保持，避免员工每次编辑弹权限确认）；存量员工由 `prepareRuntime`（chat/run/runJob/start 前都会调用）幂等补放行。
+- 边界：状态更新不落 `saveDocument` Web 通道（事件路径走同构的直接调用 + git 提交）；不加锁（与 Web 人类保存独立，atomic 替换防损坏）；员工运行中系统并发写入靠标记块边界隔离。任务完成/对话不自动写状态。
+- 原因：员工详情状态文档与实际情况脱节（登录/授权/启停/归档后仍显示「已创建」）；系统侧生命周期事件产生结构化信号但无写入通道；员工（AI）子进程跑在工作区、天然能编辑文件，缺的只是引导指令与权限。
 
 - 状态：Accepted
 - 日期：2026-08-03

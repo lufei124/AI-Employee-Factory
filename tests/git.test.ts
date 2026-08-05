@@ -3,7 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
-import { gitAddCommit, gitDiff, gitStatusShort, snapshotWorkspaceHash } from '../src/core/git.js';
+import {
+  gitAddCommit,
+  gitCommitFile,
+  gitDiff,
+  gitStatusShort,
+  snapshotWorkspaceHash,
+} from '../src/core/git.js';
 
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => fs.remove(root))));
@@ -80,5 +86,34 @@ describe('git.ts (OP6-A)', () => {
     await fs.writeFile(path.join(root, '.git', 'probe'), 'x');
     const after = await snapshotWorkspaceHash(root);
     expect(after).toBe(before);
+  });
+
+  it('gitCommitFile commits only the target file, leaving other dirty files untouched', async () => {
+    const root = await setupWorkspace();
+    await gitAddCommit(root, 'init');
+    // 目标文件与另一个脏文件都未提交。
+    await fs.writeFile(path.join(root, 'state.md'), 'new state');
+    await fs.writeFile(path.join(root, 'other.md'), 'work in progress');
+    const ok = await gitCommitFile(root, 'state.md', 'chore: 更新当前状态');
+    expect(ok).toBe(true);
+    // 目标文件已提交且干净。
+    const status = await gitStatusShort(root);
+    expect(status.some((entry) => entry.path.includes('state.md'))).toBe(false);
+    // 其他脏文件保持未提交（绝不用 add -A）。
+    expect(status.some((entry) => entry.path.includes('other.md'))).toBe(true);
+  });
+
+  it('gitCommitFile with requireIdentity:false returns false and skips commit when identity is missing', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-git-noident-'));
+    roots.push(root);
+    await fs.writeFile(path.join(root, 'a.txt'), 'hello');
+    await execa('git', ['init', '--initial-branch=main'], { cwd: root, shell: false });
+    await execa('git', ['config', 'user.name', ''], { cwd: root, shell: false });
+    await execa('git', ['config', 'user.email', ''], { cwd: root, shell: false });
+    await fs.writeFile(path.join(root, 'state.md'), 'x');
+    const ok = await gitCommitFile(root, 'state.md', 'chore: 更新当前状态', {
+      requireIdentity: false,
+    });
+    expect(ok).toBe(false);
   });
 });

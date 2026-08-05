@@ -5,6 +5,7 @@ import YAML from 'yaml';
 import { AgentCtlError } from './errors.js';
 import { digestSkillDirectory } from './skills.js';
 import { renderAuthorityStance } from './authority.js';
+import { renderNewSeed as renderCurrentStateSeed } from './current-state.js';
 import type { AgentConfig, RuntimeProvider } from '../schemas/agent-schema.js';
 import { presetSchema, type Preset } from '../schemas/preset-schema.js';
 
@@ -84,10 +85,9 @@ export async function renderAgentWorkspace(input: {
     path.join(workspace, 'agent/POLICIES.md'),
     `# 权限与上报规则\n\n## 权限边界\n\n${bullets(preset.policies)}\n\n## 主动上报\n\n${bullets(preset.escalation_conditions)}\n`,
   );
-  await fs.writeFile(
-    path.join(workspace, 'agent/CURRENT_STATE.md'),
-    '# 当前状态\n\n- 状态：已创建，待完成运行器登录与飞书授权\n',
-  );
+  // OP6-B：CURRENT_STATE.md 采用「系统标记块 + 员工工作进展段」结构；系统侧生命周期事件
+  // （登录/授权/启停/归档恢复）只更新标记块内的行，块外内容员工维护、系统不覆盖。
+  await fs.writeFile(path.join(workspace, 'agent/CURRENT_STATE.md'), renderCurrentStateSeed());
   await fs.writeFile(path.join(workspace, 'tasks/BACKLOG.md'), '# Backlog\n');
   await fs.writeFile(path.join(workspace, 'tasks/ACTIVE.md'), '# Active\n');
   await fs.writeFile(path.join(workspace, 'config/env.example'), '# 不要在此文件写入真实 Secret\n');
@@ -195,9 +195,16 @@ async function renderRuntimeFiles(
   if (provider === 'claude') {
     await fs.ensureDir(path.join(workspace, '.claude/rules'));
     await fs.ensureDir(path.join(workspace, '.claude/agents'));
+    // OP6-B：放行员工编辑 CURRENT_STATE.md（默认 default 模式下该文件不在隐式白名单内，
+    // 无放行每次编辑会弹权限确认）。其余文件保持默认询问。
     await fs.writeJson(
       path.join(workspace, '.claude/settings.json'),
-      { permissions: { defaultMode: 'default' } },
+      {
+        permissions: {
+          defaultMode: 'default',
+          allow: ['Edit(agent/CURRENT_STATE.md)', 'Write(agent/CURRENT_STATE.md)'],
+        },
+      },
       { spaces: 2 },
     );
     await fs.writeFile(path.join(workspace, 'CLAUDE.md'), content);

@@ -479,6 +479,51 @@ describe('runtime environment isolation', () => {
     }
   });
 
+  it('ensures the workspace .claude/settings.json gains the CURRENT_STATE edit allowlist (OP6-B)', async () => {
+    const { ensureStateEditAllowed } = await import('../src/core/current-state.js');
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-state-allow-'));
+    try {
+      const workspace = path.join(root, 'workspace');
+      // 存量员工：无 .claude/settings.json → 补放行（不臆造 defaultMode，保留员工自身配置）。
+      await ensureStateEditAllowed(workspace);
+      let settings = await fs.readJson(path.join(workspace, '.claude/settings.json'));
+      expect(settings).toEqual({
+        permissions: {
+          allow: ['Edit(agent/CURRENT_STATE.md)', 'Write(agent/CURRENT_STATE.md)'],
+        },
+      });
+      // 幂等：已含放行时不再改写。
+      const first = await fs
+        .stat(path.join(workspace, '.claude/settings.json'))
+        .then((s) => s.mtimeMs);
+      await ensureStateEditAllowed(workspace);
+      const second = await fs
+        .stat(path.join(workspace, '.claude/settings.json'))
+        .then((s) => s.mtimeMs);
+      expect(second).toBe(first);
+      // 合并保留既有 permissions 与其他顶层字段。
+      await fs.outputJson(path.join(workspace, '.claude/settings.json'), {
+        permissions: { defaultMode: 'default', allow: ['Edit(agent/GOALS.md)'] },
+        theme: 'dark',
+      });
+      await ensureStateEditAllowed(workspace);
+      settings = await fs.readJson(path.join(workspace, '.claude/settings.json'));
+      expect(settings).toEqual({
+        permissions: {
+          defaultMode: 'default',
+          allow: [
+            'Edit(agent/GOALS.md)',
+            'Edit(agent/CURRENT_STATE.md)',
+            'Write(agent/CURRENT_STATE.md)',
+          ],
+        },
+        theme: 'dark',
+      });
+    } finally {
+      await fs.remove(root);
+    }
+  });
+
   it('throws NOT_FOUND when the named CC Switch Provider is absent (OP5-D)', async () => {
     const runtime = (await import('../src/core/runtime.js')) as Record<string, unknown>;
     const sync = runtime.syncCcSwitchClaudeProvider as (

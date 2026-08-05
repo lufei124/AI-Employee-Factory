@@ -1,16 +1,26 @@
 import fs from 'fs-extra';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { execa } from 'execa';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FactoryApplication } from '../src/application/factory-application.js';
 import { resolveFactoryPaths } from '../src/core/paths.js';
 import { RegistryStore } from '../src/core/registry.js';
 
 const roots: string[] = [];
 
+// 为状态自动提交断言提供确定性 git 身份（CI 无全局 git config 时也能过）。
+const prevGitConfigGlobal = process.env.GIT_CONFIG_GLOBAL;
+
 async function setup() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-management-'));
   roots.push(root);
+  const gitConfig = path.join(root, 'gitconfig');
+  await fs.writeFile(
+    gitConfig,
+    '[user]\n\tname = Test\n\temail = test@example.com\n[init]\n\tdefaultBranch = main\n',
+  );
+  process.env.GIT_CONFIG_GLOBAL = gitConfig;
   const paths = resolveFactoryPaths({
     HOME: root,
     AI_EMPLOYEES_HOME: path.join(root, 'private'),
@@ -30,7 +40,25 @@ async function setup() {
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => fs.remove(root)));
+  if (prevGitConfigGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+  else process.env.GIT_CONFIG_GLOBAL = prevGitConfigGlobal;
 });
+
+/** 读取员工工作区 CURRENT_STATE.md 并断言其包含目标行（OP6-B 事件自动更新）。 */
+async function currentState(app: FactoryApplication, id: string): Promise<string> {
+  const { registry } = await app.getAgent(id);
+  return fs.readFile(path.join(registry.workspace.path, 'agent/CURRENT_STATE.md'), 'utf8');
+}
+
+/** 断言员工工作区 git 最近提交信息（OP6-B 自动提交）。 */
+async function lastCommit(workspace: string): Promise<string> {
+  const { stdout } = await execa('git', ['log', '--oneline', '-1', '--format=%s'], {
+    cwd: workspace,
+    shell: false,
+    reject: false,
+  });
+  return stdout.trim();
+}
 
 describe('FactoryApplication management use cases', () => {
   it('creates, updates, and lists jobs while exposing terminal guidance', async () => {
@@ -127,5 +155,98 @@ describe('FactoryApplication management use cases', () => {
       name: path.basename(output),
       encrypted: false,
     });
+  });
+});
+
+describe('CURRENT_STATE.md lifecycle auto-update (OP6-B)', () => {
+  it('updates and commits the state file after runtime auth', async () => {
+    const { app, paths } = await setup();
+    // runtimeAuth(claude) 成功路径（CC Switch 同步，无真实 CLI 调用）。
+    await fs.outputJson(path.join(paths.userHome, '.claude/settings.json'), {
+      env: { ANTHROPIC_AUTH_TOKEN: 'test-token' },
+    });
+    expect(await app.runtimeAuth('user-operations', 'login')).toBe(0);
+
+    const state = await currentState(app, 'user-operations');
+    expect(state).toContain('- 状态：已就绪');
+    expect(state).toContain('- 运行器：已登录');
+    expect(state).toContain('- 最近事件：运行器登录');
+    // 自动提交：最近一次提交为状态更新（非初始 scaffold）。
+    const { registry } = await app.getAgent('user-operations');
+    expect(await lastCommit(registry.workspace.path)).toContain('更新当前状态');
+  });
+
+  it('status query does not write a login event (only login does)', async () => {
+    const { app, paths } = await setup();
+    await fs.outputJson(path.join(paths.userHome, '.claude/settings.json'), {
+      env: { ANTHROPIC_AUTH_TOKEN: 'test-token' },
+    });
+    // 先登录一次，状态文件已有事件行。
+    await app.runtimeAuth('user-operations', 'login');
+    const { registry } = await app.getAgent('user-operations');
+    const stateFile = path.join(registry.workspace.path, 'agent/CURRENT_STATE.md');
+    const before = await fs.readFile(stateFile, 'utf8');
+
+    // status 只是查询：不应追加/改写登录事件行。
+    expect(await app.runtimeAuth('user-operations', 'status')).toBe(0);
+    const after = await fs.readFile(stateFile, 'utf8');
+    expect(after).toBe(before);
+  });
+
+  it('updates the state file after bridge authorize', async () => {
+    const { app } = await setup();
+    // 模拟 Bridge CLI 存在且授权成功（测试环境无 lark-channel-bridge，mock 掉 spawn）。
+    const { BridgeAdapter } = await import('../src/core/bridge.js');
+    const { ProcessRunner } = await import('../src/core/process-runner.js');
+    vi.spyOn(BridgeAdapter.prototype, 'inspectCapabilities').mockResolvedValue({
+      compatible: true,
+      missing: [],
+      version: 'test',
+    });
+    vi.spyOn(BridgeAdapter.prototype, 'authorize').mockReturnValue({
+      command: 'lark-channel-bridge',
+      args: ['profile', 'create', 'test-profile'],
+      cwd: '/tmp',
+      env: {},
+    });
+    vi.spyOn(ProcessRunner.prototype, 'runInteractive').mockResolvedValue(0);
+    // secureProfile 会真实 spawn lark-channel-bridge，mock 掉。
+    vi.spyOn(BridgeAdapter.prototype, 'secureProfile').mockResolvedValue(undefined);
+
+    expect(await app.bridgeAuthorize('user-operations', { tenant: 'feishu' })).toBe(0);
+    const state = await currentState(app, 'user-operations');
+    expect(state).toContain('- 状态：已就绪');
+    expect(state).toContain('- 飞书：已授权');
+    expect(state).toContain('- 最近事件：飞书授权');
+  });
+
+  it('updates the state file after archive and trash restore', async () => {
+    const { app } = await setup();
+    await app.archiveAgent('user-operations');
+    let state = await currentState(app, 'user-operations');
+    expect(state).toContain('- 状态：已归档');
+    expect(state).toContain('- 最近事件：归档员工');
+
+    const moved = await app.trashAgent('user-operations');
+    await app.restoreTrash(moved.trashId);
+    state = await currentState(app, 'user-operations');
+    expect(state).toContain('- 状态：已恢复');
+    expect(state).toContain('- 最近事件：恢复员工');
+  });
+
+  it('does not break when the state file lacks a marker block and was human-edited', async () => {
+    const { app, paths } = await setup();
+    // runtimeAuth(claude) 需要 CC Switch 源。
+    await fs.outputJson(path.join(paths.userHome, '.claude/settings.json'), {
+      env: { ANTHROPIC_AUTH_TOKEN: 'test-token' },
+    });
+    const { registry } = await app.getAgent('user-operations');
+    await fs.writeFile(
+      path.join(registry.workspace.path, 'agent/CURRENT_STATE.md'),
+      '# 当前状态\n\n- 状态：人工维护中\n',
+    );
+    await app.runtimeAuth('user-operations', 'login');
+    // 人工内容原样保留（永不覆盖他人成果）。
+    expect(await currentState(app, 'user-operations')).toContain('- 状态：人工维护中');
   });
 });

@@ -40,11 +40,17 @@ import { ProcessRunner, type LoggedRunOptions } from '../core/process-runner.js'
 import { redactSecrets } from '../core/secrets.js';
 import { TaskStore } from '../core/task-store.js';
 import {
+  gitCommitFile,
   gitDiff,
   gitStatusShort,
   snapshotWorkspaceHash,
   type GitStatusEntry,
 } from '../core/git.js';
+import {
+  updateCurrentState,
+  ensureStateEditAllowed,
+  type StateRow,
+} from '../core/current-state.js';
 import { parseStructuredResult } from '../core/usage.js';
 import type { TranscriptSummary } from '../core/transcript.js';
 import type { TaskItem, TaskPlan } from '../schemas/task-schema.js';
@@ -1037,12 +1043,29 @@ export class FactoryApplication {
     const { registry, agent } = await this.getAgent(id);
     if (agent.runtime.provider === 'claude') {
       await this.prepareRuntime(registry, agent);
+      // status 只是查询（prepareRuntime 成功即证明当前 Provider 配置可用），不写登录事件；
+      // 仅 login 才算生命周期事件，写入事件行。
+      if (operation === 'login') {
+        await this.syncCurrentState(registry.id, registry.workspace.path, {
+          runtime_auth: '已登录',
+          state: '已就绪',
+          last_event: '运行器登录',
+        });
+      }
       return 0;
     }
     const adapter = getRuntimeAdapter(agent.runtime);
-    return new ProcessRunner(this.paths.logsDir).runInteractive(
+    const code = await new ProcessRunner(this.paths.logsDir).runInteractive(
       operation === 'login' ? adapter.login(registry) : adapter.authStatus(registry),
     );
+    if (code === 0) {
+      await this.syncCurrentState(registry.id, registry.workspace.path, {
+        runtime_auth: '已登录',
+        // 查询成功只同步登录状态，不把查询当作登录事件。
+        ...(operation === 'login' ? { state: '已就绪', last_event: '运行器登录' } : {}),
+      });
+    }
+    return code;
   }
 
   async syncRuntime(id: string, options: { provider?: string } = {}) {
@@ -1090,6 +1113,11 @@ export class FactoryApplication {
     if (code === 0) {
       await this.secureBridgeProfile(registry, agent.runtime);
       await this.markBridgeReady(id);
+      await this.syncCurrentState(registry.id, registry.workspace.path, {
+        feishu_auth: '已授权',
+        state: '已就绪',
+        last_event: '飞书授权',
+      });
     }
     return code;
   }
@@ -1191,6 +1219,10 @@ export class FactoryApplication {
       status: state,
       updated_at: new Date().toISOString(),
     }));
+    await this.syncCurrentState(registry.id, registry.workspace.path, {
+      state: action === 'stop' ? '已停止' : '运行中',
+      last_event: action === 'stop' ? '停止服务' : action === 'restart' ? '重启服务' : '启动服务',
+    });
     return { state };
   }
 
@@ -1218,6 +1250,10 @@ export class FactoryApplication {
       status: 'archived',
       updated_at: now,
     }));
+    await this.syncCurrentState(registry.id, registry.workspace.path, {
+      state: '已归档',
+      last_event: '归档员工',
+    });
   }
 
   async trashAgent(id: string, options: { dryRun: true }): Promise<TrashPreview>;
@@ -1260,7 +1296,19 @@ export class FactoryApplication {
       if (!entry) throw new AgentCtlError('NOT_FOUND', `回收站条目不存在：${trashId}`);
       return entry;
     }
+    const entry = (await trash.list()).find((item) => item.trashId === trashId);
     await trash.restore(trashId);
+    // R19：恢复后 registry 已重建（authorization 重置为 pending），用 manifest 的 agent_id
+    // 从 registry 重读取工作区路径，更新 CURRENT_STATE 状态行（归档→已恢复）。
+    const restored = (await this.registry.read()).agents.find(
+      (agent) => agent.id === entry?.agentId,
+    );
+    if (restored) {
+      await this.syncCurrentState(restored.id, restored.workspace.path, {
+        state: '已恢复',
+        last_event: '恢复员工',
+      });
+    }
     return { restored: true, trashId };
   }
 
@@ -1342,6 +1390,9 @@ export class FactoryApplication {
   private async prepareRuntime(registry: RegistryAgent, agent: AgentConfig) {
     this.assertMemoryEnforced(agent);
     if (agent.runtime.provider !== 'claude') return undefined;
+    // OP6-B：存量员工幂等补放行——工作区 .claude/settings.json 无 CURRENT_STATE 放行时合并写入
+    // （chat/run/runJob/start 前都会调用，存量自动升级，不覆盖员工其他权限配置）。
+    await ensureStateEditAllowed(registry.workspace.path);
     const config = await readConfig(this.paths);
     // OP5-D：Registry 本机绑定的 Provider 名（不进便携文件），指定时按该 Provider 同步；缺省 live。
     const summary = await syncCcSwitchClaudeProvider(
@@ -1474,7 +1525,14 @@ export class FactoryApplication {
       path.join(this.paths.backupsDir, name),
       '备份',
     );
-    return new BackupService(this.paths, this.registry).restore(backup, options);
+    const restored = await new BackupService(this.paths, this.registry).restore(backup, options);
+    if (!options.dryRun) {
+      await this.syncCurrentState(restored.id, restored.workspace, {
+        state: '已恢复',
+        last_event: '恢复员工',
+      });
+    }
+    return restored;
   }
 
   async restoreBackupPath(
@@ -1487,7 +1545,46 @@ export class FactoryApplication {
       path.resolve(this.paths.backupsDir, backupPath),
       '备份',
     );
-    return new BackupService(this.paths, this.registry).restore(backupPath, options);
+    const restored = await new BackupService(this.paths, this.registry).restore(
+      backupPath,
+      options,
+    );
+    if (!options.dryRun) {
+      await this.syncCurrentState(restored.id, restored.workspace, {
+        state: '已恢复',
+        last_event: '恢复员工',
+      });
+    }
+    return restored;
+  }
+
+  // OP6-B：生命周期事件后自动更新 CURRENT_STATE.md（仅标记块内行）并单文件 git 提交。
+  // best-effort：内容更新失败与提交失败（缺 git 身份等）都不阻断主流程，仅 console.warn。
+  // 统一入口：registry 恢复路径（backup/trash）不依赖 registry 查找，直接传 workspace。
+  private async syncCurrentState(id: string, workspace: string, row: StateRow): Promise<void> {
+    const file = path.join(workspace, 'agent', 'CURRENT_STATE.md');
+    const result = await updateCurrentState(file, row).catch((error: unknown) => {
+      console.warn(
+        `[current-state] 更新 ${id} 的当前状态失败：${error instanceof Error ? error.message : String(error)}`,
+      );
+      return undefined;
+    });
+    if (result === undefined) return;
+    let committed: boolean;
+    try {
+      committed = await gitCommitFile(workspace, 'agent/CURRENT_STATE.md', 'chore: 更新当前状态');
+    } catch (error) {
+      console.warn(
+        `[current-state] 提交 ${id} 的状态文件失败：${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    }
+    // gitCommitFile 缺 git 身份时返回 false（不抛错），同样提示，避免静默失败。
+    if (!committed) {
+      console.warn(
+        `[current-state] 提交 ${id} 的状态文件失败：工作区缺少 git 身份配置（user.name / user.email）。`,
+      );
+    }
   }
 
   // OP3-A 长期：以 agent.yaml 为唯一真相，重建 Registry 的 config_hash 派生缓存。
@@ -1561,6 +1658,9 @@ export class FactoryApplication {
     });
     return result.stdout.trim().length > 0;
   }
+
+  // OP6-B：生命周期事件后自动更新 CURRENT_STATE.md（仅标记块内行）并单文件 git 提交。
+  // best-effort：内容更新失败与提交失败（缺 git 身份等）都不阻断主流程，仅 console.warn。
 
   private async latestLogFile(id: string): Promise<{ root: string; file: string }> {
     await this.getAgent(id);

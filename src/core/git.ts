@@ -43,10 +43,7 @@ export async function gitAddCommit(
     requireIdentity?: boolean;
   } = {},
 ): Promise<boolean> {
-  if (options.requireIdentity !== false) {
-    const identity = await gitHasIdentity(workspace);
-    if (!identity) return false;
-  }
+  if (!(await checkIdentity(workspace, options.requireIdentity))) return false;
   const add = await execa('git', ['add', '-A'], {
     cwd: workspace,
     shell: false,
@@ -63,8 +60,13 @@ export async function gitAddCommit(
   return commit.exitCode === 0;
 }
 
-/** 检查仓库是否已配置 git user.name / user.email（本地或全局）。 */
-async function gitHasIdentity(workspace: string): Promise<boolean> {
+/** 检查仓库是否已配置 git user.name / user.email（本地或全局）。
+ *  requireIdentity === false 时跳过检查（可恢复提示场景）。 */
+async function checkIdentity(
+  workspace: string,
+  requireIdentity: boolean | undefined,
+): Promise<boolean> {
+  if (requireIdentity === false) return true;
   const tries = [
     ['config', 'user.name'],
     ['config', 'user.email'],
@@ -80,6 +82,34 @@ async function gitHasIdentity(workspace: string): Promise<boolean> {
     if (result.exitCode === 0 && result.stdout.trim().length > 0) ok += 1;
   }
   return ok === 2;
+}
+
+/** 暂存并提交单个文件（OP6-B：CURRENT_STATE 自动更新用）。只 add 目标文件，绝不用 add -A，
+ *  防误收员工工作区中未提交的其他成果。 */
+export async function gitCommitFile(
+  workspace: string,
+  relPath: string,
+  message: string,
+  options: {
+    /** 提交前是否需要 git user 配置；缺失时返回 false 而非抛错（可恢复提示）。 */
+    requireIdentity?: boolean;
+  } = {},
+): Promise<boolean> {
+  if (!(await checkIdentity(workspace, options.requireIdentity))) return false;
+  const add = await execa('git', ['add', '--', relPath], {
+    cwd: workspace,
+    shell: false,
+    extendEnv: false,
+    reject: false,
+  });
+  if (add.exitCode !== 0) return false;
+  const commit = await execa('git', ['commit', '-m', message, '--allow-empty'], {
+    cwd: workspace,
+    shell: false,
+    extendEnv: false,
+    reject: false,
+  });
+  return commit.exitCode === 0;
 }
 
 /** 生成某 base 相对当前 HEAD 的未提交 diff（审查门用）。base 为相对路径。 */

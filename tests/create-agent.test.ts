@@ -74,6 +74,21 @@ describe('CreateAgentService', () => {
     );
     expect(config.runtime).toEqual({ provider: 'claude', locked: true, model: 'sonnet' });
     expect((await registry.read()).agents[0]?.runtime_home.path).not.toContain('/.claude');
+    // OP6-B：创建即写入带标记块的 CURRENT_STATE 种子 + settings 放行员工编辑该文件。
+    const stateFile = await fs.readFile(
+      path.join(created.workspace, 'agent/CURRENT_STATE.md'),
+      'utf8',
+    );
+    expect(stateFile).toContain('<!-- factory-auto:begin -->');
+    expect(stateFile).toContain('- 状态：已创建');
+    expect(stateFile).toContain('## 工作进展');
+    const claudeSettings = await fs.readJson(path.join(created.workspace, '.claude/settings.json'));
+    expect(claudeSettings).toEqual({
+      permissions: {
+        defaultMode: 'default',
+        allow: ['Edit(agent/CURRENT_STATE.md)', 'Write(agent/CURRENT_STATE.md)'],
+      },
+    });
   });
 
   it('writes memory.enforced=true and derived authority stance into the runtime prompt (OP1 Stage A)', async () => {
@@ -92,6 +107,9 @@ describe('CreateAgentService', () => {
     const claudePrompt = await fs.readFile(path.join(claude.workspace, 'CLAUDE.md'), 'utf8');
     expect(claudePrompt).toContain('## 记忆权威顺序');
     expect(claudePrompt).toContain('1. agent（岗位正式文件');
+    // OP6-B：运行指南含当前状态维护约定。
+    expect(claudePrompt).toContain('## 当前状态维护');
+    expect(claudePrompt).toContain('agent/CURRENT_STATE.md');
 
     const codex = await service.create({
       id: 'codex-stance',
@@ -103,6 +121,9 @@ describe('CreateAgentService', () => {
     const codexPrompt = await fs.readFile(path.join(codex.workspace, 'AGENTS.md'), 'utf8');
     expect(codexPrompt).toContain('## 记忆权威顺序');
     expect(codexPrompt).toContain('1. agent（岗位正式文件');
+    // OP6-B：codex 侧同样注入当前状态维护约定。
+    expect(codexPrompt).toContain('## 当前状态维护');
+    expect(codexPrompt).toContain('agent/CURRENT_STATE.md');
   });
 
   it('creates a Chief from --role chief and defaults new agents to worker (T08)', async () => {
