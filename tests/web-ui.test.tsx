@@ -137,7 +137,7 @@ describe('Web console core flows', () => {
     expect(await screen.findByText('已复制')).toBeInTheDocument();
   });
 
-  it('allows manual blueprint entry without AI generation (D-029 fallback)', async () => {
+  it('prefills a default blueprint on entry, then allows manual override (D-029)', async () => {
     vi.mocked(api.createAgent).mockResolvedValue({
       id: 'manual-ops',
       workspace: '/tmp/agents/manual-ops',
@@ -145,18 +145,24 @@ describe('Web console core flows', () => {
     const user = userEvent.setup();
 
     render(<CreateAgentPage />);
-    // 不点「AI 生成蓝图」：表单可直接手动填写。
+    // 进入向导即预填可编辑的默认蓝图（无需触发 AI 生成）。
+    expect(screen.getByLabelText('员工名称')).toHaveValue('用户运营专员');
+    expect(screen.getByLabelText('Agent ID')).toHaveValue('user-operations');
+    expect(api.generateEmployeeProfile).not.toHaveBeenCalled();
+    // 用户仍可手动覆盖。
+    await user.clear(screen.getByLabelText('员工名称'));
     await user.type(screen.getByLabelText('员工名称'), 'Manual Ops');
     await user.clear(screen.getByLabelText('Agent ID'));
     await user.type(screen.getByLabelText('Agent ID'), 'manual-ops');
+    await user.clear(screen.getByLabelText('职责描述'));
     await user.type(screen.getByLabelText('职责描述'), '手工创建的员工');
+    await user.clear(screen.getByLabelText('核心目标（每行一条）'));
     await user.type(screen.getByLabelText('核心目标（每行一条）'), '目标一');
     await user.click(screen.getByRole('button', { name: '下一步' }));
     await user.click(screen.getByLabelText('Claude Code'));
     await user.click(screen.getByRole('button', { name: '下一步' }));
     await user.click(screen.getByRole('button', { name: '创建员工' }));
 
-    expect(api.generateEmployeeProfile).not.toHaveBeenCalled();
     expect(api.createAgent).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'manual-ops',
@@ -281,13 +287,12 @@ describe('Web console core flows', () => {
       agentId: 'ops',
       state: 'ready',
     } as never);
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const user = userEvent.setup();
 
     render(<AgentDetailPage agentId="ops" />);
     await user.click(await screen.findByRole('button', { name: '移入回收站' }));
+    await user.click(screen.getByRole('button', { name: '确认移入回收站' }));
 
-    expect(confirm).toHaveBeenCalledOnce();
     expect(api.trashAgent).toHaveBeenCalledWith('ops');
     expect(window.location.hash).toBe('#/agents');
   });
@@ -306,13 +311,13 @@ describe('Web console core flows', () => {
       },
     ]);
     vi.mocked(api.restoreTrash).mockResolvedValue({ restored: true } as never);
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     const user = userEvent.setup();
 
     render(<BackupsPage />);
     expect(await screen.findByText('员工回收站')).toBeInTheDocument();
     expect(screen.getByText('剩余 7 天')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '恢复员工' }));
+    await user.click(screen.getByRole('button', { name: '确认恢复' }));
 
     expect(api.restoreTrash).toHaveBeenCalledWith('018f6b77-82d4-7c80-8000-000000000001');
   });
@@ -549,7 +554,6 @@ describe('Web console core flows', () => {
       ])
       .mockResolvedValue([]);
     vi.mocked(api.removeSkill).mockResolvedValue({ removed: true, scope: 'project' });
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const user = userEvent.setup();
 
     render(
@@ -559,8 +563,8 @@ describe('Web console core flows', () => {
     );
     await user.click(await screen.findByRole('button', { name: 'Skills' }));
     await user.click(await screen.findByRole('button', { name: '卸载' }));
+    await user.click(screen.getByRole('button', { name: '确认卸载' }));
 
-    expect(confirm).toHaveBeenCalledWith('卸载 Skill research-helper（项目级）？此操作不可恢复。');
     expect(api.removeSkill).toHaveBeenCalledWith('ops', 'research-helper', 'project');
     // 卸载后列表刷新（getAgent 重载 + listSkills 重新拉取）
     expect(await screen.findByText('暂无 项目级 Skill')).toBeInTheDocument();

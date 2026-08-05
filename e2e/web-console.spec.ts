@@ -137,8 +137,8 @@ test('initializes, creates, manages, backs up, and restores an isolated employee
 
   await page.getByRole('link', { name: '备份恢复' }).click();
   await page.getByPlaceholder('agent-copy').fill('user-operations-copy');
-  page.once('dialog', (dialog) => void dialog.accept());
   await page.getByRole('button', { name: '恢复副本' }).click();
+  await page.getByRole('button', { name: '确认恢复' }).click();
   await expect
     .poll(async () => {
       return page.evaluate(async () => {
@@ -159,8 +159,8 @@ test('initializes, creates, manages, backs up, and restores an isolated employee
 
   await page.goto(`${new URL(consoleUrl).origin}/#/agents/user-operations`);
   await expect(page.getByText('用户运营专员')).toBeVisible();
-  page.once('dialog', (dialog) => void dialog.accept());
   await page.getByRole('button', { name: '移入回收站' }).click();
+  await page.getByRole('button', { name: '确认移入回收站' }).click();
   await expect(page).toHaveURL(/#\/agents$/);
   await expect(page.getByText('user-operations', { exact: true })).toHaveCount(0);
   await page.getByRole('link', { name: '备份恢复' }).click();
@@ -169,15 +169,17 @@ test('initializes, creates, manages, backs up, and restores an isolated employee
     .locator('xpath=ancestor::section');
   await expect(trashPanel).toBeVisible();
   await expect(trashPanel.getByText(/user-operations ·/)).toBeVisible();
-  page.once('dialog', (dialog) => void dialog.accept());
   await page.getByRole('button', { name: '恢复员工' }).click();
+  await page.getByRole('button', { name: '确认恢复' }).click();
   await expect(trashPanel.getByText(/user-operations ·/)).toHaveCount(0);
-  expect(
-    (
-      await page.evaluate(async () => {
+  // 恢复为异步操作：轮询直到目标员工重新出现在 registry（与上面副本恢复的断言一致）。
+  await expect
+    .poll(async () => {
+      return page.evaluate(async () => {
         const response = await fetch('/api/v1/agents');
-        return (await response.json()) as { data: Array<{ id: string; status: string }> };
-      })
-    ).data,
-  ).toContainEqual(expect.objectContaining({ id: 'user-operations', status: 'stopped' }));
+        const payload = (await response.json()) as { data: Array<{ id: string; status: string }> };
+        return payload.data;
+      });
+    })
+    .toContainEqual(expect.objectContaining({ id: 'user-operations', status: 'stopped' }));
 });

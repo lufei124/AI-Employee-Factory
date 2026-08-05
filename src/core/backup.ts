@@ -355,7 +355,11 @@ export class BackupService {
           remediation: `请先将 ${relative} 从 Git 跟踪中移除并更换相关凭据。`,
         });
       const file = path.join(workspace, relative);
-      if ((await fs.stat(file)).size < 1024 * 1024) {
+      // 用 lstat：跳过符号链接（skill 投影会把目录链接进 .claude/skills/，fs.stat 跟随链接
+      // 得到目录 stat，再 readFile 会抛 EISDIR）。链接指向的真实文件由其自身路径另行扫描。
+      const stat = await fs.lstat(file);
+      if (!stat.isFile()) continue;
+      if (stat.size < 1024 * 1024) {
         const content = await fs.readFile(file, 'utf8');
         if (SECRET_PATTERN.test(content))
           throw new AgentCtlError(

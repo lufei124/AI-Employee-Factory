@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Copy, XCircle } from 'lucide-react';
+import { Button } from './ui/button.js';
 
 async function copyWithFallback(text: string): Promise<boolean> {
   try {
@@ -49,21 +50,27 @@ export function CopyButton({ text }: { text: string }) {
   };
 
   return (
-    <button
+    <Button
       type="button"
-      className={`icon-button copy-button ${state}`}
+      variant="ghost"
+      size="icon"
+      className="size-6"
       aria-label={`复制命令 ${text}`}
       title={state === 'copied' ? '已复制' : state === 'failed' ? '复制失败' : '复制命令'}
       onClick={() => void copy()}
     >
       {state === 'copied' ? (
-        <CheckCircle2 size={15} />
+        <CheckCircle2 className="size-3.5 text-success" />
       ) : state === 'failed' ? (
-        <XCircle size={15} />
+        <XCircle className="size-3.5 text-destructive" />
       ) : (
-        <Copy size={15} />
+        <Copy className="size-3.5" />
       )}
-      {state !== 'idle' && <span role="status">{state === 'copied' ? '已复制' : '复制失败'}</span>}
-    </button>
+      {state !== 'idle' && (
+        <span className="ml-1 text-xs font-normal" role="status">
+          {state === 'copied' ? '已复制' : '复制失败'}
+        </span>
+      )}
+    </Button>
   );
 }

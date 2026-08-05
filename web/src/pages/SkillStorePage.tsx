@@ -10,7 +10,6 @@ import {
   Search,
   Store,
   Trash2,
-  X,
 } from 'lucide-react';
 import {
   api,
@@ -19,6 +18,113 @@ import {
   type StoreRepository,
   type StoreSkill,
 } from '../api.js';
+import { PageHeader } from '../components/PageHeader.js';
+import { ConfirmDialog } from '../components/ConfirmDialog.js';
+import { notify, errorText } from '../components/ToastFeedback.js';
+import { EmptyState } from '../components/PageState.js';
+import { Button } from '../components/ui/button.js';
+import { Input } from '../components/ui/input.js';
+import { Label } from '../components/ui/label.js';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../components/ui/dialog.js';
+import { cn } from '../lib/utils.js';
+
+function SkillInstallDialog({
+  open,
+  onOpenChange,
+  title,
+  subtitle,
+  scope,
+  agent,
+  agents,
+  installing,
+  confirmLabel = '确认安装',
+  onScopeChange,
+  onAgentChange,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  subtitle: string;
+  scope: SkillScope;
+  agent: string;
+  agents: DashboardData['agents'];
+  installing: boolean;
+  confirmLabel?: string;
+  onScopeChange: (scope: SkillScope) => void;
+  onAgentChange: (agentId: string) => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{subtitle}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="grid gap-1.5">
+            <Label htmlFor="install-agent">目标员工</Label>
+            <select
+              id="install-agent"
+              value={agent}
+              onChange={(event) => onAgentChange(event.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              {agents
+                .filter((agent) => !agent.archived)
+                .map((agent) => (
+                  <option value={agent.id} key={agent.id}>
+                    {agent.name}（{agent.id}）
+                  </option>
+                ))}
+            </select>
+          </div>
+          <div className="grid gap-1.5">
+            <Label>安装作用域</Label>
+            <div className="flex gap-1">
+              {(
+                [
+                  { value: 'project', label: '项目级' },
+                  { value: 'user', label: '用户级' },
+                ] as const
+              ).map((option) => (
+                <button
+                  type="button"
+                  key={option.value}
+                  onClick={() => onScopeChange(option.value)}
+                  className={cn(
+                    'flex-1 rounded-md px-3 py-2 text-sm transition-colors',
+                    scope === option.value
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-muted text-muted-foreground hover:bg-muted',
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={installing}>
+            取消
+          </Button>
+          <Button disabled={installing} onClick={onConfirm}>
+            {installing ? '安装中…' : confirmLabel}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 export function SkillStorePage() {
   const [searchParams] = useSearchParams();
@@ -40,6 +146,7 @@ export function SkillStorePage() {
   const [installAgent, setInstallAgent] = useState(preselectAgent);
   const [installScope, setInstallScope] = useState<SkillScope>('project');
   const [installing, setInstalling] = useState(false);
+  const [removingRepo, setRemovingRepo] = useState<StoreRepository>();
 
   const load = async () => {
     try {
@@ -50,7 +157,6 @@ export function SkillStorePage() {
       setRepos(repoList);
       setAgents(agentList.agents);
       setError('');
-      // 统计每个已缓存仓库的技能数量；单个仓库失败不阻塞页面。
       const counts: Record<string, number> = {};
       await Promise.all(
         repoList
@@ -65,7 +171,7 @@ export function SkillStorePage() {
       );
       setCounts(counts);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorText(cause));
     }
   };
 
@@ -85,7 +191,7 @@ export function SkillStorePage() {
     try {
       setSkills(await api.listSkillStoreSkills(name));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorText(cause));
     } finally {
       setSkillsLoading(false);
     }
@@ -102,21 +208,23 @@ export function SkillStorePage() {
       }
       setFeedback(`仓库 ${name} 已刷新。`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorText(cause));
     }
   };
 
-  const removeRepo = async (repo: StoreRepository) => {
-    if (!window.confirm(`移除仓库源 ${repo.name}？缓存将一并删除。`)) return;
+  const removeRepo = async () => {
+    if (!removingRepo) return;
     try {
-      await api.removeSkillStoreRepository(repo.name);
-      if (expanded === repo.name) {
+      await api.removeSkillStoreRepository(removingRepo.name);
+      if (expanded === removingRepo.name) {
         setExpanded(undefined);
         setSkills([]);
       }
+      setRemovingRepo(undefined);
       await load();
+      notify.success(`仓库源 ${removingRepo.name} 已移除`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorText(cause));
     }
   };
 
@@ -127,8 +235,9 @@ export function SkillStorePage() {
       setAddForm({ name: '', url: '', description: '' });
       setShowAdd(false);
       await load();
+      notify.success('仓库源已添加');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorText(cause));
     }
   };
 
@@ -138,13 +247,12 @@ export function SkillStorePage() {
     setInstallScope('project');
   };
 
-  // 一键安装仓库全部技能：和单个安装一致，先选目标员工与作用域，再批量安装。
   const openBulkInstall = async (repo: StoreRepository) => {
     let repoSkills: StoreSkill[];
     try {
       repoSkills = await api.listSkillStoreSkills(repo.name);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorText(cause));
       return;
     }
     if (repoSkills.length === 0) {
@@ -180,7 +288,7 @@ export function SkillStorePage() {
         parts.push(`失败 ${result.failed.length}（${result.failed.join('；')}）`);
       setFeedback(`${parts.join('，')}。`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorText(cause));
     } finally {
       setInstalling(false);
     }
@@ -202,7 +310,7 @@ export function SkillStorePage() {
         `已安装 ${result.name}@${result.version}（${result.scope === 'project' ? '项目级' : '用户级'}）到 ${installAgent}。`,
       );
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorText(cause));
     } finally {
       setInstalling(false);
     }
@@ -213,299 +321,250 @@ export function SkillStorePage() {
   );
 
   return (
-    <div className="page-stack">
-      <header className="page-heading store-heading">
-        <div>
-          <p className="eyebrow">技能市场</p>
-          <h1>Skill 商店</h1>
-          <p>浏览远端 GitHub 仓库源并安装技能，不影响已有安装方式。</p>
-        </div>
-        <button className="button primary" onClick={() => setShowAdd(!showAdd)}>
-          <Plus size={15} />
-          {showAdd ? '收起表单' : '添加仓库'}
-        </button>
-      </header>
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="技能市场"
+        title="Skill 商店"
+        description="浏览远端 GitHub 仓库源并安装技能，不影响已有安装方式。"
+        actions={
+          <Button variant="outline" onClick={() => setShowAdd(!showAdd)}>
+            <Plus className="size-4" />
+            {showAdd ? '收起表单' : '添加仓库'}
+          </Button>
+        }
+      />
 
       {showAdd && (
-        <section className="panel store-add-form">
-          <div className="form-grid two">
-            <label>
-              仓库名
-              <input
+        <section className="rounded-xl border border-border bg-card p-5">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-1.5">
+              <Label>仓库名</Label>
+              <Input
                 value={addForm.name}
                 onChange={(event) => setAddForm({ ...addForm, name: event.target.value })}
                 placeholder="my-skills"
               />
-            </label>
-            <label>
-              GitHub URL
-              <input
+            </div>
+            <div className="grid gap-1.5">
+              <Label>GitHub URL</Label>
+              <Input
                 value={addForm.url}
                 onChange={(event) => setAddForm({ ...addForm, url: event.target.value })}
                 placeholder="https://github.com/owner/repo"
               />
-            </label>
-            <label className="store-field-wide">
-              描述
-              <input
+            </div>
+            <div className="grid gap-1.5 sm:col-span-2">
+              <Label>描述</Label>
+              <Input
                 value={addForm.description}
                 onChange={(event) => setAddForm({ ...addForm, description: event.target.value })}
                 placeholder="可选"
               />
-            </label>
+            </div>
           </div>
-          <div className="wizard-actions">
-            <span className="field-help">仅接受 https://github.com/ 的公开仓库</span>
-            <button className="button primary" onClick={() => void addRepo()}>
-              添加仓库源
-            </button>
+          <div className="mt-4 flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">
+              仅接受 https://github.com/ 的公开仓库
+            </span>
+            <Button onClick={() => void addRepo()}>添加仓库源</Button>
           </div>
         </section>
       )}
 
-      {error && <div className="notice danger">{error}</div>}
-      {feedback && <div className="notice info">{feedback}</div>}
+      {error && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          {error}
+        </div>
+      )}
+      {feedback && (
+        <div className="rounded-md border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-primary">
+          {feedback}
+        </div>
+      )}
 
       {repos.length === 0 ? (
-        <section className="panel">
-          <div className="empty-state">
-            <Store size={26} />
-            <h3>暂无仓库源</h3>
-            <p>添加一个 GitHub 仓库源，即可浏览并安装其中的技能。</p>
-          </div>
+        <section className="rounded-xl border border-border bg-card p-6">
+          <EmptyState
+            icon={<Store className="size-5" />}
+            title="暂无仓库源"
+            description="添加一个 GitHub 仓库源，即可浏览并安装其中的技能。"
+          />
         </section>
       ) : (
-        <section className="store-repo-grid">
+        <div className="grid gap-4 lg:grid-cols-2">
           {repos.map((repo) => (
-            <article className="store-repo-card" key={repo.name}>
-              <div className="store-repo-top">
-                <div className="store-repo-title">
-                  <span className="store-repo-icon">
-                    <Store size={16} />
+            <article key={repo.name} className="rounded-xl border border-border bg-card p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
+                    <Store className="size-4" />
                   </span>
-                  <div>
-                    <strong>{repo.name}</strong>
-                    <span>{repo.description ?? repo.url}</span>
+                  <div className="min-w-0">
+                    <strong className="block truncate text-sm font-semibold">{repo.name}</strong>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {repo.description ?? repo.url}
+                    </span>
                   </div>
                 </div>
-                <div className="store-repo-badges">
-                  <span className={`status-badge ${repo.cached ? 'succeeded' : 'queued'}`}>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <span
+                    className={cn(
+                      'rounded px-2 py-0.5 text-[10px] font-semibold',
+                      repo.cached ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning',
+                    )}
+                  >
                     {repo.cached ? '已缓存' : '未缓存'}
                   </span>
                   {counts[repo.name] != null && (
-                    <span className="status-badge store-count-badge">
+                    <span className="rounded bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
                       {counts[repo.name]} 个技能
                     </span>
                   )}
                 </div>
               </div>
-              <a className="store-repo-url" href={repo.url} target="_blank" rel="noreferrer">
-                <ExternalLink size={12} />
+              <a
+                className="mt-3 flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground"
+                href={repo.url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <ExternalLink className="size-3" />
                 {repo.url}
               </a>
-              <div className="store-repo-actions">
-                <button
-                  className="button primary"
-                  onClick={() => void openBulkInstall(repo)}
-                  disabled={installing}
-                >
-                  <Download size={14} />
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <Button size="sm" disabled={installing} onClick={() => void openBulkInstall(repo)}>
+                  <Download className="size-4" />
                   一键安装全部
-                </button>
-                <button className="button ghost" onClick={() => void openRepo(repo.name)}>
-                  {expanded === repo.name ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => void openRepo(repo.name)}>
+                  {expanded === repo.name ? (
+                    <ChevronDown className="size-4" />
+                  ) : (
+                    <ChevronRight className="size-4" />
+                  )}
                   {expanded === repo.name ? '收起' : '浏览技能'}
-                </button>
-                <button className="button ghost" onClick={() => void refresh(repo.name)}>
-                  <RefreshCw size={14} />
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => void refresh(repo.name)}>
+                  <RefreshCw className="size-4" />
                   刷新
-                </button>
-                <button className="button ghost danger-text" onClick={() => void removeRepo(repo)}>
-                  <Trash2 size={14} />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => setRemovingRepo(repo)}
+                >
+                  <Trash2 className="size-4" />
                   移除
-                </button>
+                </Button>
               </div>
             </article>
           ))}
-        </section>
+        </div>
       )}
 
       {expanded && (
-        <section className="panel store-skills-panel">
-          <div className="panel-heading">
+        <section className="rounded-xl border border-border bg-card">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
             <div>
-              <h2>{expanded}</h2>
-              <span>仓库技能列表{counts[expanded] != null ? ` · ${counts[expanded]} 个` : ''}</span>
+              <h2 className="text-sm font-semibold">{expanded}</h2>
+              <span className="text-xs text-muted-foreground">
+                仓库技能列表{counts[expanded] != null ? ` · ${counts[expanded]} 个` : ''}
+              </span>
             </div>
-            <div className="search">
-              <Search size={15} />
-              <input
+            <div className="relative max-w-xs flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="搜索技能"
+                className="pl-9"
               />
             </div>
           </div>
           {skillsLoading ? (
-            <div className="empty-state compact">
-              <RefreshCw size={22} className="spin" />
-              <h3>正在读取技能…</h3>
+            <div className="p-10 text-center text-sm text-muted-foreground">
+              <RefreshCw className="mx-auto mb-2 size-5 animate-spin" />
+              正在读取技能…
             </div>
           ) : filteredSkills.length === 0 ? (
-            <div className="empty-state compact">
-              <Store size={22} />
-              <h3>未发现技能</h3>
-              <p>仓库可能未包含 SKILL.md 或 agent-skills.yaml 清单。</p>
+            <div className="p-6">
+              <EmptyState
+                icon={<Store className="size-5" />}
+                title="未发现技能"
+                description="仓库可能未包含 SKILL.md 或 agent-skills.yaml 清单。"
+              />
             </div>
           ) : (
-            <div className="store-skill-list">
+            <ul className="divide-y divide-border">
               {filteredSkills.map((skill) => (
-                <article key={skill.path}>
-                  <div className="store-skill-main">
-                    <strong>{skill.name}</strong>
-                    <p>{skill.description || '暂无描述'}</p>
-                    <span>
+                <li key={skill.path} className="flex items-center gap-3 px-5 py-3.5">
+                  <div className="min-w-0 flex-1">
+                    <strong className="block text-sm font-medium">{skill.name}</strong>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {skill.description || '暂无描述'}
+                    </p>
+                    <span className="font-mono text-[11px] text-muted-foreground">
                       v{skill.version} · {skill.path}
                     </span>
                   </div>
-                  <button className="button secondary" onClick={() => openInstall(skill)}>
-                    <Plus size={14} />
+                  <Button variant="outline" size="sm" onClick={() => openInstall(skill)}>
+                    <Plus className="size-4" />
                     安装
-                  </button>
-                </article>
+                  </Button>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
         </section>
       )}
 
-      {install && (
-        <div className="modal-overlay" onClick={() => setInstall(undefined)}>
-          <div className="modal" onClick={(event) => event.stopPropagation()}>
-            <header className="modal-head">
-              <div>
-                <strong>安装 Skill</strong>
-                <span>
-                  {install.skill.name} · {install.repo}
-                </span>
-              </div>
-              <button className="icon-button" onClick={() => setInstall(undefined)}>
-                <X size={16} />
-              </button>
-            </header>
-            <div className="form-stack">
-              <label>
-                目标员工
-                <select
-                  value={installAgent}
-                  onChange={(event) => setInstallAgent(event.target.value)}
-                >
-                  <option value="">选择员工…</option>
-                  {agents
-                    .filter((agent) => !agent.archived)
-                    .map((agent) => (
-                      <option value={agent.id} key={agent.id}>
-                        {agent.name}（{agent.id}）
-                      </option>
-                    ))}
-                </select>
-              </label>
-              <label>
-                安装作用域
-                <div className="scope-picker">
-                  <button
-                    className={installScope === 'project' ? 'active' : ''}
-                    onClick={() => setInstallScope('project')}
-                  >
-                    项目级
-                  </button>
-                  <button
-                    className={installScope === 'user' ? 'active' : ''}
-                    onClick={() => setInstallScope('user')}
-                  >
-                    用户级
-                  </button>
-                </div>
-              </label>
-              <div className="wizard-actions">
-                <span className="field-help">项目级随工作区备份；用户级仅随 Runtime 备份。</span>
-                <button
-                  className="button primary"
-                  disabled={!installAgent || installing}
-                  onClick={() => void confirmInstall()}
-                >
-                  {installing ? '安装中…' : '确认安装'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <SkillInstallDialog
+        open={Boolean(install)}
+        onOpenChange={(open) => {
+          if (!open && !installing) setInstall(undefined);
+        }}
+        title="安装 Skill"
+        subtitle={install ? `${install.skill.name} · ${install.repo}` : ''}
+        scope={installScope}
+        agent={installAgent}
+        agents={agents}
+        installing={installing}
+        onAgentChange={setInstallAgent}
+        onScopeChange={setInstallScope}
+        onConfirm={() => void confirmInstall()}
+      />
 
-      {bulkRepo && (
-        <div className="modal-overlay" onClick={() => setBulkRepo(undefined)}>
-          <div className="modal" onClick={(event) => event.stopPropagation()}>
-            <header className="modal-head">
-              <div>
-                <strong>一键安装全部</strong>
-                <span>
-                  {bulkRepo} · {bulkCount} 个技能
-                </span>
-              </div>
-              <button className="icon-button" onClick={() => setBulkRepo(undefined)}>
-                <X size={16} />
-              </button>
-            </header>
-            <div className="form-stack">
-              <label>
-                目标员工
-                <select
-                  value={installAgent}
-                  onChange={(event) => setInstallAgent(event.target.value)}
-                >
-                  <option value="">选择员工…</option>
-                  {agents
-                    .filter((agent) => !agent.archived)
-                    .map((agent) => (
-                      <option value={agent.id} key={agent.id}>
-                        {agent.name}（{agent.id}）
-                      </option>
-                    ))}
-                </select>
-              </label>
-              <label>
-                安装作用域
-                <div className="scope-picker">
-                  <button
-                    className={installScope === 'project' ? 'active' : ''}
-                    onClick={() => setInstallScope('project')}
-                  >
-                    项目级
-                  </button>
-                  <button
-                    className={installScope === 'user' ? 'active' : ''}
-                    onClick={() => setInstallScope('user')}
-                  >
-                    用户级
-                  </button>
-                </div>
-              </label>
-              <div className="wizard-actions">
-                <span className="field-help">
-                  将把 {bulkCount} 个技能批量安装到所选员工；已存在的自动跳过。
-                </span>
-                <button
-                  className="button primary"
-                  disabled={!installAgent || installing}
-                  onClick={() => void installAll(bulkRepo)}
-                >
-                  {installing ? '安装中…' : '确认一键安装'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <SkillInstallDialog
+        open={Boolean(bulkRepo)}
+        onOpenChange={(open) => {
+          if (!open && !installing) {
+            setBulkRepo(undefined);
+            setBulkCount(undefined);
+          }
+        }}
+        title="一键安装全部"
+        subtitle={bulkRepo ? `${bulkRepo} · ${bulkCount} 个技能` : ''}
+        scope={installScope}
+        agent={installAgent}
+        agents={agents}
+        installing={installing}
+        confirmLabel="确认一键安装"
+        onAgentChange={setInstallAgent}
+        onScopeChange={setInstallScope}
+        onConfirm={() => void installAll(bulkRepo ?? '')}
+      />
+
+      <ConfirmDialog
+        open={Boolean(removingRepo)}
+        onOpenChange={(open) => {
+          if (!open) setRemovingRepo(undefined);
+        }}
+        title="移除仓库源"
+        description={removingRepo ? `移除仓库源 ${removingRepo.name}？缓存将一并删除。` : ''}
+        confirmLabel="确认移除"
+        onConfirm={() => void removeRepo()}
+      />
     </div>
   );
 }
