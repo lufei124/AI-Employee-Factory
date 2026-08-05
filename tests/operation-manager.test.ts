@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { AgentCtlError } from '../src/core/errors.js';
 import { OperationStore } from '../src/core/operation-store.js';
 import type { ObservabilitySink, Span, SpanAttrs } from '../src/core/observability.js';
-import { OperationManager } from '../src/web/operation-manager.js';
+import { OperationManager } from '../src/core/operation-manager.js';
 
 class RecordingSink implements ObservabilitySink {
   readonly spans: {

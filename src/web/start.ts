@@ -39,6 +39,9 @@ export async function startWebConsole(options: StartWebConsoleOptions) {
     application: options.application,
     bootstrapToken,
     publicDir,
+    // 复用 FactoryApplication 的 OperationManager，使编排动作（runTaskPlan/orchestrate）注册的
+    // Operation 与 web 控制台/API 共享同一实例，可在 operations 列表与 /api/v1/operations 中查询。
+    operationManager: options.application.operationManager,
     // exactOptionalPropertyTypes：仅启用时传入，避免显式 undefined；mcpToken 在该分支必然已生成。
     ...(options.enableMcp ? { enableMcp: true as const, mcpToken: mcpToken! } : {}),
   });

@@ -286,9 +286,12 @@ export function createProgram(): Command {
     .option('--concurrency <n>', '并发数', '1')
     .action(async (ownerId: string, planId: string, options: { concurrency?: string }) => {
       const { application } = context();
-      const p = await application.runTaskPlan(ownerId, planId, {
+      const operation = await application.runTaskPlan(ownerId, planId, {
         ...(options.concurrency ? { concurrency: Number(options.concurrency) } : {}),
       });
+      console.log(chalk.cyan(`操作 ${operation.id} 已启动（${operation.state}），等待派发完成…`));
+      await application.waitOperation(operation.id);
+      const p = await application.getTaskPlan(ownerId, planId);
       for (const item of p.items)
         console.log(
           `${item.id}\t${item.status}${item.exit_code !== undefined ? `\texit=${item.exit_code}` : ''}`,
@@ -346,6 +349,10 @@ export function createProgram(): Command {
         },
       });
       if (!result.confirmed) return console.log(chalk.yellow('计划未确认，已取消。'));
+      if (result.operation)
+        console.log(
+          chalk.cyan(`编排操作 ${result.operation.id} 完成（${result.operation.state}）`),
+        );
       console.log(YAML.stringify(result.plan.items));
     });
 

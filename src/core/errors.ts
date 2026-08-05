@@ -5,7 +5,8 @@ export type AgentCtlErrorCode =
   | 'LOCKED'
   | 'DEPENDENCY_MISSING'
   | 'AUTH_REQUIRED'
-  | 'OPERATION_FAILED';
+  | 'OPERATION_FAILED'
+  | 'CANCELLED';
 
 const defaultExitCodes: Record<AgentCtlErrorCode, number> = {
   VALIDATION_ERROR: 2,
@@ -15,6 +16,7 @@ const defaultExitCodes: Record<AgentCtlErrorCode, number> = {
   DEPENDENCY_MISSING: 5,
   AUTH_REQUIRED: 5,
   OPERATION_FAILED: 1,
+  CANCELLED: 130,
 };
 
 export class AgentCtlError extends Error {

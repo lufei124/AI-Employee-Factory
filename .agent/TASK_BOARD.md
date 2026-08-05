@@ -26,8 +26,32 @@ Coordinator: codex-20260803-01
 | TASK-018 | Skill 作用域(项目/用户) + Skill 商店(GitHub 源)                                                                                                  | claude-20260803-01 | DONE        | master (9831488)                   | skills/skill-store/config/paths/application/server/cli-program/web/api/tests + DOCS(D-003 更新)                                                                                                                                                                      | 用户批准的三项设计决策(分离存储/可配置列表/顶级页)                                                                 | 2026-08-04 18:25 +0800 |
 | TASK-019 | OP3-A 长期：移除 Registry runtime 块 + I-5 model 收紧 + migrate                                                                                  | claude-20260803-01 | DONE        | master (TASK-019 commit)           | registry-schema/registry/agents/runtime/bridge/job-runner/services/application/cli-program/doctor/web/create-agent/backup 与测试 + DECISIONS ADR                                                                                                                     | TASK-016、用户批准的三项设计决策(HARD config_hash/SOFT migrate/N+1 list)                                           | 2026-08-04 19:16 +0800 |
 | TASK-020 | 记忆系统剩余批次合并（OP2-F + CLI 结构化输出 + OP4-C + OP1 Stage B-E + OP5 A-E）                                                                 | claude-20260803-01 | IN_PROGRESS | master (TASK-020 commit(s))        | 12 阶段（extensions/backup/paths/agent-schema/process-runner/observability/operation-manager/knowledge/templates/transcript/experience/archival/service-adapter/factory-services/systemd-service/runtime/doctor/application/cli-program/web 与测试 + DECISIONS ADR） | TASK-019、用户批准的统一合并计划（12 阶段顺序依赖）                                                                | 2026-08-04 21:20 +0800 |
-| TASK-021 | Chief/Todo/MCP 骨架（前端票：T01 git 基础 + T02 结构化 result + T03 取消单操作 + T04 Todo 领域核心 + T08 Chief 角色 + T11 MCP 传输+静态 bearer） | claude-20260803-01 | DONE         | main (56bcef6)                     | git.ts/usage.ts/operation-manager/task-schema/task-store/agent-schema/registry-schema/create-agent/cli-program/factory-application/templates/mcp-server/web-server 与测试 + DECISIONS ADR                                                                            | 用户批准的多 Agent 协作骨架 spec（.scratch/spec-chief-todo-mcp.md）与 13 票计划（.scratch/chief-todo-mcp/issues/） | 2026-08-05 11:50 +0800 |
-| TASK-022 | Chief 编排核心闭环（spec-chief-orchestration 4 票：01 计划+派发 + 02 规划门脏审计 + 03 审查门单向搬运 + 04 拆解回落与 orchestrate） | claude-20260803-01 | DONE         | main (TASK-022 commit)             | task-store 扩展/factory-application 编排动作/cli-program plan+chief 命令组/orchestration.test.ts/cli-structure.test.ts + .agent 簿记 + docs/DECISIONS.md ADR(可选)                                                                                                  | 用户批准的 spec-chief-orchestration 与 4 票计划（.scratch/chief-orchestration/issues/） | 2026-08-05 12:35 +0800 |
+| TASK-021 | Chief/Todo/MCP 骨架（前端票：T01 git 基础 + T02 结构化 result + T03 取消单操作 + T04 Todo 领域核心 + T08 Chief 角色 + T11 MCP 传输+静态 bearer） | claude-20260803-01 | DONE        | main (56bcef6)                     | git.ts/usage.ts/operation-manager/task-schema/task-store/agent-schema/registry-schema/create-agent/cli-program/factory-application/templates/mcp-server/web-server 与测试 + DECISIONS ADR                                                                            | 用户批准的多 Agent 协作骨架 spec（.scratch/spec-chief-todo-mcp.md）与 13 票计划（.scratch/chief-todo-mcp/issues/） | 2026-08-05 11:50 +0800 |
+| TASK-022 | Chief 编排核心闭环（spec-chief-orchestration 4 票：01 计划+派发 + 02 规划门脏审计 + 03 审查门单向搬运 + 04 拆解回落与 orchestrate）              | claude-20260803-01 | DONE        | main (TASK-022 commit)             | task-store 扩展/factory-application 编排动作/cli-program plan+chief 命令组/orchestration.test.ts/cli-structure.test.ts + .agent 簿记 + docs/DECISIONS.md ADR(可选)                                                                                                   | 用户批准的 spec-chief-orchestration 与 4 票计划（.scratch/chief-orchestration/issues/）                            | 2026-08-05 12:35 +0800 |
+| TASK-023 | 编排 Operation 可观测性（spec-chief-todo-mcp user story 16/23/25：runTaskPlan/orchestrate 注册 Operation 返回 OperationDto + cancel 单例复用）   | claude-20260803-01 | DONE        | main (TASK-023 commit)             | operation-manager 迁移 core/factory-application 编排可观测/cli-program 展示/start.ts 共享实例/errors CANCELLED 码/orchestration.test.ts + .agent 簿记                                                                                                                | 用户批准的 spec-chief-todo-mcp 切片（编排 Operation 可观测性）                                                     | 2026-08-05 12:55 +0800 |
+
+## TASK-023 详情
+
+```text
+Task ID: TASK-023
+Title: 编排 Operation 可观测性（spec-chief-todo-mcp user story 16/23/25：runTaskPlan/orchestrate 注册 Operation 返回 OperationDto + cancel 单例复用）
+Owner agent: claude-20260803-01
+Status: DONE
+Branch/worktree: main
+Allowed scope: OperationManager 迁移 core、编排可观测、CLI 展示、web 共享实例、CANCELLED 错误码、测试与 .agent 簿记
+Forbidden scope: 用户真实服务状态、个人凭据、MCP 工具实现（阶段 3 独立切片）、Web Todo 视图（独立切片）
+Dependencies: TASK-022（编排核心闭环）、用户批准的 spec-chief-todo-mcp 切片
+Expected output: 编排动作注册可观测 Operation 并返回 OperationDto；web/CLI 可查进度、可取消；synchron 调用方经 waitOperation 等终态后取计划
+Acceptance criteria:
+  - runTaskPlan 后台派发并返回 OperationDto（type=task_plan，agentId=owner），可经 operationManager.get/list 查询、可取消
+  - 派发落盘一条 kind=task_plan 的 OperationSummary 到 operations.jsonl（可审计）
+  - orchestrate 返回 operation 句柄（confirmed 时），派发失败/取消经 waitOperation 抛 OPERATION_FAILED/CANCELLED
+  - web/start 复用应用级 OperationManager，编排操作在 web 控制台 operations 列表可见
+  - OperationManager 由 src/web/ 迁至 src/core/（无行为变更，更新 3 处 import）
+  - 全量单测通过（仅既有 date-sensitive experience.test.ts 失败除外）
+Started at: 2026-08-05 12:50 +0800
+Updated at: 2026-08-05 12:55 +0800
+```
 
 ## TASK-022 详情
 

@@ -2,42 +2,42 @@
 
 ## 身份
 
-Task ID: TASK-022
+Task ID: TASK-023
 
-Task title: Chief 编排核心闭环（spec-chief-orchestration 4 票：01 计划+派发 / 02 规划门脏审计 / 03 审查门单向搬运 / 04 拆解回落与 orchestrate）
+Task title: 编排 Operation 可观测性（spec-chief-todo-mcp user story 16/23/25：runTaskPlan/orchestrate 注册 Operation 返回 OperationDto + cancel 单例复用）
 
 Outgoing/current agent: claude-20260803-01
 
-Intended next role/agent: 用户或后续维护者（spec-chief-orchestration 承接：Web Todo 视图、MCP 读/编排写工具、编排 Operation 可观测性）
+Intended next role/agent: 用户或后续维护者（spec-chief-todo-mcp 承接：阶段 0 剩余共性前置、Web Todo 视图、MCP 读/编排写工具）
 
 Branch/worktree: main
 
-Status: DONE（4 票已实现并通过 /code-review，提交后更新）
+Status: DONE（切片已实现并通过 /code-review，提交后更新）
 
-更新时间：2026-08-05 12:35 +0800（本地已提交，未 push）
+更新时间：2026-08-05 12:55 +0800（本地已提交，未 push）
 
 ## 已完成
 
-- **T01 计划 + 派发**：`TaskStore` 扩展 `addItem`/`updateItem`/`setPlanStatus(planId, status, note?)` + `PLAN_STATUS_TRANSITIONS` 门控；`FactoryApplication` 新增 `createTaskPlan`/`listTaskPlans`/`getTaskPlan`/`addTaskItem`/`confirmPlan`/`rejectPlan(planId, note?)`/`runTaskPlan(planId, {concurrency, timeoutSeconds})`。波次调度：依赖阻塞（仅 completed 放行）、失败不阻塞同级、已成功/终态跳过。**细粒度计划锁**：仅计划文件状态机读改写加 `withPlanLock` 短锁串行化，worker 执行（planning/developing 的 runAgent）在锁外并发——`--concurrency` 真实生效（测试用闸门验证 maxActive===2）。`withPlanLock` 成功/失败两路 release，避免 fn 抛错死锁。
-- **T02 规划门脏审计**：`planning` 阶段 worker 被指示只出计划不改文件，`snapshotWorkspaceHash` + `gitStatusShort` 前后快照硬兜底；违背只读 → `planning→failed`（review 注明原因）。
-- **T03 审查门**：`reviewTaskPlan(ownerId, chiefId, planId)` 对 `awaiting_review` 项读 worker `gitDiff` + 计划目录 `<planId>/<itemId>.result`，`redactSecrets` 脱敏后拼进评审提示词喂 Chief（claude/codex 结构化输出经 `parseStructuredResult`），verdict+note 写 `item.review`；解析失败回落「驳回待人工」。`confirmReview`→completed / `rejectReview(note?)`→developing（返工）。Chief 自始至终零 worker 文件系统访问（守 D-017/D-003）。
-- **T04 拆解回落 + orchestrate**：`planWithChief(chiefId, goal)` 新建计划 → 跑 Chief 拆解提示词 → 解析 JSON 数组逐项写 `item-N`；解析失败回落可编辑空计划（不抛错）。`decomposePrompt` 明确依赖用 `item-N`（第 N 个任务）引用，Chief 依赖 id 与生成的 id 对齐。`orchestrate(chiefId, goal, {concurrency, confirm})` 顶层一句话闭环：拆解 → 确认门（confirm 回调，可驳回停在 draft）→ 派发 → 交叉审查；`runTaskPlan` 开头 `store.reconcile()` 处理重启孤独儿（user story 17）。
-- **CLI**：`agentctl plan` 组（list/create/add/get/confirm/reject[-n]/run[--concurrency]/review[--chief]/confirm-review/reject-review[-n]）+ `agentctl chief run <chief-id> "<goal>" [--concurrency]`（打印计划含 prompt 后交互确认）。
-- **验证**：`tsc --noEmit` 全绿；`npm run build` 通过；lint+prettier --max-warnings=0 全绿；单测 `tests/orchestration.test.ts`（21 用例：TaskStore 扩展/编排动作/派发/脏审计/审查门/拆解/orchestrate/真实并发/重启 reconcile）+ `tests/cli-structure.test.ts` 通过。
+- **OperationManager 迁移 `src/web/` → `src/core/`**：零 web 依赖（仅 EventEmitter/AbortController/crypto/core 模块），迁后 `application/` 可用而不违反分层。更新 3 处 import（server.ts、operation-manager.test.ts、web-server.test.ts）。`cancel(id)` 单例在 TASK-021 已存在（T03），本切片直接复用，无行为变更。
+- **编排可观测（spec user story 16/23/25）**：`FactoryApplication` 增加可选 `operationManager` 注入 + `operationManager` getter（懒加载默认 store-backed 实例）。`runTaskPlan` pre-flight 校验（计划未确认/员工不存在/reconcile）留在同步段仍 reject，通过后后台注册 `kind='task_plan'` Operation 并返回 `OperationDto`；派发主循环抽为私有 `dispatchPlan`，逐项 emit 进度事件，`signal` 透传 runAgent（取消传播）+ 循环顶检查 `signal.aborted` 停调度新波次。个别 item 失败不使操作失败（`exitCode:0`，item 级状态是唯一事实源）。`orchestrate` 保持同步（交互确认门），内部 await 派发终态后返回 live `operation` 句柄（`operation?` 可选字段，向后兼容）。新增 `waitOperation(id)`（failed→OPERATION_FAILED / cancelled→CANCELLED）。
+- **错误码**：`AgentCtlErrorCode` 增 `'CANCELLED'`（exit 130，与 OperationManager finishCancelled 一致）。
+- **web 共享实例**：`web/start.ts` 把 `application.operationManager` 传给 `buildWebServer`，编排操作在 web 控制台 operations 列表/API 可见。
+- **CLI**：`plan run` 打印 `操作 <id> 已启动（<state>）` → `waitOperation` → `getTaskPlan` 打印逐项状态；`chief run` 打印 `编排操作 <id> 完成（<state>）`。
+- **验证**：`tsc --noEmit` 全绿；`npm run build` 通过；lint（eslint 无错误）+ prettier（本切片源文件全绿）通过；单测 296/297（唯一失败为既有 date-sensitive `tests/experience.test.ts`，硬编码 2026-08-04，干净树复现，非本任务引入）。`tests/orchestration.test.ts` 新增 4 个可观测性用例 + 既有 21 用例改用 `runPlan` 助手（runTaskPlan→等终态→取计划）。
 
 ## 验证
 
-| 命令/检查          | 结果   | 相关输出                                                                                                            |
-| ------------------ | ------ | ------------------------------------------------------------------------------------------------------------------- |
-| `npm run build`    | 通过   | tsc 全绿 + vite 产物                                                                                                 |
-| `npx tsc --noEmit` | 通过   | 全绿                                                                                                                |
-| `npm test`         | 1 失败 | 292/293 过；唯一失败为既有 date-sensitive `tests/experience.test.ts`（硬编码 2026-08-04，干净树复现，非本任务引入） |
-| lint + prettier    | 通过   | --max-warnings=0 全绿                                                                                                |
-| /code-review       | 通过   | Standards（无硬违规；并发锁/错误路径/重复 find 已修）+ Spec（rejectPlan note/确认门 prompt/reconcile/拆解依赖契约/真并发已修；Operation 可观测性推迟） |
+| 命令/检查          | 结果   | 相关输出                                                                                                |
+| ------------------ | ------ | ------------------------------------------------------------------------------------------------------- |
+| `npm run build`    | 通过   | tsc 全绿 + vite 产物                                                                                    |
+| `npx tsc --noEmit` | 通过   | 全绿                                                                                                    |
+| `npm test`         | 1 失败 | 296/297 过；唯一失败为既有 date-sensitive `tests/experience.test.ts`（硬编码 2026-08-04，非本任务引入） |
+| lint + prettier    | 通过   | eslint 无错误；本切片源文件 prettier 全绿（.agent/*.md 为 HEAD 既有 prettier 脏，已随簿记一并格式化）   |
+| /code-review       | 通过   | 待聚合（Standards + Spec 两轴结论）                                                                     |
 
 ## 安全边界与限制
 
 - 未改动备份/回收站/CC Switch/隔离层语义；worker 工作区保持编排器只读（D-017/D-003 未放开）。
-- **已知缺口（推迟）**：spec 要求编排动作返回 `OperationDto`（进度/取消，user story 16）——当前仅生成 `operationId`/`traceId` 穿线给 runAgent，未注册 OperationStore/OperationManager。属独立可观测性切片，留待后续。
-- 规划门无法强制只读（claude 无只读 flag / codex 写死 workspace-write），强制力来自沙箱 runtime，本项目只有软信任 + 脏审计兜底（spec 已知边界）。
+- **已知缺口（推迟）**：spec user story 16「看到每个任务的状态」当前以计划级 `task_plan` Operation + 逐项 progress 事件表达，item 级状态仍须 `getTaskPlan` 查询；未为每个 item 独立注册 Operation。MCP `run_task_plan`/`cancel_operation` 工具（阶段 3）与 Web Todo 视图（独立切片）未实现——本切片只交付可观测底座，供其消费。
+- `runTaskPlan` 后台派发：sync 调用方必须 `waitOperation(op.id)` 等终态再 `getTaskPlan`，否则读到的是排队态 DTO 快照（orchestrate 内部已正确处理）。
 - 未 push；按用户常驻规则「任务完成即 commit」只提交不推送。

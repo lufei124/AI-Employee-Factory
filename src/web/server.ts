@@ -14,7 +14,7 @@ import { AgentCtlError } from '../core/errors.js';
 import { createAgentInputSchema } from '../core/create-agent.js';
 import { jobConfigSchema } from '../schemas/job-schema.js';
 import type { SkillScope } from '../core/skills.js';
-import { OperationManager } from './operation-manager.js';
+import { OperationManager } from '../core/operation-manager.js';
 import { OperationStore } from '../core/operation-store.js';
 import { createMcpEndpoint } from '../mcp/mcp-server.js';
 

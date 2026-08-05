@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { FactoryApplication } from '../src/application/factory-application.js';
 import { resolveFactoryPaths } from '../src/core/paths.js';
 import { RegistryStore } from '../src/core/registry.js';
-import { OperationManager } from '../src/web/operation-manager.js';
+import { OperationManager } from '../src/core/operation-manager.js';
 import { buildWebServer } from '../src/web/server.js';
 
 const roots: string[] = [];

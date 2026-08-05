@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FactoryApplication } from '../src/application/factory-application.js';
 import { resolveFactoryPaths } from '../src/core/paths.js';
 import { RegistryStore } from '../src/core/registry.js';
+import { OperationStore } from '../src/core/operation-store.js';
 import { TaskStore } from '../src/core/task-store.js';
 import type { LoggedRunResult } from '../src/core/process-runner.js';
 import type { TaskItem } from '../src/schemas/task-schema.js';
@@ -81,6 +82,18 @@ function fakeResult(stdout: string): LoggedRunResult {
 // Chief 拆解/评审走 claude provider，stdout 须为 `{"result":"<JSON 字符串>"}`。
 function claudeResult(text: string): LoggedRunResult {
   return fakeResult(JSON.stringify({ result: text }));
+}
+
+// runTaskPlan 现返回 OperationDto（后台派发）；此助手走完整同步视角：发起 → 等终态 → 取最终计划。
+async function runPlan(
+  app: FactoryApplication,
+  ownerId: string,
+  planId: string,
+  options?: { concurrency?: number },
+): Promise<Awaited<ReturnType<typeof app.getTaskPlan>>> {
+  const operation = await app.runTaskPlan(ownerId, planId, options);
+  await app.waitOperation(operation.id);
+  return app.getTaskPlan(ownerId, planId);
 }
 
 // 通用 mock runAgent：按 task 签名路由到 planning/review/decompose/developing。
@@ -243,7 +256,7 @@ describe('runTaskPlan 派发 (serial/concurrency/deps/skip/fail)', () => {
       finished_at: null,
     };
     const planId = await makeActivePlan(app, [item]);
-    const plan = await app.runTaskPlan('chief', planId);
+    const plan = await runPlan(app, 'chief', planId);
     expect(plan.items[0]?.status).toBe('awaiting_review');
     expect(plan.items[0]?.exit_code).toBe(0);
   });
@@ -276,7 +289,7 @@ describe('runTaskPlan 派发 (serial/concurrency/deps/skip/fail)', () => {
       },
     ];
     const planId = await makeActivePlan(app, items);
-    const plan = await app.runTaskPlan('chief', planId);
+    const plan = await runPlan(app, 'chief', planId);
     expect(plan.items.find((i) => i.id === 'a')?.status).toBe('awaiting_review');
     // b 依赖 a，a 未到 completed 前 b 不启动
     expect(plan.items.find((i) => i.id === 'b')?.status).toBe('pending');
@@ -297,7 +310,7 @@ describe('runTaskPlan 派发 (serial/concurrency/deps/skip/fail)', () => {
       finished_at: null,
     }));
     const planId = await makeActivePlan(app, items);
-    const plan = await app.runTaskPlan('chief', planId);
+    const plan = await runPlan(app, 'chief', planId);
     expect(plan.items.find((i) => i.id === 'a')?.status).toBe('failed');
     expect(plan.items.find((i) => i.id === 'b')?.status).toBe('awaiting_review');
   });
@@ -317,7 +330,7 @@ describe('runTaskPlan 派发 (serial/concurrency/deps/skip/fail)', () => {
       finished_at: null,
     }));
     const planId = await makeActivePlan(app, items);
-    const plan = await app.runTaskPlan('chief', planId, { concurrency: 8 });
+    const plan = await runPlan(app, 'chief', planId, { concurrency: 8 });
     for (const item of plan.items) expect(item.status).toBe('awaiting_review');
   });
 
@@ -354,11 +367,11 @@ describe('runTaskPlan 派发 (serial/concurrency/deps/skip/fail)', () => {
       finished_at: null,
     }));
     const planId = await makeActivePlan(app, items);
-    const runPromise = app.runTaskPlan('chief', planId, { concurrency: 2 });
+    const operation = await app.runTaskPlan('chief', planId, { concurrency: 2 });
     // 等两个 worker 都进入 developing 并发窗口（阻塞在闸门上）再放行。
     await vi.waitFor(() => expect(active).toBe(2), { timeout: 5000 });
     releaseAll();
-    await runPromise;
+    await app.waitOperation(operation.id);
     expect(maxActive).toBe(2);
   });
 
@@ -378,7 +391,7 @@ describe('runTaskPlan 派发 (serial/concurrency/deps/skip/fail)', () => {
       await store.transitionItem(planId, 't1', to as never);
     }
     // runTaskPlan 开头 reconcile：孤儿 developing → failed，随后跳过（终态）。
-    const plan = await app.runTaskPlan('chief', planId);
+    const plan = await runPlan(app, 'chief', planId);
     const item = plan.items.find((i) => i.id === 't1')!;
     expect(item.status).toBe('failed');
     expect(item.review?.note).toContain('孤儿');
@@ -408,7 +421,7 @@ describe('规划门脏审计 (T02)', () => {
       finished_at: null,
     };
     const planId = await makeActivePlan(app, [item]);
-    const plan = await app.runTaskPlan('chief', planId);
+    const plan = await runPlan(app, 'chief', planId);
     expect(plan.items[0]?.status).toBe('failed');
     expect(plan.items[0]?.review?.verdict).toBe('rejected');
   });
@@ -428,7 +441,7 @@ describe('规划门脏审计 (T02)', () => {
       finished_at: null,
     };
     const planId = await makeActivePlan(app, [item]);
-    const plan = await app.runTaskPlan('chief', planId);
+    const plan = await runPlan(app, 'chief', planId);
     expect(plan.items[0]?.status).toBe('awaiting_review');
   });
 });
@@ -456,7 +469,7 @@ describe('审查门 (T03, D-017 单向搬运)', () => {
       finished_at: null,
     };
     const planId = await makeActivePlan(app, [item]);
-    await app.runTaskPlan('chief', planId);
+    await runPlan(app, 'chief', planId);
     const reviewed = await app.reviewTaskPlan('chief', 'chief', planId);
     expect(reviewed.items[0]?.review).toEqual({ verdict: 'approved', note: '很好' });
     // 审查后仍停留 awaiting_review（待人工确认合并）
@@ -478,7 +491,7 @@ describe('审查门 (T03, D-017 单向搬运)', () => {
       finished_at: null,
     };
     const planId = await makeActivePlan(app, [item]);
-    await app.runTaskPlan('chief', planId);
+    await runPlan(app, 'chief', planId);
     const reviewed = await app.reviewTaskPlan('chief', 'chief', planId);
     expect(reviewed.items[0]?.review?.verdict).toBe('rejected');
   });
@@ -498,7 +511,7 @@ describe('审查门 (T03, D-017 单向搬运)', () => {
       finished_at: null,
     }));
     const planId = await makeActivePlan(app, items);
-    await app.runTaskPlan('chief', planId);
+    await runPlan(app, 'chief', planId);
     await app.reviewTaskPlan('chief', 'chief', planId);
 
     const merged = await app.confirmReview('chief', planId, 't1');
@@ -571,5 +584,100 @@ describe('orchestrate 顶层一句话闭环', () => {
     expect(plan.status).toBe('draft');
     expect(plan.items).toHaveLength(1);
     expect(plan.items[0]?.status).toBe('pending');
+  });
+});
+
+describe('编排 Operation 可观测性 (spec user story 16)', () => {
+  it('runTaskPlan 返回 OperationDto 并注册进 OperationManager（可查/可等）', async () => {
+    const { app } = await setupApp();
+    mockRunAgent(app);
+    const planId = await makeActivePlan(app, [
+      { id: 't1', title: '任务一', agent: 'worker-a', prompt: '执行', status: 'pending' as const },
+    ]);
+    const operation = await app.runTaskPlan('chief', planId);
+    expect(operation.id).toBeTruthy();
+    expect(operation.type).toBe('task_plan');
+    expect(operation.agentId).toBe('chief');
+    expect(operation.state).toBe('queued'); // 后台派发，立即返回排队态
+
+    // 同一实例可查、可等终态
+    await app.waitOperation(operation.id);
+    const after = app.operationManager.get(operation.id);
+    expect(after.state).toBe('succeeded');
+    expect(app.operationManager.list().some((op) => op.id === operation.id)).toBe(true);
+    // 派发结果仍可经原本的 getTaskPlan 取回
+    const plan = await app.getTaskPlan('chief', planId);
+    expect(plan.items[0]?.status).toBe('awaiting_review');
+  });
+
+  it('编排派发落盘一条 operation 摘要到 OperationStore（可审计）', async () => {
+    const { app } = await setupApp();
+    mockRunAgent(app);
+    const planId = await makeActivePlan(app, [
+      { id: 't1', title: '任务一', agent: 'worker-a', prompt: '执行', status: 'pending' as const },
+    ]);
+    const operation = await app.runTaskPlan('chief', planId);
+    await app.waitOperation(operation.id);
+
+    const summaries = await new OperationStore(app.paths.logsDir).query({ kind: 'task_plan' });
+    const record = summaries.find((s) => s.operation_id === operation.id);
+    expect(record).toBeTruthy();
+    expect(record?.agent_id).toBe('chief');
+    expect(record?.exit_code).toBe(0);
+  });
+
+  it('orchestrate 返回 operation 句柄（confirmed 时）', async () => {
+    const { app } = await setupApp();
+    mockRunAgent(app, {
+      decomposeText: JSON.stringify([{ title: '任务一', agent: 'worker-a', prompt: '执行 A' }]),
+      reviewText: '{"verdict":"approved","note":"通过"}',
+    });
+    const result = await app.orchestrate('chief', '实现一个功能');
+    expect(result.confirmed).toBe(true);
+    expect(result.operation?.type).toBe('task_plan');
+    expect(result.operation?.state).toBe('succeeded');
+  });
+
+  it('把父 task_plan 的 traceId 穿给各 worker 的 runAgent（observability 关联）', async () => {
+    const { app } = await setupApp();
+    const workerTraceIds: string[] = [];
+    vi.spyOn(app, 'runAgent').mockImplementation(async (id, task, _timeout, options) => {
+      if (!task.includes('规划阶段')) workerTraceIds.push(options?.traceId ?? '');
+      return { ...fakeResult('完成。'), exitCode: 0 };
+    });
+    const planId = await makeActivePlan(app, [
+      { id: 't1', title: '任务一', agent: 'worker-a', prompt: '执行', status: 'pending' as const },
+      { id: 't2', title: '任务二', agent: 'worker-b', prompt: '执行', status: 'pending' as const },
+    ]);
+    const operation = await app.runTaskPlan('chief', planId);
+    await app.waitOperation(operation.id);
+
+    expect(workerTraceIds.length).toBeGreaterThan(0);
+    // 每个 worker 的 developing 运行都沿用父操作 trace（而非各自随机 trace）
+    expect(workerTraceIds.every((t) => t === operation.traceId)).toBe(true);
+  });
+
+  it('cancel(id) 取消运行中的派发，waitOperation 抛 CANCELLED', async () => {
+    const { app } = await setupApp();
+    let releaseAll!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseAll = resolve;
+    });
+    vi.spyOn(app, 'runAgent').mockImplementation(async (id, task) => {
+      if (task.includes('规划阶段')) return fakeResult('计划');
+      await gate; // 阻塞在 developing 并发窗口，模拟进行中
+      return { ...fakeResult('完成。'), exitCode: 0 };
+    });
+    const planId = await makeActivePlan(app, [
+      { id: 't1', title: '任务一', agent: 'worker-a', prompt: '执行', status: 'pending' as const },
+    ]);
+    const operation = await app.runTaskPlan('chief', planId);
+    await vi.waitFor(() => expect(app.operationManager.get(operation.id).state).toBe('running'), {
+      timeout: 5000,
+    });
+    app.operationManager.cancel(operation.id);
+    releaseAll();
+    await expect(app.waitOperation(operation.id)).rejects.toThrow('已取消');
+    expect(app.operationManager.get(operation.id).state).toBe('cancelled');
   });
 });

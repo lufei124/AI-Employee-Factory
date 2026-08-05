@@ -33,6 +33,7 @@ import { JobStore } from '../core/scheduler.js';
 import { SkillService, type SkillMetadata, type SkillScope } from '../core/skills.js';
 import { SkillStoreService } from '../core/skill-store.js';
 import { OperationStore, type OperationSummary } from '../core/operation-store.js';
+import { OperationManager, type OperationDto } from '../core/operation-manager.js';
 import { PruneService, type PruneOptions, type PruneResult } from '../core/prune.js';
 import { TrashService, type TrashEntryDto, type TrashPreview } from '../core/trash.js';
 import { ProcessRunner, type LoggedRunOptions } from '../core/process-runner.js';
@@ -243,10 +244,27 @@ export class FactoryApplication {
     }
   }
 
+  private injectedOperationManager: OperationManager | undefined;
+
+  // 编排 Operation 可观测（spec user story 16）：编排动作（runTaskPlan/orchestrate）注册一个
+  // Operation 供查询进度/取消，并返回 OperationDto。CLI/web 可注入同一实例，使编排操作在
+  // agentctl operations query 与 web 控制台 operations 列表中都可见。未注入时懒加载默认实例。
+  get operationManager(): OperationManager {
+    if (!this.injectedOperationManager) {
+      this.injectedOperationManager = new OperationManager({
+        store: new OperationStore(this.paths.logsDir),
+      });
+    }
+    return this.injectedOperationManager;
+  }
+
   constructor(
     readonly paths: FactoryPaths,
     readonly registry: RegistryStore,
-  ) {}
+    options: { operationManager?: OperationManager } = {},
+  ) {
+    this.injectedOperationManager = options.operationManager;
+  }
 
   async factoryStatus(): Promise<{ initialized: boolean }> {
     return {
@@ -608,11 +626,13 @@ export class FactoryApplication {
   // 派发计划：串行（可选并发）、依赖阻塞、失败不阻塞同级、已成功跳过、终态项跳过。
   // 每项依次 pending→queued→planning（规划门脏审计）→awaiting_confirmation（计划级已确认故自动推进）
   // →developing（worker 实际执行）→awaiting_review / failed。deps 依赖仅 completed 才放行。
+  // 可观测性（spec user story 16）：注册一个 kind='task_plan' 的 Operation 在后台派发，返回
+  // OperationDto 供 follow 进度/取消；同步调用方用 waitOperation(id) 等终态后再 getTaskPlan 取结果。
   async runTaskPlan(
     ownerId: string,
     planId: string,
     options: { concurrency?: number; timeoutSeconds?: number } = {},
-  ): Promise<TaskPlan> {
+  ): Promise<OperationDto> {
     const concurrency = Math.max(1, Math.min(8, Math.floor(options.concurrency ?? 1)));
     const timeout = options.timeoutSeconds ?? 900;
     const store = await this.plans(ownerId);
@@ -627,6 +647,36 @@ export class FactoryApplication {
       );
     for (const item of plan.items) await this.getAgent(item.agent); // 校验全部执行员工存在
 
+    // pre-flight 校验通过后，派发主循环在后台 Operation 内执行（可轮询/取消）；校验失败仍在此同步
+    // 抛出（reject），不进入后台——与先前同步语义一致。个别 item 失败（dev.exitCode≠0）不使操作
+    // 失败——派发循环完整跑完即视为操作成功，item 级状态是唯一事实源（见 plan.items）。
+    return this.operationManager.start('task_plan', ownerId, async ({ signal, emit, traceId }) => {
+      // 把父 Operation 的 traceId 穿给每个 worker 的 runAgent，使 task_plan 操作与其排程的
+      // 各 agent 运行落在同一条 trace（observability 关联），而非各自孤立的随机 trace。
+      await this.dispatchPlan(ownerId, planId, concurrency, timeout, signal, emit, traceId);
+      return { exitCode: 0 };
+    });
+  }
+
+  // 波次调度主循环：每波启动最多 concurrency 个「依赖已齐且未启动」的项，全部完成后进入下一波。
+  // dispatchItem 内部只用短锁串行化计划文件的状态机读改写，worker 执行阶段不加锁——故同波
+  // 内互不依赖的任务项可真正并发执行（--concurrency 生效）。signal 透传给正在运行的 worker
+  // （取消 Operation 时中止当前轮），emit 上报进度供 Operation 事件流观测；traceId 为父操作
+  // 的 trace，穿给各 worker 使关联。进度按「已完成项」计而非「已启动项」——避免最后一项刚
+  // 启动就报 100% 的误导。
+  private async dispatchPlan(
+    ownerId: string,
+    planId: string,
+    concurrency: number,
+    timeout: number,
+    signal: AbortSignal | undefined,
+    emit: (event: { kind: 'progress'; progress: number; message: string }) => void,
+    parentTraceId: string,
+  ): Promise<TaskPlan> {
+    const store = await this.plans(ownerId);
+    let plan = await store.get(planId);
+    const total = plan.items.length;
+    const pct = (done: number) => (total > 0 ? Math.round((done / total) * 100) : 100);
     const runnable = (item: TaskItem) =>
       item.status !== 'completed' &&
       item.status !== 'awaiting_review' &&
@@ -637,21 +687,55 @@ export class FactoryApplication {
         const depItem = plan.items.find((candidate) => candidate.id === dep);
         return depItem?.status === 'completed';
       });
+    const doneCount = (p: TaskPlan) =>
+      p.items.filter(
+        (item) =>
+          item.status === 'completed' ||
+          item.status === 'awaiting_review' ||
+          item.status === 'failed' ||
+          item.status === 'cancelled',
+      ).length;
 
-    // 波次调度：每波启动最多 concurrency 个「依赖已齐且未启动」的项，全部完成后进入下一波。
-    // dispatchItem 内部只用短锁串行化计划文件的状态机读改写，worker 执行阶段不加锁——故同波
-    // 内互不依赖的任务项可真正并发执行（--concurrency 生效）。
     const started = new Set<string>();
     for (;;) {
+      if (signal?.aborted) break; // 取消：不再调度新波次（当前波跑完后 operation 进入 cancelled）
       plan = await store.get(planId);
       const wave = plan.items
         .filter((item) => runnable(item) && depsDone(item) && !started.has(item.id))
         .slice(0, concurrency);
       if (wave.length === 0) break; // 无可启动项（全部结束或被失败依赖阻塞）
       for (const item of wave) started.add(item.id);
-      await Promise.all(wave.map((item) => this.dispatchItem(store, planId, item.id, timeout)));
+      emit({
+        kind: 'progress',
+        progress: pct(doneCount(plan)),
+        message: `开始执行 ${wave.map((w) => w.id).join(', ')}`,
+      });
+      await Promise.all(
+        wave.map((item) =>
+          this.dispatchItem(store, planId, item.id, timeout, signal, parentTraceId),
+        ),
+      );
+      plan = await store.get(planId);
+      emit({
+        kind: 'progress',
+        progress: pct(doneCount(plan)),
+        message: `已完成 ${doneCount(plan)}/${total} 项`,
+      });
     }
     return store.get(planId);
+  }
+
+  // 等一个 Operation 到终态；失败/取消抛错（供同步调用方在 await 后台派发后感知结果）。
+  async waitOperation(id: string): Promise<void> {
+    const manager = this.operationManager;
+    await manager.wait(id);
+    const dto = manager.get(id);
+    if (dto.state === 'failed') {
+      throw new AgentCtlError('OPERATION_FAILED', dto.error?.message ?? '操作失败。');
+    }
+    if (dto.state === 'cancelled') {
+      throw new AgentCtlError('CANCELLED', '操作已取消。');
+    }
   }
 
   // 派发单任务项：推进状态 + 规划门脏审计 + worker 执行。可安全续跑（处理 pending/queued/planning/
@@ -663,9 +747,12 @@ export class FactoryApplication {
     planId: string,
     itemId: string,
     timeoutSeconds: number,
+    signal: AbortSignal | undefined,
+    parentTraceId: string,
   ): Promise<void> {
     const operationId = randomUUID();
-    const traceId = randomUUID();
+    // 无父操作（直接调用）时退化为每条目独立 trace；编排派发时沿用父 task_plan 的 trace 关联。
+    const traceId = parentTraceId || randomUUID();
     const lockKey = `${store.plansDir}/${planId}`;
 
     // 阶段 1（锁内）：pending→queued→planning，返回该 item 推进后的状态。
@@ -694,6 +781,7 @@ export class FactoryApplication {
       const planning = await this.runAgent(item.agent, planningPrompt(item), timeoutSeconds, {
         operationId,
         traceId,
+        ...(signal ? { signal } : {}),
       });
       const afterHash = await snapshotWorkspaceHash(workspace);
       const afterGit = await gitStatusShort(workspace);
@@ -732,6 +820,7 @@ export class FactoryApplication {
     const dev = await this.runAgent(item.agent, item.prompt, timeoutSeconds, {
       operationId,
       traceId,
+      ...(signal ? { signal } : {}),
     });
 
     // 阶段 4（锁内）：提交执行结果——成功后记录 worker stdout（供审查门单向搬运）→awaiting_review。
@@ -851,21 +940,36 @@ export class FactoryApplication {
   }
 
   // 顶层一句话闭环：planWithChief → 等确认（confirm 回调）→ 派发 → 交叉审查。审查合并留给调用方。
+  // 派发以后台 Operation 执行；orchestrate 自身保持同步（交互确认门），内部 await 派发终态后返回
+  // 最终计划并附 operation（OperationDto，供进度/取消观测）。
   async orchestrate(
     chiefId: string,
     goal: string,
     options: { concurrency?: number; confirm?: (plan: TaskPlan) => Promise<boolean> } = {},
-  ): Promise<{ plan: TaskPlan; source: 'chief' | 'manual-fallback'; confirmed: boolean }> {
+  ): Promise<{
+    plan: TaskPlan;
+    source: 'chief' | 'manual-fallback';
+    confirmed: boolean;
+    operation?: OperationDto;
+  }> {
     const { plan, source } = await this.planWithChief(chiefId, goal);
     const confirm = options.confirm ?? (async () => true);
     const ok = await confirm(plan);
     if (!ok) return { plan, source, confirmed: false };
     await this.confirmPlan(chiefId, plan.id);
-    await this.runTaskPlan(chiefId, plan.id, {
+    const operation = await this.runTaskPlan(chiefId, plan.id, {
       ...(options.concurrency !== undefined ? { concurrency: options.concurrency } : {}),
     });
+    await this.waitOperation(operation.id);
+    // 取 live 终态 DTO（runTaskPlan 返回的只是排队态快照）
+    const finalOperation = this.operationManager.get(operation.id);
     await this.reviewTaskPlan(chiefId, chiefId, plan.id);
-    return { plan: await this.getTaskPlan(chiefId, plan.id), source, confirmed: true };
+    return {
+      plan: await this.getTaskPlan(chiefId, plan.id),
+      source,
+      confirmed: true,
+      operation: finalOperation,
+    };
   }
 
   async chat(id: string): Promise<number> {
