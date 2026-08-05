@@ -122,6 +122,33 @@ describe('员工自我进化（TASK-029）', () => {
     expect(status.stdout).not.toContain('ROLE.md');
   });
 
+  it('runAgent 带 skipSelfEvolution（只读探针）时不提交文档变更', async () => {
+    const { app, paths } = await setup();
+    const workspace = path.join(paths.workspaceRoot, 'worker-a');
+    const roleFile = path.join(workspace, 'agent', 'ROLE.md');
+
+    // 模拟只读探针（planning/review/decompose 前置 skipSelfEvolution:true）：
+    // 即使员工在探针中改了 ROLE.md，也不得被当作合法进化提交。
+    const { ProcessRunner } = await import('../src/core/process-runner.js');
+    vi.spyOn(ProcessRunner.prototype, 'runLogged').mockImplementation(async () => {
+      await fs.appendFile(roleFile, '\n- 规划阶段的违规修改。\n');
+      return fakeResult('计划：分两步完成。');
+    });
+
+    await app.runAgent('worker-a', '规划阶段：只出计划', 900, { skipSelfEvolution: true });
+
+    const log = await gitLog(workspace, 'agent/ROLE.md');
+    expect(log.some((line) => line.includes('evolve:'))).toBe(false);
+    // 变更仍处于未提交（dirty）状态，暴露给人工核对。
+    const status = await execa('git', ['status', '--short'], {
+      cwd: workspace,
+      shell: false,
+      extendEnv: false,
+      reject: false,
+    });
+    expect(status.stdout).toContain('ROLE.md');
+  });
+
   it('规划门脏审计不豁免 agent/*.md：planning 改 ROLE.md → 任务失败', async () => {
     const { app, paths } = await setup();
     const workspace = path.join(paths.workspaceRoot, 'worker-a');

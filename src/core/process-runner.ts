@@ -35,6 +35,9 @@ export interface LoggedRunOptions {
   structured?: boolean;
   /** OP1 Stage C：true 时把会话摘要写入 transcript.jsonl（0600，best-effort）。 */
   transcript?: boolean;
+  /** TASK-029 自我进化：true 表示本次 run 是只读编排探针（规划/审查/拆解），
+   *  runAgent 成功后的 commitSelfEvolution 跳过——避免把规划门违规的改动当作合法进化提交。 */
+  skipSelfEvolution?: boolean;
   /** 摘要收集器覆盖（默认内部收集全部 stdout 行；测试可注入）。 */
   transcriptSummary?: (input: {
     agentId: string;

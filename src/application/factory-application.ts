@@ -139,30 +139,27 @@ type DispatchEmit = (event: {
   summary?: string;
 }) => void;
 
+/** 任务项是否已到达终态（完成/待审/失败/取消）——进度与摘要共用的判定。 */
+function isDone(item: TaskItem): boolean {
+  return (
+    item.status === 'completed' ||
+    item.status === 'awaiting_review' ||
+    item.status === 'failed' ||
+    item.status === 'cancelled'
+  );
+}
+
 /** 终态项占比（0-100），与 dispatchPlan 的 pct 计算一致。 */
 function progressOf(plan: TaskPlan): number {
   const total = plan.items.length;
   if (total === 0) return 100;
-  const done = plan.items.filter(
-    (item) =>
-      item.status === 'completed' ||
-      item.status === 'awaiting_review' ||
-      item.status === 'failed' ||
-      item.status === 'cancelled',
-  ).length;
-  return Math.round((done / total) * 100);
+  return Math.round((plan.items.filter(isDone).length / total) * 100);
 }
 
 /** 从计划任务项状态聚合一行摘要（「N/M 完成 · 执行中 t1,t2 · 等待中 1」），供 OperationDto.summary。 */
 function summaryOf(plan: TaskPlan): string {
   const total = plan.items.length;
-  const done = plan.items.filter(
-    (item) =>
-      item.status === 'completed' ||
-      item.status === 'awaiting_review' ||
-      item.status === 'failed' ||
-      item.status === 'cancelled',
-  ).length;
+  const done = plan.items.filter(isDone).length;
   const active = plan.items
     .filter((item) => item.status === 'developing' || item.status === 'planning')
     .map((item) => item.id);
@@ -454,8 +451,11 @@ export class FactoryApplication {
     await atomicWriteFile(file, content, 0o644);
     await this.knowledgeIndex(registry).then((index) => index.ingest());
     // TASK-029 自我进化：知识（含经验提取写回 knowledge/lessons/）一并自动单文件提交。
+    // 仅在工作区有该文件变更时提交（内容与已提交版本相同时跳过，避免空 evolve: 提交）。
     const rel = path.relative(root, file);
-    await this.commitAgentFile(registry.workspace.path, `knowledge/${rel}`, 'evolve: 更新知识');
+    if ((await gitStatusShort(registry.workspace.path, `knowledge/${rel}`)).length > 0) {
+      await this.commitAgentFile(registry.workspace.path, `knowledge/${rel}`, 'evolve: 更新知识');
+    }
     return { relPath: rel, content };
   }
 
@@ -647,7 +647,10 @@ export class FactoryApplication {
       .then(async (result) => {
         await this.maybeExtractExperience(id, agent, result.transcriptFile);
         // TASK-029 自我进化：任务执行结束后检测并单文件提交员工自维护文档变更。
-        await this.commitSelfEvolution(agent, registry.workspace.path);
+        // 只读编排探针（规划/审查/拆解，skipSelfEvolution）不提交——规划门违规改动不得被当作合法进化提交。
+        if (!options.skipSelfEvolution) {
+          await this.commitSelfEvolution(agent, registry.workspace.path);
+        }
         return result;
       });
   }
@@ -878,6 +881,8 @@ export class FactoryApplication {
       const planning = await this.runAgent(item.agent, planningPrompt(item), timeoutSeconds, {
         operationId,
         traceId,
+        // 只读探针：规划门违规改动不得被 commitSelfEvolution 当作合法进化提交。
+        skipSelfEvolution: true,
         ...(signal ? { signal } : {}),
       });
       const afterHash = await snapshotWorkspaceHash(workspace);
@@ -973,6 +978,8 @@ export class FactoryApplication {
       const result = await this.runAgent(chiefId, reviewPrompt(plan, item, diff, stdout), 900, {
         operationId: randomUUID(),
         traceId: randomUUID(),
+        // 只读探针：审查不触发自我进化提交。
+        skipSelfEvolution: true,
       });
       const text = parseStructuredResult(
         chiefAgent.runtime.provider,
@@ -1019,6 +1026,8 @@ export class FactoryApplication {
     const result = await this.runAgent(chiefId, decomposePrompt(goal, agentIds), 900, {
       operationId: randomUUID(),
       traceId: randomUUID(),
+      // 只读探针：拆解不触发自我进化提交。
+      skipSelfEvolution: true,
     });
     const text = parseStructuredResult(
       agent.runtime.provider,

@@ -12,7 +12,7 @@ Intended next role/agent: 用户或后续维护者（TASK-029 已实施并提交
 
 Branch/worktree: main
 
-Status: 已完成 Phase 1 + Phase 2（全部实现 + 测试 + 文档登记；/code-review 双轴评审进行中）
+Status: 已完成 Phase 1 + Phase 2 + /code-review 双轴（修复后全量验证通过，已提交 main）
 
 更新时间：2026-08-05 18:00 +0800
 
@@ -32,17 +32,19 @@ Status: 已完成 Phase 1 + Phase 2（全部实现 + 测试 + 文档登记；/co
   - `factory-application.ts`：`prepareRuntime` 调用 `ensureAgentDocsAllowed(workspace, [四文档路径])`；新增 `commitAgentFile`（best-effort 单文件提交）+ `commitSelfEvolution`（遍历四文档 gitStatusShort 有变更则 `evolve: 更新 <basename>`）；挂载 runAgent/runChat/runJob 三处 `.then()`；`knowledgeWrite` 内原子写+ingest 后提交 `evolve: 更新知识`。
   - tests/self-evolution.test.ts（新，4 用例）：runAgent 后 ROLE.md 单文件提交（mock ProcessRunner.runLogged 走真实后处理链）/ 规划门不豁免 agent/*.md / ensureAgentDocsAllowed 幂等 / knowledgeWrite 提交。GIT_CONFIG_GLOBAL + .cc-switch.env 0600 预置凭据基建。
 
-- **文档**：docs/DECISIONS.md D-026、.agent/TASK_BOARD.md（TASK-029 登记）、.agent/FILE_LOCKS.md（TASK-028 释放 + TASK-029 锁）、docs/ARCHITECTURE.md / README.md（待补一句）。
+- **文档**：docs/DECISIONS.md D-026、docs/ARCHITECTURE.md（D-026 段）、README.md（自我进化 + 进度行）、.agent/TASK_BOARD.md（TASK-029 登记）、.agent/FILE_LOCKS.md（TASK-028 释放 + TASK-029 锁）。
+
+- **/code-review 双轴（已完结）**：Standards 0 硬违规、3 判断性气味（progressOf/summaryOf 重复终态判定、四文档数组重复、CLI 直取 operationManager 而非 orchestrate seam）→ 已修复重复判定（抽 `isDone`）；CLI seam 系计划明确指定、保留。Spec 2 轻微缺陷 → 已修复：① 只读探针（planning/review/decompose）加 `skipSelfEvolution:true`，规划门违规改动不再被 commitSelfEvolution 当作合法 `evolve:` 提交（+回归测试）；② knowledgeWrite 加 gitStatusShort 变更守卫，内容相同不再产生空 `evolve:` 提交。
 
 ## 验证
 
-| 命令/检查                                     | 结果   | 相关输出                                          |
-| --------------------------------------------- | ------ | ------------------------------------------------- |
-| `npx tsc --noEmit`                            | 通过   | 全绿                                              |
-| `npm run lint`（eslint+prettier）             | 通过   | 全绿                                              |
-| `npm test`                                    | 342 过 | 44 文件全绿（+4 self-evolution +3 orchestration） |
-| `npx vitest run tests/self-evolution.test.ts` | 4 过   | 单文件提交/规划门不豁免/幂等/knowledge 提交       |
-| `/code-review`                                | 待办   | 双轴评审 + 修复 + 最终提交                        |
+| 命令/检查                                     | 结果   | 相关输出                                                       |
+| --------------------------------------------- | ------ | -------------------------------------------------------------- |
+| `npx tsc --noEmit`                            | 通过   | 全绿                                                           |
+| `npm run lint`（eslint+prettier）             | 通过   | 全绿                                                           |
+| `npm test`                                    | 343 过 | 44 文件全绿（+5 self-evolution +3 orchestration）              |
+| `npx vitest run tests/self-evolution.test.ts` | 5 过   | 提交/skipSelfEvolution 不提交/规划门不豁免/幂等/knowledge 提交 |
+| `/code-review`                                | 完成   | Standards 0 硬违规 / Spec 缺陷已修复                           |
 
 ## 安全边界与限制
 
@@ -51,4 +53,5 @@ Status: 已完成 Phase 1 + Phase 2（全部实现 + 测试 + 文档登记；/co
 - **规划门不豁免 agent/\*.md**：规划阶段改 `agent/*.md` 与改任意文件一样判违规→任务失败（用户拍板）。
 - **员工不可扩大自身权限**：claude 侧引导明确「不可改 `.claude/settings.json`」。
 - **config_hash 只含 runtime 块**：员工改 `agent/*.md` 不触发漂移。
-- 已提交 Phase 1（df9a7a6）；Phase 2 待 /code-review 后提交；未 push，按用户常驻规则等待明确要求。
+- **只读探针不提交自我进化**：仅 real runAgent/runChat/runJob 触发 commitSelfEvolution；planning/review/decompose 探针（skipSelfEvolution:true）不提交，规划门违规改动保持 dirty 暴露。
+- 已提交 Phase 1（df9a7a6）、Phase 2（57c1fe4）、review 修复（待提交）；未 push，按用户常驻规则等待明确要求。
