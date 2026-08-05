@@ -269,7 +269,7 @@ agentctl archive user-operations
 
 ## 当前限制与 Roadmap
 
-v1 不包含常驻 Web 服务、局域网/远程访问、账号系统、浏览器内终端、多 Agent 共享机器人 Router、Agent 自由互聊、云端多租户、Skill 市场、生产数据写入、知识图谱或 systemd 实现。后续优先项是 systemd adapter、显式 runtime 迁移工作流、可选的加密 Secret provider 和多 Agent 协调层。
+v1 不包含常驻 Web 服务、局域网/远程访问、账号系统、浏览器内终端、多 Agent 共享机器人 Router、Agent 自由互聊、云端多租户、Skill 市场、生产数据写入、知识图谱或 systemd 实现。已落地：Chief 主管编排（拆解→计划确认门→波次派发→交叉审查单向搬运→人工合并）与 MCP 接入（`POST /mcp`，静态 bearer，13 个读 + 编排写工具，可让 Claude Code / Cursor / VS Code 驱动编排）。后续优先项是 systemd adapter、显式 runtime 迁移工作流、可选的加密 Secret provider、Web Todo 视图与 MCP 增强路径（请求内 SSE progress / 推送订阅）。
 
 ## 开发验证
 

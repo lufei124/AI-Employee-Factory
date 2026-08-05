@@ -62,15 +62,12 @@ describe('MCP transmit + static bearer auth (T11 / D-018)', () => {
       payload: initializePayload(),
     });
     expect(response.statusCode).toBe(200);
-    // Accept 含 text/event-stream 时 transport 以 SSE 帧返回 `event: message\ndata: <json>`。
-    const payload = response.payload as string;
-    const dataLine = payload.split('\n').find((line) => line.startsWith('data:')) ?? '';
-    const body = JSON.parse(dataLine.slice('data:'.length).trim()) as {
-      jsonrpc: string;
-      result?: { protocolVersion: string };
-    };
+    // enableJsonResponse：主路径轮询（spec 阶段 3「SSE→MCP 主路径轮询」），
+    // POST 请求以 JSON-RPC 响应体返回，而非 SSE 帧。后续请求须带 mcp-session-id。
+    const body = response.json<{ jsonrpc: string; result?: { protocolVersion: string } }>();
     expect(body.jsonrpc).toBe('2.0');
     expect(body.result?.protocolVersion).toBe('2025-06-18');
+    expect((response.headers['mcp-session-id'] as string | undefined)?.length).toBeGreaterThan(0);
   });
 
   it('rejects a request with a missing token (401)', async () => {

@@ -116,7 +116,7 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
   const mcpToken = options.enableMcp
     ? (options.mcpToken ?? randomBytes(32).toString('base64url'))
     : undefined;
-  const mcp = options.enableMcp ? createMcpEndpoint() : undefined;
+  const mcp = options.enableMcp ? createMcpEndpoint(options.application) : undefined;
   void server.register(cookie);
   void server.register(multipart, {
     preservePath: true,

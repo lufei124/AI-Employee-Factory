@@ -163,6 +163,15 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 - 边界：MCP 是同一 loopback 边界上的第二个认证面——D-005「不提供账号系统」针对 Web 的语义不变，MCP 加 bearer 不改其语义（仍无账号、仍 loopback-only）。`/mcp` 不在 `/api/v1/*` 的 CSRF 钩子范围内（server.ts onRequest L136 对非 /api/v1/ 直接 return），互不干扰。
 - 原因：用户最初倾向「OAuth 2.1 为主」，但经逐包核实，`@modelcontextprotocol/server@2.0.0` 只提供 **Resource Server（token 校验）侧**（`OAuthTokenVerifier` 接口、`verifyBearerToken`、RFC 9728 metadata），**不含 Authorization Server**——无 token 签发、无 DCR、无授权码流程，且 `@modelcontextprotocol/oauth` 包不存在（404）。「OAuth 为主」意味着从零自建 AS，远超 MCP 最小切片。Static bearer 是 MCP 三端（Claude Code/Cursor/VS Code）共同支持的最低公分母，先把能力接通。实现时另核实 `@modelcontextprotocol/fastify@2.0.0` 的 `createMcpFastifyApp` 会自建独立 Fastify 实例（无法挂进既有 /api/v1 控制台），且 `@modelcontextprotocol/server` 的 bearer 校验叠加非必要 OAuth 依赖链，故以 `@modelcontextprotocol/sdk` 的 StreamableHTTP transport + 手写恒定时间 bearer 落地（D-018 决定行据此于实施期修订）。OAuth AS 留作独立后续阶段。
 
+## D-021：MCP 工具集——读 + 编排写，单一应用 seam，JSON 主路径响应
+
+- 状态：Accepted（已实施，T12/T13）
+- 日期：2026-08-05
+- 决定：在 D-018 的 MCP 端点注册 **13 个工具**——读 8：`list_agents`/`get_agent`/`list_operations`/`get_operation`/`list_jobs`/`list_skills`/`read_latest_log`/`knowledge_recall`；编排写 5：`create_task_plan`/`run_task_plan`/`approve_plan`/`review_task_plan`/`cancel_operation`。工具是 `FactoryApplication` 的**薄适配器**（`McpBackend` 接口注入 `options.application`），穿过应用编排层单一入口，与 Web/CLI 共享同一行为（spec 阶段 3 的测试 seam 原则）。`run_task_plan` 返回排队态 `OperationDto`，客户端轮询 `get_operation`（主路径轮询）；`cancel_operation` 复用 `operationManager.cancel(id)`。
+- **JSON 主路径响应（偏离 spec 措辞的 SSE→MCP）**：transport 以 `enableJsonResponse: true` 运行，POST JSON-RPC 请求返回 JSON 响应体（而非 SSE 帧），简化轮询客户端集成；GET `/mcp` 的 SSE 流保留。spec 阶段 3 的「SSE→MCP / 主路径轮询 = 工具返回 OperationDto + 轮询 get_operation」语义不变，仅传输槽位从 SSE 帧改为 JSON 响应。客户端仍须在 initialize 后携带 `mcp-session-id`。
+- 边界：脱敏约束由应用 seam 保证——`AgentConfig`/`RegistryAgent` 均不含原始 Secret（token/app_secret 不进入便携配置），MCP 层不新增任何 secret 读取面；测试固定「读工具不泄露注入工作区的 secret 形态 token」作为回归守卫。`list_operations`/`run_task_plan`/`read_latest_log` 的过滤/并发/行长参数为 spec 之外的合理性 affordance，不改变 spec 工具语义。
+- 原因：spec 阶段 3 的 grilling Q9 明确读+编排写工具集；thin-adapter 保证三面（CLI/Web/MCP）共用同一行为与脱敏约束，避免 MCP 形成第二套逻辑。JSON 主路径响应降低 MCP 客户端（Claude Code/Cursor/VS Code）轮询成本，SSE 增强路径（请求内 progress）与推送路径（subscriptions/listen）均留作后续。
+
 ## D-001 - 引入多 Agent 协作骨架
 
 - 状态：Accepted

@@ -29,6 +29,30 @@ Coordinator: codex-20260803-01
 | TASK-021 | Chief/Todo/MCP 骨架（前端票：T01 git 基础 + T02 结构化 result + T03 取消单操作 + T04 Todo 领域核心 + T08 Chief 角色 + T11 MCP 传输+静态 bearer） | claude-20260803-01 | DONE        | main (56bcef6)                     | git.ts/usage.ts/operation-manager/task-schema/task-store/agent-schema/registry-schema/create-agent/cli-program/factory-application/templates/mcp-server/web-server 与测试 + DECISIONS ADR                                                                            | 用户批准的多 Agent 协作骨架 spec（.scratch/spec-chief-todo-mcp.md）与 13 票计划（.scratch/chief-todo-mcp/issues/） | 2026-08-05 11:50 +0800 |
 | TASK-022 | Chief 编排核心闭环（spec-chief-orchestration 4 票：01 计划+派发 + 02 规划门脏审计 + 03 审查门单向搬运 + 04 拆解回落与 orchestrate）              | claude-20260803-01 | DONE        | main (TASK-022 commit)             | task-store 扩展/factory-application 编排动作/cli-program plan+chief 命令组/orchestration.test.ts/cli-structure.test.ts + .agent 簿记 + docs/DECISIONS.md ADR(可选)                                                                                                   | 用户批准的 spec-chief-orchestration 与 4 票计划（.scratch/chief-orchestration/issues/）                            | 2026-08-05 12:35 +0800 |
 | TASK-023 | 编排 Operation 可观测性（spec-chief-todo-mcp user story 16/23/25：runTaskPlan/orchestrate 注册 Operation 返回 OperationDto + cancel 单例复用）   | claude-20260803-01 | DONE        | main (TASK-023 commit)             | operation-manager 迁移 core/factory-application 编排可观测/cli-program 展示/start.ts 共享实例/errors CANCELLED 码/orchestration.test.ts + .agent 簿记                                                                                                                | 用户批准的 spec-chief-todo-mcp 切片（编排 Operation 可观测性）                                                     | 2026-08-05 12:55 +0800 |
+| TASK-024 | MCP 工具集（spec-chief-todo-mcp 阶段3 issue 12/13：读 8 + 编排写 5 工具，薄适配器穿应用 seam，静态 bearer）                                      | claude-20260803-01 | DONE        | main (TASK-024 commit)             | mcp-server 工具注册/server 传应用/mcp.test.ts 集成测/web-mcp.test.ts JSON 响应 + DECISIONS(D-021) + README + .agent 簿记                                                                                                                                             | 用户批准的 spec-chief-todo-mcp 切片（MCP 工具集）                                                                  | 2026-08-05 14:00 +0800 |
+
+## TASK-024 详情
+
+```text
+Task ID: TASK-024
+Title: MCP 工具集（spec-chief-todo-mcp 阶段3 issue 12/13：读 8 + 编排写 5 工具）
+Owner agent: claude-20260803-01
+Status: DONE
+Branch/worktree: main
+Allowed scope: src/mcp/mcp-server.ts（工具注册）、src/web/server.ts（传应用）、tests/mcp.test.ts（新集成测）、tests/web-mcp.test.ts（JSON 响应）、docs/DECISIONS.md(D-021)、README(roadmap)、.agent 簿记
+Forbidden scope: 用户真实服务状态、个人凭据、web Todo 视图（独立切片）、MCP 推送路径（subscriptions/listen，MVP 不做）
+Dependencies: TASK-021（MCP 传输+静态 bearer）、TASK-023（OperationDto 观测底座 + cancel 单例）、用户批准的 spec-chief-todo-mcp 切片
+Expected output: /mcp 注册 13 个工具（读 8 + 编排写 5），薄适配器穿 FactoryApplication 单一 seam，与 Web/CLI 共享行为；run_task_plan 返回 OperationDto、客户端轮询 get_operation；cancel_operation 复用按 id 取消
+Acceptance criteria:
+  - 13 个工具与 spec 阶段3 工具集完全一致（读 8 + 编排写 5）
+  - transport 以 enableJsonResponse:true 运行，POST 返回 JSON 响应（主路径轮询），GET /mcp SSE 保留
+  - 读工具穿过应用 seam，返回遵循脱敏约束（回归测试断言不泄露注入工作区的 secret 形态 token）
+  - 写工具驱动 Todo 状态机：create→draft、approve→active、run→succeeded、review→approved、cancel→cancelled
+  - 无/错 bearer token → AUTH_REQUIRED；未知工具/参数校验失败 → isError
+  - /code-review（Standards+Spec 双轴）通过；全量单测通过（仅既有 date-sensitive experience.test.ts 失败除外）；任务完成即 commit（不 push）
+Started at: 2026-08-05 13:40 +0800
+Updated at: 2026-08-05 14:00 +0800
+```
 
 ## TASK-023 详情
 
