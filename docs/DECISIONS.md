@@ -1,5 +1,20 @@
 # Decisions
 
+## D-039：存量员工系统提示词回填（与新建员工完全一致）
+
+- 状态：Accepted（已实施，TASK-039）
+- 日期：2026-08-06
+- 背景：D-037 给所有员工预置了宿主平台 skill（`ai-employee-factory`），并在 `settleActive` 回填存量员工，但**只回填 skill，没有重渲系统提示词**——刻意避免覆盖员工对 `CLAUDE.md`/`AGENTS.md` 的既有编辑。结果是 D-037 之前创建的旧员工（如 `user-operations`）的 `CLAUDE.md` 只有 4 行旧版内容，**缺「宿主平台（AI Employee Factory）」小节**，与新建员工功能不一致。用户要求：让存量员工与新建员工完全一致。
+- 决定：
+  - **新增 `ensureRuntimePrompt(workspace, provider, values, memory)`**（templates.ts）：仅当 `CLAUDE.md`/`AGENTS.md` **缺「宿主平台」小节**（D-037 之前的旧员工标志）时，按当前 ENTRY 模板重渲一次；内容与 `renderRuntimeFiles` 同构（`{{name}}` 等占位符渲染 + 从 `agent.yaml.memory.authority_order` 派生的「记忆权威顺序」）。**已含该小节则跳过**，尊重员工对系统提示的既有编辑、不反复覆盖。
+  - **回填点**：`settleActive`（飞书逐消息/runJob/周期 settle 统一入口）在 `ensureFactorySkill` 之后调用 `ensureRuntimePrompt`，覆盖 claude 与 codex（`CLAUDE.md`/`AGENTS.md`）。
+  - **提交**：`commitSelfEvolution` 的 relPaths 增补 `CLAUDE.md`/`AGENTS.md`——回填写入由自进化链**单文件 git 提交**（`evolve: 更新 CLAUDE.md`，进员工 git 历史、可回溯）；已提交无变更则不产生提交。
+- 边界：**只增不改**——仅补缺的「宿主平台」小节所在的完整模板内容，员工已有内容（如 `settings.json` 的真实权限）一律不动；已升级的员工后续自维护系统提示不受影响（不覆盖）。回填是一次性、幂等的。
+- 原因：用户要求"让存量员工和新建员工功能完全一致，如果不行提醒重新建"。回填 `CLAUDE.md`/`AGENTS.md` 即补齐系统提示词缺口，使旧员工获得与新建员工相同的「宿主平台」指引，无需重建。
+- 影响：`templates.ts` 新增 `ensureRuntimePrompt`；`factory-application.ts` `settleActive` 调用 + `commitSelfEvolution` 增补系统提示文件；测试 `bridge-settle.test.ts` 新增「旧员工缺宿主平台→回填为当前模板→已含则不动」用例。
+
+---
+
 ## D-038：Skill 商店新增内置本地源 first-party（game-feedback-collector 进商店）
 
 - 状态：Accepted（已实施，TASK-038）

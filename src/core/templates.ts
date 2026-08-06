@@ -228,6 +228,29 @@ export async function ensureFactorySkill(input: {
   }
 }
 
+// D-039：存量员工系统提示词回填。仅当 CLAUDE.md/AGENTS.md 缺「宿主平台」小节（D-037 之前创建的
+// 旧员工）时，按当前模板重渲一次，使存量员工与新建员工完全一致；已含该小节则不动（尊重员工
+// 对系统提示的既有编辑，不反复覆盖）。返回是否发生写入（供调用方决定是否走自进化提交）。
+export async function ensureRuntimePrompt(input: {
+  workspace: string;
+  provider: RuntimeProvider;
+  values: Record<string, string>;
+  memory: AgentConfig['memory'];
+}): Promise<boolean> {
+  const { workspace, provider, values, memory } = input;
+  const file = path.join(workspace, provider === 'claude' ? 'CLAUDE.md' : 'AGENTS.md');
+  const existing = await fs.readFile(file, 'utf8').catch(() => '');
+  if (existing.includes('## 宿主平台（AI Employee Factory）')) return false;
+  const entry = await fs.readFile(
+    path.join(packageRoot(), `templates/${provider}-agent/ENTRY.md.tmpl`),
+    'utf8',
+  );
+  // 与 renderRuntimeFiles 同构：ENTRY 渲染 + 从 agent.yaml.memory.authority_order 派生的权威顺序。
+  const content = `${render(entry, values)}\n\n${renderAuthorityStance(memory)}\n`;
+  await fs.writeFile(file, content);
+  return true;
+}
+
 async function renderSkills(
   workspace: string,
   skills: string[],

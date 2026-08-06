@@ -41,7 +41,7 @@ import {
 } from '../core/skills.js';
 import { SkillStoreService } from '../core/skill-store.js';
 import { generateSkill, renderSkillFile } from '../core/skill-generator.js';
-import { ensureFactorySkill } from '../core/templates.js';
+import { ensureFactorySkill, ensureRuntimePrompt } from '../core/templates.js';
 import {
   appendSkillSignal,
   detectRepeatedSkillOpportunity,
@@ -450,6 +450,10 @@ export class FactoryApplication {
       // 一并提交，保持 git 干净（避免投影软链停留未跟踪）。
       '.claude/skills',
       '.codex/skills',
+      // D-039：系统提示文件。回填（旧员工缺「宿主平台」小节时重渲一次）与员工自维护
+      // 都会在此被单文件提交；已提交无变更则不产生提交。
+      'CLAUDE.md',
+      'AGENTS.md',
     ];
     for (const relPath of relPaths) {
       const dirty = await gitStatusShort(workspace, relPath);
@@ -1038,6 +1042,21 @@ export class FactoryApplication {
         runtime: agent.runtime.provider,
         workspace: registry.workspace.path,
       },
+    });
+    // TASK-039（D-039）：存量员工系统提示词回填。D-037 只回填了 skill，旧员工的
+    // CLAUDE.md/AGENTS.md 仍缺「宿主平台」小节（与新建员工不一致）。这里仅当缺该小节时
+    // 按当前模板重渲一次；已含则跳过（不覆盖员工对系统提示的既有编辑）。写入后由下方
+    // commitSelfEvolution 一并单文件提交（进 evolve: 提交历史，可控）。
+    await ensureRuntimePrompt({
+      workspace: registry.workspace.path,
+      provider: agent.runtime.provider,
+      values: {
+        id,
+        name: agent.name,
+        runtime: agent.runtime.provider,
+        workspace: registry.workspace.path,
+      },
+      memory: agent.memory,
     });
     // D-034 员工自建 Skill：先自动 adopt/upsert 员工写盘的 skill 并投影，
     // 再按需检测重复模式自动生成。顺序在 commitSelfEvolution 之前，使新元数据被 evolve: 提交。

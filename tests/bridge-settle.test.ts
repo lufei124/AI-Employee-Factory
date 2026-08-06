@@ -277,4 +277,42 @@ describe('settleEmployee 无 transcript 沉淀（D-035）', () => {
     expect(exitCode).toBe(0);
     expect(stdout).toMatch(/evolve/);
   });
+
+  it('回填旧员工系统提示词：缺「宿主平台」时重渲为当前模板，已含则不动（D-039）', async () => {
+    const { app } = await setup();
+    const { registry } = await app.getAgent('worker-a');
+    const promptFile = path.join(registry.workspace.path, 'CLAUDE.md');
+
+    // 模拟 D-037 之前创建的旧员工：系统提示缺「宿主平台」小节，且该旧版已被 git 基线提交
+    // （当前 createAgent 的 scaffold 已含宿主平台，需先把旧版 commit 成基线再触发回填）。
+    const legacy =
+      '# 用户运营专员 运行指南\n\n请先阅读 agent/、knowledge/、skills/ 与 tasks/ 中的正式文件。\n';
+    await fs.writeFile(promptFile, legacy);
+    await execa('git', ['-C', registry.workspace.path, 'add', 'CLAUDE.md'], { reject: false });
+    await execa('git', ['-C', registry.workspace.path, 'commit', '-m', 'legacy baseline'], {
+      reject: false,
+    });
+
+    await app.settleEmployee('worker-a');
+
+    const upgraded = await fs.readFile(promptFile, 'utf8');
+    expect(upgraded).toContain('## 宿主平台（AI Employee Factory）');
+    expect(upgraded).toContain('员工 A');
+    expect(upgraded).toContain('## 记忆权威顺序');
+    // 升级后内容与新建员工模板同构（含完整系统提示骨架）。
+    expect(upgraded).toContain('## 自我进化');
+    expect(upgraded).toContain('## 定时任务自我配置');
+    // 升级写入被自进化链单文件提交。
+    const { stdout } = await execa('git', ['-C', registry.workspace.path, 'log', '--oneline'], {
+      reject: false,
+    });
+    expect(stdout).toMatch(/evolve: 更新 CLAUDE\.md/);
+
+    // 幂等：已含「宿主平台」小节的员工不被覆盖（员工对系统提示的编辑保持原样）。
+    const before = await fs.readFile(promptFile, 'utf8');
+    await fs.appendFile(promptFile, '\n# 员工手动补充的说明\n');
+    await app.settleEmployee('worker-a');
+    const after = await fs.readFile(promptFile, 'utf8');
+    expect(after).toBe(before + '\n# 员工手动补充的说明\n');
+  });
 });
