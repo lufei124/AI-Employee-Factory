@@ -1,5 +1,21 @@
 # Decisions
 
+## D-037：宿主平台预置为员工 skill（ai-employee-factory）
+
+- 状态：Accepted（已实施，TASK-037）
+- 日期：2026-08-06
+- 背景：用户要求"把当前这个项目（AI Employee Factory）当成 CLI 和对应的 skill **预置给所有的 AI 员工**，新建的时候也要有，这样他才会用；并告诉它局限、它是什么、身处什么环境、项目是干嘛的"。此前员工工作区只有岗位/知识/业务 skill，**不知道自己是跑在什么平台上、宿主 CLI 怎么用、能力边界在哪**——容易误判能做什么、或不善用 `agentctl` 管理工厂。
+- 决定：
+  - **预置 skill**：新增 `templates/factory-skill/SKILL.md`（frontmatter `name: ai-employee-factory`，合法 kebab-case），内容讲清四件事：① 你是什么（AI 员工、隔离子进程）；② 所处环境（员工 id/名称/运行时/工作区结构）；③ 宿主项目（AI Employee Factory 是干嘛的、核心能力）；④ `agentctl` CLI 速查；⑤ **能力边界与局限**（工作区沙箱、审批边界、不可改 `.claude/settings.json`、不可越权、本地运行）。用 `{{id}}/{{name}}/{{runtime}}/{{workspace}}` 占位符按员工注入。
+  - **播种**：新增 `ensureFactorySkill(workspace, provider, values)`（幂等：SKILL.md 与模板一致则跳过写盘，避免 settle 反复提交；投影用相对 target `../../skills/<name>`，`.claude` 与 `.codex` 共用，创建流程 workspace rename 后仍有效）。**新建员工**在 `renderAgentWorkspace` 播种；**存量员工**在 `settleActive` 回填（飞书逐消息/runJob/周期 settle 都会走到，覆盖 claude 与 codex）。
+  - **ENTRY 提示词**：`claude-agent`/`codex-agent` ENTRY 模板各加「宿主平台」小节，让新员工系统提示词始终指向该 Skill。
+  - **顺带修复**：① `doctor.trackedSecretFiles` 用 `lstat` 跳过符号链接/非文件，避免读投影软链抛 EISDIR（预置 skill 使 `.claude/skills/` 必有跟踪软链后暴露的存量 bug）；② `commitSelfEvolution` 增补 `.claude/skills`/`.codex/skills` 投影目录——adopt/自建技能新增软链一并跟踪，保持 git 干净（预置 skill 使 `.claude/` 成跟踪目录后，原「投影软链未提交」的隐性不一致显性化）。
+- 边界：预置 skill 是**平台说明**，不改员工业务 skill 与权限；不扩大员工权限（仍是 workspace 沙箱 + 审批）；存量员工在下一次飞书消息/runJob/settle 时自动获得，无需手动操作。
+- 原因：员工「知道自己运行在什么平台、宿主 CLI 怎么用、边界在哪」才能被真正用起来且不越权。选 `settleActive` 作存量回填点是因为它是飞书逐消息/runJob/周期 settle 的统一沉淀入口。
+- 影响：新增 `templates/factory-skill/SKILL.md`；`templates.ts` 增 `ensureFactorySkill` 并在 `renderAgentWorkspace` 调用；`factory-application.ts` `settleActive` 回填 + `commitSelfEvolution` 补投影目录；`doctor.ts` 修投影软链 EISDIR；两个 ENTRY 模板加宿主平台小节；测试 `create-agent.test.ts`/`application-management.test.ts`/`web-management-api.test.ts` 断言更新 + 新增 codex/.claude 投影断言。
+
+---
+
 ## D-036：飞书实际使用日志（本地 SQLite usage.db）
 
 - 状态：Accepted（已实施）

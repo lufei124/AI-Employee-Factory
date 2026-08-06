@@ -41,6 +41,7 @@ import {
 } from '../core/skills.js';
 import { SkillStoreService } from '../core/skill-store.js';
 import { generateSkill, renderSkillFile } from '../core/skill-generator.js';
+import { ensureFactorySkill } from '../core/templates.js';
 import {
   appendSkillSignal,
   detectRepeatedSkillOpportunity,
@@ -445,6 +446,10 @@ export class FactoryApplication {
       'skills',
       'workflows',
       'knowledge',
+      // 技能运行时投影目录：adopt/自建技能会新增软链（与创建期 renderSkills 的投影跟踪一致），
+      // 一并提交，保持 git 干净（避免投影软链停留未跟踪）。
+      '.claude/skills',
+      '.codex/skills',
     ];
     for (const relPath of relPaths) {
       const dirty = await gitStatusShort(workspace, relPath);
@@ -1022,6 +1027,18 @@ export class FactoryApplication {
     transcriptFile?: string,
   ): Promise<void> {
     await this.maybeExtractExperience(id, agent, transcriptFile);
+    // TASK-037（D-037）：存量员工幂等补宿主平台 skill（ai-employee-factory），新建即在
+    // renderAgentWorkspace 播种；此处覆盖存量员工（飞书消息/runJob/定时 settle 都会走到）。
+    await ensureFactorySkill({
+      workspace: registry.workspace.path,
+      provider: agent.runtime.provider,
+      values: {
+        id,
+        name: agent.name,
+        runtime: agent.runtime.provider,
+        workspace: registry.workspace.path,
+      },
+    });
     // D-034 员工自建 Skill：先自动 adopt/upsert 员工写盘的 skill 并投影，
     // 再按需检测重复模式自动生成。顺序在 commitSelfEvolution 之前，使新元数据被 evolve: 提交。
     await this.autoAdoptSelfSkills(id, agent);

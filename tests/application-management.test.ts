@@ -132,8 +132,10 @@ describe('FactoryApplication management use cases', () => {
 
   it('lists installed skills, logs, and generated backups without exposing arbitrary paths', async () => {
     const { app, paths } = await setup();
-    // preset 无内置 skill，初始列表为空
-    expect(await app.listSkills('user-operations')).toEqual([]);
+    // 初始仅有预置宿主平台 skill（ai-employee-factory），且列表不暴露任意路径。
+    const initial = await app.listSkills('user-operations');
+    expect(initial.map((s) => s.name)).toEqual(['ai-employee-factory']);
+    expect(JSON.stringify(initial)).not.toContain(paths.workspaceRoot);
     await fs.outputFile(
       path.join(paths.logsDir, 'user-operations/manual/output.log'),
       'line one\nline two\n',

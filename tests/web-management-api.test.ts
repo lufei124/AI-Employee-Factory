@@ -101,7 +101,7 @@ describe('Web management API', () => {
           headers: readHeaders,
         })
       ).json().data,
-    ).toHaveLength(0);
+    ).toHaveLength(1); // 预置宿主平台 skill（ai-employee-factory）
 
     await fs.outputFile(path.join(paths.logsDir, 'user-operations/manual/latest.log'), 'a\nb\n');
     expect(
@@ -247,7 +247,7 @@ describe('Web management API', () => {
           headers: readHeaders,
         })
       ).json().data,
-    ).toHaveLength(1);
+    ).toHaveLength(2); // 预置 ai-employee-factory + research-helper
     await server.close();
   });
 
@@ -311,8 +311,7 @@ describe('Web management API', () => {
           headers: readHeaders,
         })
       ).json().data,
-    ).toHaveLength(0);
-
+    ).toHaveLength(1); // 预置 ai-employee-factory 仍在（remove-me 已卸载）
     const mismatched = await server.inject({
       method: 'DELETE',
       url: '/api/v1/agents/user-operations/skills/remove-me',

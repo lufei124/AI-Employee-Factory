@@ -171,7 +171,61 @@ export async function renderAgentWorkspace(input: {
   );
 
   await renderSkills(workspace, preset.skills, config.runtime.provider);
+  // TASK-037：把宿主平台（AI Employee Factory）预置为员工 skill，新建即有。
+  await ensureFactorySkill({
+    workspace,
+    provider: config.runtime.provider,
+    values: { id: config.id, name: config.name, runtime: config.runtime.provider, workspace },
+  });
   await renderRuntimeFiles(workspace, config, values);
+}
+
+// TASK-037（D-037）：把宿主平台预置为员工 skill（ai-employee-factory）。内容来自
+// templates/factory-skill/SKILL.md，说明员工身份/环境/宿主项目/agentctl CLI/局限。
+// 幂等：SKILL.md 内容与模板一致则跳过写盘（避免 settle 链反复 git 提交）；投影到运行时
+// 发现目录（.claude 用相对链接、.codex 用绝对目标，与 renderSkills/projectCodexSkills 一致）。
+export async function ensureFactorySkill(input: {
+  workspace: string;
+  provider: RuntimeProvider;
+  values: Record<string, string>;
+}): Promise<void> {
+  const { workspace, provider, values } = input;
+  const template = await fs.readFile(
+    path.join(packageRoot(), 'templates/factory-skill/SKILL.md'),
+    'utf8',
+  );
+  const content = render(template, values);
+  const dir = path.join(workspace, 'skills', 'ai-employee-factory');
+  const skillFile = path.join(dir, 'SKILL.md');
+  const existing = await fs.readFile(skillFile, 'utf8').catch(() => '');
+  if (existing !== content) {
+    await fs.ensureDir(path.join(dir, 'scripts'));
+    await fs.ensureDir(path.join(dir, 'references'));
+    await fs.writeFile(skillFile, content);
+    await fs.writeFile(
+      path.join(dir, '.agentctl.yaml'),
+      YAML.stringify({
+        name: 'ai-employee-factory',
+        version: '1.0.0',
+        source: 'factory',
+        installed_at: new Date().toISOString(),
+        digest: await digestSkillDirectory(dir),
+      }),
+    );
+  }
+  // 投影到运行时 skill 发现目录（幂等，已存在则跳过）。相对目标 `../../skills/<name>` 在
+  // 创建流程的工作区 rename 后仍有效（.claude 与 .codex 均与 workspace 同级），故两 provider 共用。
+  const projectionDir = path.join(
+    workspace,
+    provider === 'claude' ? '.claude' : '.codex',
+    'skills',
+  );
+  await fs.ensureDir(projectionDir);
+  const link = path.join(projectionDir, 'ai-employee-factory');
+  const target = path.join('../../skills', 'ai-employee-factory');
+  if (!(await fs.pathExists(link))) {
+    await fs.symlink(target, link);
+  }
 }
 
 async function renderSkills(

@@ -63,9 +63,11 @@ describe('CreateAgentService', () => {
     expect(await fs.pathExists(path.join(created.workspace, 'CLAUDE.md'))).toBe(true);
     expect(await fs.pathExists(path.join(created.workspace, 'AGENTS.md'))).toBe(false);
     expect(await fs.pathExists(path.join(created.workspace, '.codex'))).toBe(false);
-    // 描述驱动，未给 skills → 空目录
+    // 描述驱动，未给 skills → 仅预置宿主平台 skill（ai-employee-factory）
     expect(await fs.pathExists(path.join(created.workspace, 'skills'))).toBe(true);
-    expect(await fs.readdir(path.join(created.workspace, 'skills'))).toEqual([]);
+    expect(await fs.readdir(path.join(created.workspace, 'skills'))).toEqual([
+      'ai-employee-factory',
+    ]);
     expect(await fs.pathExists(path.join(created.workspace, '.claude/skills'))).toBe(true);
     expect(await fs.pathExists(path.join(paths.runtimesDir, 'user-operations/claude'))).toBe(true);
     expect(await fs.pathExists(path.join(paths.bridgesDir, 'user-operations'))).toBe(true);
@@ -206,6 +208,19 @@ describe('CreateAgentService', () => {
     expect(
       await fs.pathExists(path.join(created.workspace, '.claude/skills/content-writing')),
     ).toBe(true);
+    // TASK-037：新建员工自动预置宿主平台 skill（内容 + .claude 投影）。
+    expect(
+      await fs.pathExists(path.join(created.workspace, 'skills/ai-employee-factory/SKILL.md')),
+    ).toBe(true);
+    expect(
+      await fs.pathExists(path.join(created.workspace, '.claude/skills/ai-employee-factory')),
+    ).toBe(true);
+    const factorySkill = await fs.readFile(
+      path.join(created.workspace, 'skills/ai-employee-factory/SKILL.md'),
+      'utf8',
+    );
+    expect(factorySkill).toContain('AI Employee Factory');
+    expect(factorySkill).toContain(created.id);
     // 缺 responsibilities/policies 时用默认（description 作职责、默认审批策略）。
     const minimal = await service.create({
       id: 'minimal-profile',
@@ -222,5 +237,12 @@ describe('CreateAgentService', () => {
     );
     expect(minimalRole).toContain('- 仅描述');
     expect(minimalPolicies).toContain('生产写入、对外发布、Git push 和删除数据必须经人工审批');
+    // TASK-037：codex 员工也预置宿主平台 skill（.codex 投影）。
+    expect(
+      await fs.pathExists(path.join(minimal.workspace, 'skills/ai-employee-factory/SKILL.md')),
+    ).toBe(true);
+    expect(
+      await fs.pathExists(path.join(minimal.workspace, '.codex/skills/ai-employee-factory')),
+    ).toBe(true);
   });
 });

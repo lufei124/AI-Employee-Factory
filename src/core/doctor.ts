@@ -512,7 +512,14 @@ export class DoctorService {
         continue;
       }
       const file = path.join(workspace, relative);
-      if (!(await fs.pathExists(file)) || (await fs.stat(file)).size > 1024 * 1024) continue;
+      // 跳过不存在的、符号链接（skill/运行时投影目录）与超大文件，避免读取目录抛 EISDIR。
+      let st: fs.Stats;
+      try {
+        st = await fs.lstat(file);
+      } catch {
+        continue;
+      }
+      if (!st.isFile() || st.size > 1024 * 1024) continue;
       const content = await fs.readFile(file, 'utf8');
       if (
         /(?:AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,}|(?:api[_-]?key|app[_-]?secret)\s*[:=]\s*[^\s]+)/i.test(
