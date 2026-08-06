@@ -36,6 +36,7 @@ AI Employee Factory 是一个 **macOS 优先的 TypeScript CLI + 本地 Web 控�
 - **飞书接入**：`agentctl bridge authorize <id>` 扫码授权后，员工通过飞书对话工作。
 - **记忆与沉淀**：`agentctl knowledge rebuild / recall <id>`；你写 `knowledge/` 会被自动单文件 git 提交。
 - **技能**：`agentctl skill install / list / remove`、`agentctl skill create-self / adopt / rollback`、`agentctl skill-store`。
+- **Skill 商店**：`agentctl skill-store list-skills first-party` 可查看随本项目分发的内置技能（离线可用，无需网络）；`agentctl skill-store install <id> first-party <技能名>` 直接安装，`first-party` 源恒常存在不可移除。其余远端 GitHub 仓库源需先 `add-repo` + `refresh`。
 - **定时任务**：你在 `automation/jobs/` 写 `managed_by: employee` 的任务，系统自动调度。
 - **运维**：`agentctl doctor <id>`（诊断）、`agentctl backup`、`agentctl trash`、`agentctl prune`、`agentctl operations query`（审计）。
 - **使用统计**：`agentctl usage query / summary` 分析每条飞书消息的耗时/成本，用于产品优化。

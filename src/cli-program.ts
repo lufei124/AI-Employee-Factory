@@ -753,12 +753,14 @@ function registerSkillCommands(program: Command): void {
       },
     );
 
-  const storeGroup = program.command('skill-store').description('Skill 商店（GitHub 仓库源）');
+  const storeGroup = program
+    .command('skill-store')
+    .description('Skill 商店（内置 first-party + GitHub 仓库源）');
   storeGroup.command('list-repos').action(async () => {
     const { application } = context();
     for (const repo of await application.listSkillStoreRepositories())
       console.log(
-        `${repo.name}\t${repo.url}\t${repo.cached ? 'cached' : 'not-cached'}\t${repo.lastRefreshedAt ?? ''}`,
+        `${repo.name}\t${repo.source === 'local' ? '(bundled)' : repo.url}\t${repo.cached ? 'cached' : 'not-cached'}\t${repo.lastRefreshedAt ?? ''}`,
       );
   });
   storeGroup

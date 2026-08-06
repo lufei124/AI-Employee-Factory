@@ -8,29 +8,48 @@ import { RegistryStore } from './registry.js';
 
 // R5：Factory 配置 schema。sync.sanitize_non_whitelist 控制 CC Switch 同步时是否
 // 移除员工 settings.json 中残留的非白名单 env（默认 false，保留兼容）。
-export const skillStoreRepositorySchema = z.object({
-  name: z.string().regex(/^[a-z0-9][a-z0-9._-]*$/i, '仓库名仅允许字母数字与 ._-'),
-  url: z
-    .string()
-    .url()
-    .refine((value) => value.startsWith('https://github.com/'), {
-      message: '仅支持 https://github.com/ 的公开仓库',
-    }),
-  description: z.string().min(1).optional(),
-});
+export const skillStoreRepositorySchema = z
+  .object({
+    name: z.string().regex(/^[a-z0-9][a-z0-9._-]*$/i, '仓库名仅允许字母数字与 ._-'),
+    // local = 随项目分发、离线可用的内置技能源（templates/skill-store/）；github = 远端公开仓库。
+    source: z.enum(['github', 'local']).default('github'),
+    url: z
+      .string()
+      .url()
+      .refine((value) => value.startsWith('https://github.com/'), {
+        message: '仅支持 https://github.com/ 的公开仓库',
+      })
+      .optional(),
+    description: z.string().min(1).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.source === 'github' && !value.url) {
+      ctx.addIssue({ code: 'custom', path: ['url'], message: 'github 源必须提供仓库 url' });
+    }
+  });
 
 export type SkillStoreRepository = z.infer<typeof skillStoreRepositorySchema>;
+
+// 内置本地技能源：读取 `templates/skill-store/` 下的技能目录，随项目分发、离线可用、不可移除。
+// 由 SkillStoreService 恒常合并进仓库列表（不写入 config.yaml），保证内置技能始终可安装。
+export const FIRST_PARTY_SOURCE: SkillStoreRepository = {
+  name: 'first-party',
+  source: 'local',
+  description: 'AI Employee Factory 内置技能（随项目分发，离线可用）',
+};
 
 // 内置默认仓库源（可配置列表的起点，用户可增删）。商店发现逻辑会扫描 SKILL.md/清单，
 // 仓库结构不同只会得到空列表，不会影响其余安装方式。
 export const builtinSkillStoreRepositories: SkillStoreRepository[] = [
   {
     name: 'superpowers',
+    source: 'github',
     url: 'https://github.com/obra/superpowers',
     description: '社区 Claude Code 技能合集（obra/superpowers）',
   },
   {
     name: 'anthropic-skills',
+    source: 'github',
     url: 'https://github.com/anthropics/skills',
     description: 'Anthropic 官方 Skills 集合',
   },

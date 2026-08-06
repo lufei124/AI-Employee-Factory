@@ -1,5 +1,20 @@
 # Decisions
 
+## D-038：Skill 商店新增内置本地源 first-party（game-feedback-collector 进商店）
+
+- 状态：Accepted（已实施，TASK-038）
+- 日期：2026-08-06
+- 背景：用户要求"把用户反馈的那个收集 skill（`game-feedback-collector`）放到 skill 商店"。该技能是 `user-operations` 员工工作区里的自包含技能（SKILL.md + 11 个 scripts + package.json + `.env`/node_modules/jsonl/DB 等运行数据），而 skill 商店此前**仅接受 `https://github.com/` 公开仓库**（`config.ts` `skillStoreRepositorySchema`），无法直接纳入一个本地技能。
+- 决定：
+  - **内置本地源**：仓库 schema 增 `source: 'github' | 'local'`（默认 github，`superRefine` 校验 github 必须带 url）。新增恒常合并的 `FIRST_PARTY_SOURCE`（name=`first-party`，source=`local`）——**不写入 config.yaml、不可被移除、随项目分发、离线可用**。`SkillStoreService` 对 local 源跳过 clone/refresh（`cached=true`、`lastRefreshedAt='bundled'`），`sourceDir` 指向 `{packageRoot}/templates/skill-store/`，复用现有 `scanSkills` 发现技能、`resolveSkillSource` 校验 SKILL.md 且防目录穿越。
+  - **技能打包**：`game-feedback-collector` 的**分享形态**打包到 `templates/skill-store/game-feedback-collector/`（SKILL.md + scripts/ + package.json + package-lock.json + .env.example + .gitignore），并给 frontmatter 补 `version: 1.0.0`。**绝不打包 `.env`/node_modules/各 jsonl/DB/err 运行数据**（守 D-006，凭据不入库）；`.gitignore` 忽略运行期产物。
+  - **安装命令**：`agentctl skill-store install <agent-id> first-party game-feedback-collector`（无需 refresh）；`list-repos`/`list-skills first-party` 可直接查看。
+- 边界：内置源是**随仓库分发、恒常只读**的安装来源，不改动目标技能的业务逻辑；技能安装后仍需在员工工作区 `npm install` 并配 `.env`（`.env.example` 提供占位模板），凭据由员工侧提供。远端源行为不变（仍需 add-repo + refresh）。
+- 原因：用户明确选择"打包进仓库作为内置源"（vs 推到 GitHub 公开仓库）。本地源让内置技能**离线可用、随项目版本分发、不依赖外部仓库与网络**，且避免把内部业务规则（飞书表/负责人路由）推到公开 GitHub。
+- 影响：`config.ts`（schema 增 source + `FIRST_PARTY_SOURCE`）；`skill-store.ts`（local 源 list/refresh/resolve/remove 分支 + `sourceDir`）；`cli-program.ts`（list-repos 显示 `(bundled)`、描述更新）；新增 `templates/skill-store/game-feedback-collector/`（11 个脚本 + SKILL.md + package.json/lock + .env.example + .gitignore）；测试 `skill-store.test.ts` 更新断言 + 新增 first-party 用例。
+
+---
+
 ## D-037：宿主平台预置为员工 skill（ai-employee-factory）
 
 - 状态：Accepted（已实施，TASK-037）

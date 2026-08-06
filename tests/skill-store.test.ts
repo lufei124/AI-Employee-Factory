@@ -41,9 +41,13 @@ describe('SkillStoreService', () => {
 
     expect(state.cached).toBe(false);
     const all = await service.listRepositories();
-    expect(all).toHaveLength(1);
-    expect(all[0].name).toBe('my-skills');
-    expect(all[0].cached).toBe(false);
+    // 内置 first-party 本地源恒常存在，排在可配置仓库之前。
+    expect(all).toHaveLength(2);
+    expect(all[0].name).toBe('first-party');
+    expect(all[0].source).toBe('local');
+    expect(all[0].cached).toBe(true);
+    expect(all[1].name).toBe('my-skills');
+    expect(all[1].cached).toBe(false);
   });
 
   it('rejects non-github and duplicate repository URLs', async () => {
@@ -73,7 +77,10 @@ describe('SkillStoreService', () => {
 
     await service.removeRepository('gone');
 
-    expect(await service.listRepositories()).toHaveLength(0);
+    const remaining = await service.listRepositories();
+    // 内置 first-party 源不可移除，恒常保留。
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].name).toBe('first-party');
     expect(await fs.pathExists(path.join(paths.skillStoreDir, 'cache', 'gone'))).toBe(false);
   });
 
@@ -154,6 +161,36 @@ describe('SkillStoreService', () => {
 
     expect(skills).toHaveLength(1);
     expect(skills[0]).toMatchObject({ name: 'listed', version: '3.0.0', path: 'dir/listed' });
+  });
+
+  it('exposes the bundled first-party local source and installs from it', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-store-'));
+    roots.push(root);
+    const paths = pathsFor(root);
+    await writeEmptyConfig(paths);
+    const service = new SkillStoreService(paths);
+
+    // 内置源：无需 config、无需刷新、恒为已就绪。
+    const repos = await service.listRepositories();
+    const firstParty = repos.find((r) => r.name === 'first-party');
+    expect(firstParty).toMatchObject({ source: 'local', cached: true });
+
+    // 发现随项目分发的技能（templates/skill-store/ 下扫 SKILL.md）。
+    const skills = await service.listSkills('first-party');
+    expect(skills.map((s) => s.name)).toContain('game-feedback-collector');
+
+    // 解析技能源目录，校验 SKILL.md 存在且防目录穿越。
+    const source = await service.resolveSkillSource('first-party', 'game-feedback-collector');
+    expect(await fs.pathExists(path.join(source, 'SKILL.md'))).toBe(true);
+    await expect(service.resolveSkillSource('first-party', '../escape')).rejects.toThrow(
+      AgentCtlError,
+    );
+    await expect(service.resolveSkillSource('first-party', 'missing')).rejects.toThrow(
+      '不存在 Skill',
+    );
+
+    // 内置源不可移除。
+    await expect(service.removeRepository('first-party')).rejects.toThrow('不可移除');
   });
 
   it('requires a refreshed (cached) repository before listing or resolving', async () => {

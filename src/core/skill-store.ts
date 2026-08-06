@@ -1,11 +1,17 @@
 import fs from 'fs-extra';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execa } from 'execa';
 import YAML from 'yaml';
 import { z } from 'zod';
 import { AgentCtlError } from './errors.js';
 import { atomicWriteFile } from './atomic.js';
-import { readConfig, skillStoreRepositorySchema, type SkillStoreRepository } from './config.js';
+import {
+  readConfig,
+  skillStoreRepositorySchema,
+  FIRST_PARTY_SOURCE,
+  type SkillStoreRepository,
+} from './config.js';
 import { assertInside, type FactoryPaths } from './paths.js';
 
 export interface SkillStoreSkill {
@@ -33,11 +39,17 @@ const manifestSchema = z.object({
   ),
 });
 
+/** 项目仓库根（`templates/skill-store/` 内置技能源所在）。 */
+function packageRoot(): string {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+}
+
 /**
  * Skill 商店：把可配置的远端 GitHub 仓库源（`config.yaml` 的 `skill_store.repositories`）
  * 浅克隆到 `~/.ai-employees/skill-store/cache/<name>/` 并用 `agent-skills.yaml/json` 清单
  * 或扫 `SKILL.md` 发现技能。安装复用 `SkillService.install`（传递源路径），不改变任何
- * 既有安装方式（上传目录 / 本地路径 / CLI）。仅接受 `https://github.com/` 公开仓库。
+ * 既有安装方式（上传目录 / 本地路径 / CLI）。远端仅接受 `https://github.com/` 公开仓库；
+ * 另恒常内置 `first-party` 本地源（`templates/skill-store/`），随项目分发、离线可安装。
  */
 // 扫描 SKILL.md 时跳过的常见测试/内部/构建目录，避免把仓库自带的 skill 测试夹具暴露成可安装项。
 const SKIP_DIR_NAMES = new Set([
@@ -59,7 +71,17 @@ export class SkillStoreService {
   async listRepositories(): Promise<SkillStoreRepositoryState[]> {
     const config = await readConfig(this.paths);
     const states: SkillStoreRepositoryState[] = [];
-    for (const repo of config.skill_store.repositories) {
+    // 恒常合并内置本地源（不写入 config，避免被移除），再列可配置的远端仓库。
+    const all = [FIRST_PARTY_SOURCE, ...config.skill_store.repositories];
+    for (const repo of all) {
+      if (repo.source === 'local') {
+        states.push({
+          ...repo,
+          cached: await fs.pathExists(this.sourceDir(repo)),
+          lastRefreshedAt: 'bundled',
+        });
+        continue;
+      }
       const marker = this.markerFile(repo);
       let lastRefreshedAt: string | undefined;
       if (await fs.pathExists(marker)) {
@@ -92,6 +114,9 @@ export class SkillStoreService {
   }
 
   async removeRepository(name: string): Promise<void> {
+    if (name === FIRST_PARTY_SOURCE.name) {
+      throw new AgentCtlError('VALIDATION_ERROR', '内置源 first-party 不可移除。');
+    }
     const config = await readConfig(this.paths);
     if (!config.skill_store.repositories.some((item) => item.name === name)) {
       throw new AgentCtlError('NOT_FOUND', `仓库源不存在：${name}`);
@@ -104,14 +129,22 @@ export class SkillStoreService {
 
   async refresh(name: string): Promise<SkillStoreRepositoryState> {
     const repo = await this.getRepository(name);
+    if (repo.source === 'local') {
+      // 内置本地源无需拉取，恒为已就绪。
+      return { ...repo, cached: true, lastRefreshedAt: 'bundled' };
+    }
     const dir = this.cacheDir(repo.name);
+    const url = repo.url;
+    if (!url) {
+      throw new AgentCtlError('VALIDATION_ERROR', `仓库 ${repo.name} 缺少 url`);
+    }
     await fs.ensureDir(path.dirname(dir));
     try {
       if (await fs.pathExists(path.join(dir, '.git'))) {
         await execa('git', ['-C', dir, 'pull', '--ff-only'], { shell: false, timeout: 60_000 });
       } else {
         await fs.remove(dir).catch(() => undefined);
-        await execa('git', ['clone', '--depth', '1', repo.url, dir], {
+        await execa('git', ['clone', '--depth', '1', url, dir], {
           shell: false,
           timeout: 120_000,
         });
@@ -129,7 +162,10 @@ export class SkillStoreService {
 
   async listSkills(name: string): Promise<SkillStoreSkill[]> {
     const repo = await this.getRepository(name);
-    const dir = this.cacheDir(repo.name);
+    const dir = this.sourceDir(repo);
+    if (repo.source === 'local') {
+      return this.scanSkills(dir, repo.name);
+    }
     if (!(await fs.pathExists(path.join(dir, '.git')))) {
       throw new AgentCtlError('NOT_FOUND', `仓库 ${repo.name} 尚未刷新。`, {
         remediation: '请先刷新仓库以拉取内容。',
@@ -143,7 +179,17 @@ export class SkillStoreService {
   /** 解析仓库内技能源目录（校验包含在缓存根内），由调用方继续走 SkillService.install。 */
   async resolveSkillSource(name: string, skillPath: string): Promise<string> {
     const repo = await this.getRepository(name);
-    const dir = this.cacheDir(repo.name);
+    const dir = this.sourceDir(repo);
+    if (repo.source === 'local') {
+      const source = assertInside(dir, path.resolve(dir, skillPath), 'Skill 源');
+      if (!(await fs.pathExists(path.join(source, 'SKILL.md')))) {
+        throw new AgentCtlError(
+          'VALIDATION_ERROR',
+          `内置源 ${repo.name} 中不存在 Skill：${skillPath}`,
+        );
+      }
+      return source;
+    }
     if (!(await fs.pathExists(path.join(dir, '.git')))) {
       throw new AgentCtlError('NOT_FOUND', `仓库 ${repo.name} 尚未刷新。`, {
         remediation: '请先刷新仓库并确认技能存在。',
@@ -156,6 +202,13 @@ export class SkillStoreService {
     return source;
   }
 
+  private sourceDir(repo: SkillStoreRepository): string {
+    if (repo.source === 'local') {
+      return path.join(packageRoot(), 'templates', 'skill-store');
+    }
+    return this.cacheDir(repo.name);
+  }
+
   private cacheDir(name: string): string {
     return path.join(this.paths.skillStoreDir, 'cache', name);
   }
@@ -165,6 +218,7 @@ export class SkillStoreService {
   }
 
   private async getRepository(name: string): Promise<SkillStoreRepository> {
+    if (name === FIRST_PARTY_SOURCE.name) return FIRST_PARTY_SOURCE;
     const config = await readConfig(this.paths);
     const repo = config.skill_store.repositories.find((item) => item.name === name);
     if (!repo) throw new AgentCtlError('NOT_FOUND', `仓库源不存在：${name}`);

@@ -1,0 +1,23 @@
+# 凭据与依赖（绝不入库）
+.env
+node_modules/
+*.p8
+
+# 本地中间产物
+normalized.jsonl
+classified.jsonl
+*.tmp.jsonl
+
+# 运行期数据/缓存（采集、去重、状态、日志）
+*_raw.jsonl
+*_classified.jsonl
+asc_classified.jsonl
+asc_raw.jsonl
+daily_classified.jsonl
+daily_raw.jsonl
+feedback_classified.jsonl
+feedback_raw.jsonl
+daily_dedup.json
+daily_state.json
+feedback_runs.db
+*_err.txt

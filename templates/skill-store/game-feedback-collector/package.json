@@ -1,0 +1,18 @@
+{
+  "name": "game-feedback-collector",
+  "private": true,
+  "type": "module",
+  "description": "采集游戏反馈技能：读库/导入 -> 规范化 -> 分类 -> 去重 -> 写飞书（自包含）",
+  "scripts": {
+    "fetch:db": "node scripts/fetch_game_feedback.mjs",
+    "fetch:appstore": "node scripts/fetch_appstore_reviews_api.mjs",
+    "probe:asc": "node scripts/probe_asc.mjs",
+    "normalize": "python3 scripts/normalize_feedback.py",
+    "classify": "python3 scripts/classify_feedback.py",
+    "feishu:preview": "node scripts/write_to_feishu.mjs",
+    "feishu:dedup": "node scripts/dedup_and_preview.mjs"
+  },
+  "dependencies": {
+    "mysql2": "^3.15.3"
+  }
+}
