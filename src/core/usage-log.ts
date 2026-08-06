@@ -8,7 +8,10 @@ import type { RunUsage } from './usage.js';
 // `~/.ai-employees/logs/usage.db`，供 `agentctl usage query/summary` 事后分析产品使用。
 // 数据口径：prompt 经 redactSecrets 脱敏后落盘（守 D-006），token/成本来自 structured 输出的
 // RunUsage（best-effort，bridge 非 JSON 输出则为空）。record 一律 best-effort——写失败仅告警，
-// 绝不阻断消息/settle 链。
+// 绝不阻断消息/settle 链。DB 上限 USAGE_DB_MAX_ROWS 条，超限自动删最旧（保最近 N 条）。
+
+/** usage.db 记录上限：最多保留最近 N 条消息，超限自动删最旧。 */
+export const USAGE_DB_MAX_ROWS = 10000;
 
 export interface UsageMessageInput {
   agentId: string;
@@ -159,6 +162,12 @@ export class UsageDb {
         topicsJson: input.topics && input.topics.length > 0 ? JSON.stringify(input.topics) : null,
         transcriptFile: input.transcriptFile ?? null,
       });
+      // 上限裁剪：保留最近 USAGE_DB_MAX_ROWS 条。子查询在行数未超限时返回 NULL，`id <= NULL` 为假 → 空操作。
+      db.prepare(
+        `DELETE FROM messages WHERE id <= (
+           SELECT id FROM messages ORDER BY id DESC LIMIT 1 OFFSET ${USAGE_DB_MAX_ROWS}
+         )`,
+      ).run();
     } catch (error) {
       console.warn(`[usage] 写入 usage.db 记录失败：`, error);
     }

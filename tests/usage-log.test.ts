@@ -2,7 +2,7 @@ import fs from 'fs-extra';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { UsageDb } from '../src/core/usage-log.js';
+import { UsageDb, USAGE_DB_MAX_ROWS } from '../src/core/usage-log.js';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -122,5 +122,20 @@ describe('UsageDb (D-036)', () => {
     const reopened = new UsageDb(dbFile);
     expect(reopened.query({ agentId: 'persist' })).toHaveLength(1);
     reopened.close();
+  });
+
+  it('caps the table at USAGE_DB_MAX_ROWS, dropping the oldest rows', async () => {
+    const { db } = await setup();
+    const cap = USAGE_DB_MAX_ROWS;
+    // 插入 cap + 5 条，started_at 逐秒递增（合法 ISO，随 id 单调）。
+    for (let i = 1; i <= cap + 5; i++) {
+      const t = new Date(Date.UTC(2026, 7, 6, 0, 0, 0) + i * 1000).toISOString();
+      record(db, { agentId: 'ops', startedAt: t, finishedAt: t });
+    }
+    const rows = db.query({ limit: cap + 10 });
+    expect(rows).toHaveLength(cap);
+    // 最旧 5 条被删，剩余 id 从 6 起。
+    expect(rows[rows.length - 1]?.id).toBe(6);
+    expect(rows[0]?.id).toBe(cap + 5);
   });
 });
