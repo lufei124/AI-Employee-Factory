@@ -29,6 +29,10 @@ describe('startWebConsole', () => {
       purged: [],
       wouldPurge: [],
     });
+    // D-032：Web 启动时拉起常驻员工（reconcileServices 被调用）。
+    const reconcile = vi
+      .spyOn(application, 'reconcileServices')
+      .mockResolvedValue({ activated: [] });
 
     const running = await startWebConsole({
       application,
@@ -45,6 +49,7 @@ describe('startWebConsole', () => {
     expect(running.origin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     expect(running.url).toBe(`${running.origin}/#session=fragment-secret`);
     expect(purge).toHaveBeenCalledOnce();
+    expect(reconcile).toHaveBeenCalledOnce();
     const response = await running.server.inject({
       method: 'GET',
       url: '/',

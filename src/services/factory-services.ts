@@ -76,6 +76,8 @@ export class LaunchdServiceAdapterFactory implements ServiceAdapterFactory {
       env,
       stdoutPath: path.join(logDir, 'bridge.stdout.log'),
       stderrPath: path.join(logDir, 'bridge.stderr.log'),
+      // D-032：员工桥接服务默认随开机常驻（RunAtLoad<true/>）；停止时由 lifecycleAction 改写为 false。
+      runAtLoad: true,
     };
     return new LaunchdServiceAdapter(
       input,

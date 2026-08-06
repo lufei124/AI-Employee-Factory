@@ -12,6 +12,8 @@ export interface LaunchdPlistInput {
   stdoutPath: string;
   stderrPath: string;
   calendar?: { hour: number; minute: number };
+  /** D-032：true 时 plist 写 RunAtLoad<true/>，员工随开机常驻；默认 false（定时任务等）。 */
+  runAtLoad?: boolean;
 }
 
 function xml(value: string): string {
@@ -38,7 +40,8 @@ export function renderLaunchdPlist(input: LaunchdPlistInput): string {
   const calendar = input.calendar
     ? `<key>StartCalendarInterval</key><dict><key>Hour</key><integer>${input.calendar.hour}</integer><key>Minute</key><integer>${input.calendar.minute}</integer></dict>`
     : '';
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>${xml(input.label)}</string><key>ProgramArguments</key>${array([input.program, ...input.args])}<key>EnvironmentVariables</key>${dictionary(input.env)}<key>WorkingDirectory</key><string>${xml(path.dirname(input.stdoutPath))}</string><key>StandardOutPath</key><string>${xml(input.stdoutPath)}</string><key>StandardErrorPath</key><string>${xml(input.stderrPath)}</string><key>RunAtLoad</key><false/>${calendar}</dict></plist>\n`;
+  const runAtLoad = input.runAtLoad === true ? '<true/>' : '<false/>';
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>${xml(input.label)}</string><key>ProgramArguments</key>${array([input.program, ...input.args])}<key>EnvironmentVariables</key>${dictionary(input.env)}<key>WorkingDirectory</key><string>${xml(path.dirname(input.stdoutPath))}</string><key>StandardOutPath</key><string>${xml(input.stdoutPath)}</string><key>StandardErrorPath</key><string>${xml(input.stderrPath)}</string><key>RunAtLoad</key>${runAtLoad}${calendar}</dict></plist>\n`;
 }
 
 export class LaunchdServiceAdapter implements ServiceAdapter {
@@ -134,5 +137,23 @@ export class LaunchdServiceAdapter implements ServiceAdapter {
     await this.stop();
     await fs.remove(this.installedFile);
     await fs.remove(this.canonicalFile);
+  }
+
+  // D-032：改写两份 plist 的 RunAtLoad（纯文件 I/O，不触碰 launchctl）。停止时调用把
+  // 「常驻」改为 false，使暂停跨重启保持；启动/重启用 bridge 默认 true（随开机拉起）。
+  async setRunAtLoad(runAtLoad: boolean): Promise<void> {
+    this.input.runAtLoad = runAtLoad;
+    await this.install();
+  }
+
+  // D-032：从 canonical plist 解析 RunAtLoad，作为「是否常驻」的持久意图来源。
+  // 文件不存在（从未 start 过）返回 false，避免把从未启动的员工误拉起。
+  async isAutoStart(): Promise<boolean> {
+    try {
+      const content = await fs.readFile(this.canonicalFile, 'utf8');
+      return /<key>RunAtLoad<\/key><true\/>/.test(content);
+    } catch {
+      return false;
+    }
   }
 }

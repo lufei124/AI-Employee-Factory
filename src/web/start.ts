@@ -25,6 +25,12 @@ export async function startWebConsole(options: StartWebConsoleOptions) {
       `警告：回收站过期清理失败：${error instanceof Error ? error.message : String(error)}`,
     );
   });
+  // D-032：拉起「意图常驻但未在跑」的员工桥接服务，并刷新真实状态——去掉手动重启激活。
+  await options.application.reconcileServices().catch((error: unknown) => {
+    console.warn(
+      `警告：员工后台服务自检失败：${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
   const bootstrapToken = options.bootstrapToken ?? randomBytes(32).toString('base64url');
   const publicDir =
     options.publicDir ?? path.dirname(fileURLToPath(new URL('./index.html', import.meta.url)));

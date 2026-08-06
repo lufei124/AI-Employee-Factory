@@ -3,7 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BridgeAdapter } from '../src/core/bridge.js';
+import { resolveFactoryPaths } from '../src/core/paths.js';
 import { renderLaunchdPlist } from '../src/services/launchd-service.js';
+import { bridgeLaunchdService } from '../src/services/factory-services.js';
 import type { AgentConfig } from '../src/schemas/agent-schema.js';
 import type { RegistryAgent } from '../src/schemas/registry-schema.js';
 
@@ -118,5 +120,46 @@ describe('launchd plist', () => {
     expect(plist).toContain('CLAUDE_CONFIG_DIR');
     expect(plist).toContain('/tmp/private/bridges/user-operations');
     expect(plist).not.toMatch(/secret|token/i);
+  });
+
+  // D-032：RunAtLoad 由 input 控制——员工桥接常驻用 true，定时任务等保持 false。
+  it('emits RunAtLoad according to the input flag', () => {
+    const base = {
+      label: 'com.aiemployees.user-operations',
+      program: '/usr/local/bin/agentctl',
+      args: ['_service', 'bridge', 'user-operations'],
+      env: { CLAUDE_CONFIG_DIR: agent.runtime_home.path },
+      stdoutPath: '/tmp/private/logs/user-operations/bridge.stdout.log',
+      stderrPath: '/tmp/private/logs/user-operations/bridge.stderr.log',
+    };
+    expect(renderLaunchdPlist({ ...base, runAtLoad: true })).toContain(
+      '<key>RunAtLoad</key><true/>',
+    );
+    expect(renderLaunchdPlist({ ...base, runAtLoad: false })).toContain(
+      '<key>RunAtLoad</key><false/>',
+    );
+    // 缺省（定时任务等）为 false，向后兼容。
+    expect(renderLaunchdPlist(base)).toContain('<key>RunAtLoad</key><false/>');
+  });
+
+  it('bridge factory installs a RunAtLoad<true/> plist (常驻随开机)', async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-bridge-runatload-'));
+    try {
+      const paths = resolveFactoryPaths({
+        HOME: home,
+        AI_EMPLOYEES_HOME: path.join(home, 'private'),
+        AI_EMPLOYEES_WORKSPACE_ROOT: path.join(home, 'agents'),
+      });
+      const service = bridgeLaunchdService(agent, runtime, paths);
+      await service.install();
+      const canonical = await fs.readFile(
+        path.join(paths.servicesDir, agent.id, 'bridge.plist'),
+        'utf8',
+      );
+      expect(canonical).toContain('<key>RunAtLoad</key><true/>');
+      expect(await service.isAutoStart()).toBe(true);
+    } finally {
+      await fs.remove(home);
+    }
   });
 });

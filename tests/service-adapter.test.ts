@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'fs-extra';
+import os from 'node:os';
+import path from 'node:path';
 import type { AgentConfig } from '../src/schemas/agent-schema.js';
 import type { JobConfig } from '../src/schemas/job-schema.js';
 import type { RegistryAgent } from '../src/schemas/registry-schema.js';
@@ -7,6 +10,7 @@ import {
   LaunchdServiceAdapterFactory,
   createServiceFactory,
 } from '../src/services/factory-services.js';
+import { LaunchdServiceAdapter } from '../src/services/launchd-service.js';
 import { SystemdServiceAdapterFactory } from '../src/services/systemd-service.js';
 
 const runtime: AgentConfig['runtime'] = { provider: 'claude', locked: true, model: 'sonnet' };
@@ -86,5 +90,58 @@ describe('SystemdServiceAdapterFactory stub (OP5-A)', () => {
     const status = await bridge.status();
     expect(status.state).toBe('error');
     expect(status.detail).toContain('systemd 服务未实现');
+  });
+});
+
+describe('LaunchdServiceAdapter RunAtLoad 常驻开关（D-032）', () => {
+  // setRunAtLoad/isAutoStart 是纯文件 I/O（不调 launchctl），用临时目录直接测。
+  async function makeAdapter() {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-runatload-'));
+    const canonical = path.join(home, 'services', 'bridge.plist');
+    const adapter = new LaunchdServiceAdapter(
+      {
+        label: 'com.aiemployees.user-operations',
+        program: '/usr/local/bin/agentctl',
+        args: ['_service', 'bridge', 'user-operations'],
+        env: { CLAUDE_CONFIG_DIR: agent.runtime_home.path },
+        stdoutPath: path.join(home, 'logs', 'bridge.stdout.log'),
+        stderrPath: path.join(home, 'logs', 'bridge.stderr.log'),
+      },
+      canonical,
+      home,
+    );
+    return { home, canonical, adapter };
+  }
+
+  it('isAutoStart is false before install (从未启动不误拉起)', async () => {
+    const { adapter, home } = await makeAdapter();
+    try {
+      expect(await adapter.isAutoStart()).toBe(false);
+    } finally {
+      await fs.remove(home);
+    }
+  });
+
+  it('setRunAtLoad toggles the flag in both canonical and installed plists', async () => {
+    const { home, canonical, adapter } = await makeAdapter();
+    try {
+      await adapter.setRunAtLoad(true);
+      expect(await adapter.isAutoStart()).toBe(true);
+      const installed = path.join(
+        home,
+        'Library',
+        'LaunchAgents',
+        'com.aiemployees.user-operations.plist',
+      );
+      expect(await fs.readFile(canonical, 'utf8')).toContain('<key>RunAtLoad</key><true/>');
+      expect(await fs.readFile(installed, 'utf8')).toContain('<key>RunAtLoad</key><true/>');
+
+      await adapter.setRunAtLoad(false);
+      expect(await adapter.isAutoStart()).toBe(false);
+      expect(await fs.readFile(canonical, 'utf8')).toContain('<key>RunAtLoad</key><false/>');
+      expect(await fs.readFile(installed, 'utf8')).toContain('<key>RunAtLoad</key><false/>');
+    } finally {
+      await fs.remove(home);
+    }
   });
 });

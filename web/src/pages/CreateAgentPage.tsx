@@ -286,9 +286,6 @@ export function CreateAgentPage() {
                   placeholder="例如 content-operator"
                   className="font-mono"
                 />
-                <p className="text-xs text-muted-foreground">
-                  用于工作区和终端命令，系统会自动生成，也可手动修改。
-                </p>
               </div>
             </div>
 

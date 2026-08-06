@@ -168,8 +168,14 @@ export class FactoryApplication {
   async listAgents(): Promise<AgentSummary[]> {
     const data = await this.registry.read();
     // OP3-A 长期：Registry 不再持有 provider，逐个读 agent.yaml 取实时 provider（N+1）。
+    // D-032：顺带观测 launchd 真实状态，目录/仪表盘显示真实 running/stopped。
     return Promise.all(
-      data.agents.map(async (agent) => this.toSummary(agent, await this.readProvider(agent))),
+      data.agents.map(async (agent) => {
+        const provider = await this.readProvider(agent);
+        const runtime = await this.tryReadRuntime(agent);
+        const status = runtime ? await this.refreshAgentStatus(agent, runtime) : agent.status;
+        return this.toSummary({ ...agent, status }, provider);
+      }),
     );
   }
 
@@ -192,9 +198,51 @@ export class FactoryApplication {
     };
   }
 
+  // D-032：Web 控制台启动时调用。把「意图常驻(auto-start)但没在跑」的桥接服务拉起来，
+  // 并把「已停止但仍在跑」的服务关停，最后刷新 registry 真实状态。best-effort，逐员工 catch。
+  async reconcileServices(): Promise<{ activated: string[] }> {
+    const data = await this.registry.read();
+    const activated: string[] = [];
+    for (const agent of data.agents) {
+      if (agent.archived || !agent.bridge.enabled) continue;
+      try {
+        const config = await readAgentConfigFile(path.join(agent.workspace.path, 'agent.yaml'));
+        const service = bridgeLaunchdService(agent, config.runtime, this.paths);
+        const [autoStart, real] = await Promise.all([service.isAutoStart(), service.status()]);
+        let nextStatus: RegistryAgent['status'];
+        if (autoStart && real.state !== 'running' && agent.bridge.authorization === 'ready') {
+          await this.prepareRuntime(agent, config);
+          await this.secureBridgeProfile(agent, config.runtime);
+          await service.start();
+          activated.push(agent.id);
+          nextStatus = 'running';
+        } else if (!autoStart && real.state === 'running') {
+          await service.stop();
+          await service.setRunAtLoad(false);
+          nextStatus = 'stopped';
+        } else {
+          nextStatus = real.state === 'running' ? 'running' : 'stopped';
+        }
+        if (nextStatus !== agent.status) {
+          await this.registry.updateAgent(agent.id, (current) => ({
+            ...current,
+            status: nextStatus,
+            updated_at: new Date().toISOString(),
+          }));
+        }
+      } catch {
+        // best-effort：单个员工故障/未就绪不阻断整体
+      }
+    }
+    return { activated };
+  }
+
   async getAgent(id: string): Promise<{ registry: RegistryAgent; agent: AgentConfig }> {
     const registry = await getRegisteredAgent(this.registry, id);
-    return { registry, agent: await loadPortableConfig(registry) };
+    const agent = await loadPortableConfig(registry);
+    // D-032：返回前观测真实状态（launchd 实际运行与否），详情页状态徽章不显示缓存。
+    registry.status = await this.refreshAgentStatus(registry, agent.runtime);
+    return { registry, agent };
   }
 
   async readDocument(id: string, rawKey: AgentDocumentKey | string): Promise<AgentDocument> {
@@ -724,6 +772,9 @@ export class FactoryApplication {
       return { state, detail: status.detail };
     }
     await service[action]();
+    // D-032：停止＝暂停。改写 plist RunAtLoad 为 false，使「停机」跨重启保持（开机不再自动拉起）；
+    // start/restart 由 bridge 默认 RunAtLoad true 重写，保持常驻。
+    if (action === 'stop') await service.setRunAtLoad(false);
     const state = action === 'stop' ? 'stopped' : 'running';
     await this.registry.updateAgent(id, (current) => ({
       ...current,
@@ -815,6 +866,17 @@ export class FactoryApplication {
       (agent) => agent.id === entry?.agentId,
     );
     if (restored) {
+      // D-032：回收站恢复的员工不自动常驻——改写 plist RunAtLoad 为 false，需用户重新启动。
+      if (restored.bridge.enabled) {
+        try {
+          const config = await readAgentConfigFile(
+            path.join(restored.workspace.path, 'agent.yaml'),
+          );
+          await bridgeLaunchdService(restored, config.runtime, this.paths).setRunAtLoad(false);
+        } catch {
+          // best-effort：config 缺失/损坏时跳过常驻开关
+        }
+      }
       await this.syncCurrentState(restored.id, restored.workspace.path, {
         state: '已恢复',
         last_event: '恢复员工',
@@ -1151,6 +1213,42 @@ export class FactoryApplication {
     } catch {
       return 'unknown';
     }
+  }
+
+  // D-032：容错读完整 runtime（供观测真实状态）。配置缺失/损坏返回 null，list 不因单员工失败。
+  private async tryReadRuntime(agent: RegistryAgent): Promise<AgentConfig['runtime'] | null> {
+    try {
+      const config = await readAgentConfigFile(path.join(agent.workspace.path, 'agent.yaml'));
+      return config.runtime;
+    } catch {
+      return null;
+    }
+  }
+
+  // D-032：观测 launchd 真实运行状态并回写 registry。桥接未启用→stopped；观测失败（如无 launchctl）
+  // 返回原值不抛、不自动启动，保证测试/CI 确定性。仅观测，不触发启动。
+  private async refreshAgentStatus(
+    registry: RegistryAgent,
+    runtime: AgentConfig['runtime'],
+  ): Promise<RegistryAgent['status']> {
+    if (registry.archived) return registry.status;
+    if (!registry.bridge.enabled) return 'stopped';
+    let state: 'running' | 'stopped' = registry.status === 'running' ? 'running' : 'stopped';
+    try {
+      const service = bridgeLaunchdService(registry, runtime, this.paths);
+      const real = await service.status();
+      state = real.state === 'running' ? 'running' : 'stopped';
+    } catch {
+      return registry.status;
+    }
+    if (state !== registry.status) {
+      await this.registry.updateAgent(registry.id, (current) => ({
+        ...current,
+        status: state,
+        updated_at: new Date().toISOString(),
+      }));
+    }
+    return state;
   }
 
   private async documentFile(
