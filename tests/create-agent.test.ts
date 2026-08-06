@@ -108,13 +108,16 @@ describe('CreateAgentService', () => {
       YAML.parse(await fs.readFile(path.join(claude.workspace, 'agent.yaml'), 'utf8')),
     );
     expect(claudeConfig.memory.enforced).toBe(true);
+    // D-041 P1-1：三个自进化开关新建即显式写 true（agent.yaml 自文档化，不依赖运行时默认）。
+    expect(claudeConfig.memory.transcript_persist).toBe(true);
+    expect(claudeConfig.memory.experience_extraction).toBe(true);
+    expect(claudeConfig.memory.skill_self_creation).toBe(true);
     const claudePrompt = await fs.readFile(path.join(claude.workspace, 'CLAUDE.md'), 'utf8');
     expect(claudePrompt).toContain('## 记忆权威顺序');
     expect(claudePrompt).toContain('1. agent（岗位正式文件');
     // OP6-B：运行指南含当前状态维护约定。
     expect(claudePrompt).toContain('## 当前状态维护');
     expect(claudePrompt).toContain('agent/CURRENT_STATE.md');
-
     const codex = await service.create({
       id: 'codex-stance',
       name: 'Codex Stance',

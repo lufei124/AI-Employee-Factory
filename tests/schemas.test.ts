@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { agentConfigSchema, agentIdSchema } from '../src/schemas/agent-schema.js';
+import {
+  agentConfigSchema,
+  agentIdSchema,
+  DEFAULT_MEMORY_FLAGS,
+  resolveMemoryFlags,
+} from '../src/schemas/agent-schema.js';
 import { jobConfigSchema } from '../src/schemas/job-schema.js';
 import { presetSchema } from '../src/schemas/preset-schema.js';
 import { generatedProfileSchema } from '../src/core/employee-generator.js';
@@ -68,6 +73,59 @@ describe('agent schemas', () => {
         memory: { ...validAgent.memory, enforced: false },
       }).memory.enforced,
     ).toBe(false);
+  });
+
+  it('accepts D-041 P1-4 optional memory fields and treats them as optional for compat', () => {
+    // 旧 agent.yaml（无这些字段）解析为 undefined，不报错。
+    const legacy = agentConfigSchema.parse(validAgent).memory;
+    expect(legacy.reflection_enabled).toBeUndefined();
+    expect(legacy.identity_protocol).toBeUndefined();
+    expect(legacy.identity_edits).toBeUndefined();
+    // 新 agent.yaml 显式声明可解析。
+    const explicit = agentConfigSchema.parse({
+      ...validAgent,
+      memory: {
+        ...validAgent.memory,
+        reflection_enabled: false,
+        identity_protocol: 'enforced',
+        identity_edits: 'proposal_required',
+      },
+    }).memory;
+    expect(explicit.reflection_enabled).toBe(false);
+    expect(explicit.identity_protocol).toBe('enforced');
+    expect(explicit.identity_edits).toBe('proposal_required');
+  });
+
+  it('resolveMemoryFlags maps undefined flags to defaults and preserves explicit false (D-041 P1-1)', () => {
+    // 旧 agent.yaml（缺失三开关）归一为默认 true。
+    const resolved = resolveMemoryFlags(agentConfigSchema.parse(validAgent).memory);
+    expect(resolved).toEqual({
+      transcript_persist: true,
+      experience_extraction: true,
+      skill_self_creation: true,
+    });
+    expect(resolved).toEqual(DEFAULT_MEMORY_FLAGS);
+    // 显式 false 保留（用户关闭意图）。
+    const withFalse = resolveMemoryFlags(
+      agentConfigSchema.parse({
+        ...validAgent,
+        memory: {
+          ...validAgent.memory,
+          transcript_persist: false,
+          experience_extraction: false,
+          skill_self_creation: false,
+        },
+      }).memory,
+    );
+    expect(withFalse).toEqual({
+      transcript_persist: false,
+      experience_extraction: false,
+      skill_self_creation: false,
+    });
+    // 不修改原对象。
+    const original = agentConfigSchema.parse(validAgent).memory;
+    resolveMemoryFlags(original);
+    expect(original.transcript_persist).toBeUndefined();
   });
 });
 

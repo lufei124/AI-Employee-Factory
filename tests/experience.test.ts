@@ -119,20 +119,25 @@ describe('FactoryApplication experience extraction (OP1 Stage D)', () => {
     );
     expect(result.transcriptFile).toBeDefined();
     await application.extractExperience(agentId, result.transcriptFile!);
-    // 提取出的 lesson 文件名带运行日期（来自 transcript 的 finished_at），动态匹配。
+    // D-041 P1-2：公开入口走两级——一级原始记录始终落盘到 lessons/raw/（文件名带运行日期）。
     const today = new Date().toISOString().slice(0, 10);
-    const lessonFile = path.join(lessonsDir(application, agentId), `${today}-user-operations.md`);
-    expect(await fs.pathExists(lessonFile)).toBe(true);
-    const content = await fs.readFile(lessonFile, 'utf8');
+    const rawFile = path.join(
+      lessonsDir(application, agentId),
+      'raw',
+      `${today}-user-operations.md`,
+    );
+    expect(await fs.pathExists(rawFile)).toBe(true);
+    const content = await fs.readFile(rawFile, 'utf8');
     expect(content).toContain('结论：采用 PersonalAgent');
+    expect(content).toContain('title: 原始会话经验');
     // 写回后索引应能 recall 到该经验条目。
     const recall = await application.knowledgeRecall(agentId, '经验');
     expect(recall.hits.some((hit) => hit.entry.relPath.includes('lessons/'))).toBe(true);
   });
 
-  it('does not extract when experience_extraction is off', async () => {
+  it('records raw experience even when experience_extraction is off（一级始终落盘）', async () => {
     const { application, agentId } = await setup(false);
-    // 即使 transcript 落盘，experience_extraction=false 也不写 lessons。
+    // D-041 P1-2：experience_extraction=false 仅关闭二级提炼；一级原始记录始终写 raw/（防丢现场）。
     const runner = new (await import('../src/core/process-runner.js')).ProcessRunner(
       application.paths.logsDir,
     );
@@ -149,8 +154,19 @@ describe('FactoryApplication experience extraction (OP1 Stage D)', () => {
     );
     expect(result.transcriptFile).toBeDefined();
     await application.extractExperience(agentId, result.transcriptFile!);
-    // lessons/ 目录由 workspace 模板种子预建，但 experience_extraction=false 时不产生任何经验文件。
-    const files = await fs.readdir(lessonsDir(application, agentId));
-    expect(files.filter((name) => name.endsWith('.md'))).toEqual([]);
+    // 一级原始记录仍写（与开关无关）。
+    const today = new Date().toISOString().slice(0, 10);
+    const rawFile = path.join(
+      lessonsDir(application, agentId),
+      'raw',
+      `${today}-user-operations.md`,
+    );
+    expect(await fs.pathExists(rawFile)).toBe(true);
+    // 二级提炼目录保持为空（experience_extraction=false 不提炼）。
+    const refinedDir = path.join(lessonsDir(application, agentId), 'refined');
+    const refinedFiles = (await fs.readdir(refinedDir).catch(() => [])).filter((name) =>
+      name.endsWith('.md'),
+    );
+    expect(refinedFiles).toEqual([]);
   });
 });
