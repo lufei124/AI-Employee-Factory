@@ -60,6 +60,15 @@ export const portableMemorySchema = z.object({
   // 自动生成并注册 Skill（best-effort，失败不阻断 runJob）。optional 向后兼容旧 agent.yaml。
   // 硬约束：仅当 transcript_persist=true（信号来源）时才生效，不独立启用。
   skill_self_creation: z.boolean().optional(),
+  // D-041 P1-4：二级经验提炼开关。true/undefined 时按重要性累积触发提炼（reflection-signals +
+  // experience-refiner）；false 时仅一级原始记录落盘（raw/），不提炼。optional 向后兼容。
+  reflection_enabled: z.boolean().optional(),
+  // D-041 P1-4：身份修订协议。'advisory'（默认，warn+拒提交留现场）/ 'enforced'（违规文件拒提交 +
+  // CURRENT_STATE 记录）。optional 向后兼容。
+  identity_protocol: z.enum(['advisory', 'enforced']).optional(),
+  // D-041 P1-4：身份编辑方式。'proposal_required'（核心身份改动须提案批准）/ 'direct'（用户聊天直接
+  // 授权可直改）。本批仅声明，M3 提案对账时生效。
+  identity_edits: z.enum(['proposal_required', 'direct']).optional(),
 });
 export type PortableMemorySchema = z.infer<typeof portableMemorySchema>;
 
@@ -102,3 +111,32 @@ export const agentConfigSchema = z.object({
 
 export type AgentConfig = z.infer<typeof agentConfigSchema>;
 export type RuntimeProvider = z.infer<typeof runtimeProviderSchema>;
+
+// D-041 P1-1：三个自进化开关的默认值。新建员工显式写 true；存量员工 agent.yaml 缺失
+// （undefined）时按此默认启用（resolveMemoryFlags 归一）。显式 false 尊重用户关闭意图，不回填。
+export const DEFAULT_MEMORY_FLAGS = {
+  transcript_persist: true,
+  experience_extraction: true,
+  skill_self_creation: true,
+} as const;
+
+/**
+ * 归一记忆开关：undefined → 默认 true，显式值原样保留。
+ * 所有读取自进化开关的调用点都应经此函数，避免散落的 `=== true` 判定漏掉默认开。
+ * 返回浅拷贝，不修改原对象。
+ * 注：返回类型写具体对象而非 `Required<Pick<...>>`——exactOptionalPropertyTypes 下
+ * Required 只去 `?` 不剥离 undefined，会让调用点（如 runLogged 的 transcript 布尔）
+ * 出现 `boolean | undefined` 类型不兼容。
+ */
+export function resolveMemoryFlags(memory: PortableMemorySchema): {
+  transcript_persist: boolean;
+  experience_extraction: boolean;
+  skill_self_creation: boolean;
+} {
+  return {
+    transcript_persist: memory.transcript_persist ?? DEFAULT_MEMORY_FLAGS.transcript_persist,
+    experience_extraction:
+      memory.experience_extraction ?? DEFAULT_MEMORY_FLAGS.experience_extraction,
+    skill_self_creation: memory.skill_self_creation ?? DEFAULT_MEMORY_FLAGS.skill_self_creation,
+  };
+}

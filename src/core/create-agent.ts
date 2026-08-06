@@ -206,6 +206,11 @@ export class CreateAgentService {
         authority_order: ['agent', 'knowledge', 'decisions', 'skills', 'native_memory', 'session'],
         // OP1 Stage A：新建员工默认启用运行时强制（prepareRuntime 校验 authority_order 不变量）。
         enforced: true,
+        // D-041 P1-1：三个自进化开关新建即默认开（transcript 落盘 / 经验提取 / skill 自建）。
+        // 与 DEFAULT_MEMORY_FLAGS 一致；显式写入使 agent.yaml 自文档化，不依赖运行时默认。
+        transcript_persist: true,
+        experience_extraction: true,
+        skill_self_creation: true,
       },
       feishu:
         input.feishu === 'dedicated'

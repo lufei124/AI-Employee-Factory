@@ -6,6 +6,12 @@ import type { TranscriptSummary } from './transcript.js';
 // 写回经 documentFile 的 assertInside+realpath+symlink 硬约束模式（与 knowledgeWrite 复用同一 root）。
 // 默认 no-op，用户显式 opt-in（agent.yaml.memory.experience_extraction=true）。
 // 硬约束：仅当 transcript_persist=true（Stage C 落地）时才生效，Stage D 不独立启用。
+//
+// D-041 P1-2：经验两级化。
+//  - 一级（始终写）：transcript 落盘即同步写 `knowledge/lessons/raw/<date>-<agent>.md`——
+//    DefaultExperienceExtractor 保留作原始记录格式化器，不依赖任何开关（防丢现场）。
+//  - 二级（importance 触发）：reflection.ts 累积信号 + experience-refiner.ts 提炼，由
+//    experience_extraction / reflection_enabled 控制（见 reflection.ts）。
 
 /** 一条可写回知识的记忆资产。 */
 export interface MemoryAsset {
@@ -74,4 +80,51 @@ export function sanitizeSlug(value: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '');
   return normalized || 'agent';
+}
+
+// D-041 P1-2 一级：原始经验记录始终落盘。transcript 摘要一到（runJob/飞书消息）即同步写
+// `knowledge/lessons/raw/<date>-<agent>.md`——不依赖 experience_extraction 开关（防丢现场）。
+// 原始记录是二级提炼的证据源（experience-refiner 的 `because of raw/<file>:<line>`）。
+
+/** 渲染原始经验记录全文（frontmatter + 主题/决策/经验/尾行）。 */
+export function renderRawExperience(
+  summary: TranscriptSummary,
+  options: { agentId: string },
+): string {
+  const body: string[] = [];
+  if (summary.topics.length > 0) {
+    body.push('## 主题', ...summary.topics.map((topic) => `- ${topic}`), '');
+  }
+  if (summary.decisions.length > 0) {
+    body.push('## 决策', ...summary.decisions.map((decision) => `- ${decision}`), '');
+  }
+  if (summary.lessons.length > 0) {
+    body.push('## 经验', ...summary.lessons.map((lesson) => `- ${lesson}`), '');
+  }
+  if (summary.tail.length > 0) {
+    body.push('## 输出尾行（脱敏）', ...summary.tail.map((line) => `- \`${line}\``), '');
+  }
+  return [
+    '---',
+    'title: 原始会话经验',
+    'summary: 自动记录自 transcript（D-041 P1-2 一级，始终落盘）',
+    'keywords: [经验, 原始, transcript]',
+    'authority_layer: knowledge',
+    `updated_at: ${summary.finished_at.slice(0, 10)}`,
+    `source_agent: ${options.agentId}`,
+    `source_transcript: ${summary.operation} @ ${summary.finished_at}`,
+    '---',
+    '',
+    ...body,
+  ].join('\n');
+}
+
+/** 原始记录相对 knowledge/ 的路径：`lessons/raw/<date>-<agent>.md`。 */
+export function rawExperienceRelPath(
+  summary: TranscriptSummary,
+  options: { agentId: string },
+): string {
+  const date = summary.finished_at.slice(0, 10) || 'unknown-date';
+  const slug = sanitizeSlug(options.agentId);
+  return path.posix.join('lessons', 'raw', `${date}-${slug}.md`);
 }
