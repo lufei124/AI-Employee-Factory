@@ -662,7 +662,7 @@ Updated at: 2026-08-06 13:56 +0800
 Task ID: TASK-040
 Title: 分层自进化协议 P0（身份守卫）——identity-guard + identity-baseline + proposals 目录约定 + 系统提示文案（D-041 前置）
 Owner agent: claude-20260806-01
-Status: IN_PROGRESS
+Status: DONE
 Branch/worktree: main
 Allowed scope: src/core/identity-guard.ts（新）、src/core/identity-baseline.ts（新）、src/application/factory-application.ts、src/core/templates.ts、templates/claude-agent/ENTRY.md.tmpl、templates/codex-agent/ENTRY.md.tmpl、templates/factory-skill/SKILL.md、tests/identity-guard.test.ts（新）、tests/identity-baseline.test.ts（新）、tests/self-evolution.test.ts、docs/DECISIONS.md、docs/ARCHITECTURE.md、README.md、.agent 簿记
 Forbidden scope: 不做 schema 变更/迁移（P0 零 schema 变更）；不新增审批服务/DB/向量库；不改 Web 编辑入口（P1-3 Web 只读化在 M3）；不引入对外网络外发
