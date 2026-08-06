@@ -235,24 +235,6 @@ export const api = {
       body: JSON.stringify({ content }),
     }),
   listJobs: (id: string) => request<JobConfig[]>(`/agents/${encodeURIComponent(id)}/jobs`),
-  createJob: (id: string, job: JobConfig) =>
-    request<JobConfig>(`/agents/${encodeURIComponent(id)}/jobs`, {
-      method: 'POST',
-      body: JSON.stringify(job),
-    }),
-  updateJob: (id: string, job: JobConfig) =>
-    request<JobConfig>(`/agents/${encodeURIComponent(id)}/jobs/${job.id}`, {
-      method: 'PUT',
-      body: JSON.stringify(job),
-    }),
-  jobAction: (id: string, jobId: string, action: 'enable' | 'disable' | 'run' | 'archive') =>
-    request<JobConfig | OperationDto | { archived: boolean }>(
-      `/agents/${encodeURIComponent(id)}/jobs/${encodeURIComponent(jobId)}/actions/${action}`,
-      {
-        method: 'POST',
-        body: JSON.stringify(action === 'archive' ? { confirmJobId: jobId } : {}),
-      },
-    ),
   listSkills: (id: string) => request<SkillMetadata[]>(`/agents/${encodeURIComponent(id)}/skills`),
   uploadSkill: (id: string, files: File[], scope?: SkillScope) => {
     const data = new FormData();
@@ -341,20 +323,10 @@ export const api = {
     request<OperationDto>(id ? `/agents/${encodeURIComponent(id)}/doctor` : '/doctor', {
       method: 'POST',
     }),
-  runAgent: (id: string, task: string, timeoutSeconds = 900) =>
-    request<OperationDto>(`/agents/${encodeURIComponent(id)}/run`, {
-      method: 'POST',
-      body: JSON.stringify({ task, timeoutSeconds }),
-    }),
   listOperations: () => request<OperationDto[]>('/operations'),
   operation: (id: string) => request<OperationDto>(`/operations/${id}`),
   operationEvents: (id: string, after = 0) =>
     request<Array<{ seq: number; kind: string; message?: string; progress?: number }>>(
       `/operations/${id}/events?after=${after}`,
     ),
-  chat: (id: string, prompt: string, timeoutSeconds?: number) =>
-    request<OperationDto>(`/agents/${encodeURIComponent(id)}/actions/chat`, {
-      method: 'POST',
-      body: JSON.stringify(timeoutSeconds ? { prompt, timeoutSeconds } : { prompt }),
-    }),
 };

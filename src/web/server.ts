@@ -12,7 +12,6 @@ import { z, ZodError } from 'zod';
 import type { FactoryApplication } from '../application/factory-application.js';
 import { AgentCtlError } from '../core/errors.js';
 import { createAgentInputSchema } from '../core/create-agent.js';
-import { jobConfigSchema } from '../schemas/job-schema.js';
 import type { SkillScope } from '../core/skills.js';
 import { OperationManager } from '../core/operation-manager.js';
 import { OperationStore } from '../core/operation-store.js';
@@ -308,67 +307,6 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
     data: await options.application.listJobs(request.params.id),
   }));
 
-  server.post<{ Params: { id: string } }>('/api/v1/agents/:id/jobs', async (request, reply) => {
-    const job = await options.application.createJob(
-      request.params.id,
-      jobConfigSchema.parse(request.body),
-    );
-    reply.code(201);
-    return { data: job };
-  });
-
-  server.put<{ Params: { id: string; jobId: string } }>(
-    '/api/v1/agents/:id/jobs/:jobId',
-    async (request) => ({
-      data: await options.application.updateJob(
-        request.params.id,
-        request.params.jobId,
-        jobConfigSchema.parse(request.body),
-      ),
-    }),
-  );
-
-  server.post<{ Params: { id: string; jobId: string; action: string } }>(
-    '/api/v1/agents/:id/jobs/:jobId/actions/:action',
-    async (request, reply) => {
-      const action = z.enum(['enable', 'disable', 'run', 'archive']).parse(request.params.action);
-      if (action === 'enable' || action === 'disable') {
-        return {
-          data: await options.application.setJobEnabled(
-            request.params.id,
-            request.params.jobId,
-            action === 'enable',
-          ),
-        };
-      }
-      if (action === 'archive') {
-        const body = z.object({ confirmJobId: z.string() }).parse(request.body);
-        if (body.confirmJobId !== request.params.jobId) {
-          throw new AgentCtlError('VALIDATION_ERROR', '任务归档确认不匹配。');
-        }
-        await options.application.archiveJob(request.params.id, request.params.jobId);
-        return { data: { archived: true } };
-      }
-      const operation = operations.start(
-        'job',
-        request.params.id,
-        async ({ signal, emit, operationId, traceId }) => {
-          const result = await options.application.runJob(request.params.id, request.params.jobId, {
-            mirror: false,
-            signal,
-            operationId,
-            traceId,
-            onStdout: (message) => emit({ kind: 'output', stream: 'stdout', message }),
-            onStderr: (message) => emit({ kind: 'output', stream: 'stderr', message }),
-          });
-          return { exitCode: result.exitCode };
-        },
-      );
-      reply.code(202);
-      return { data: operation };
-    },
-  );
-
   server.get<{ Params: { id: string } }>('/api/v1/agents/:id/skills', async (request) => ({
     data: await options.application.listSkills(request.params.id),
   }));
@@ -609,34 +547,6 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
     },
   );
 
-  // Web 单轮对话（D-024）：非交互单轮（claude -p / codex exec，stdout 为结构化 JSON）。
-  // 后台 Operation 推送进度事件；完成时把最终回答（解析后的文本）作为 output 事件写入，前端轮询读回。
-  // 原始 diff/对话记录不持久化（D-022/D-006 边界保持）。
-  server.post<{ Params: { id: string } }>(
-    '/api/v1/agents/:id/actions/chat',
-    async (request, reply) => {
-      const body = z
-        .object({
-          prompt: z.string().min(1),
-          timeoutSeconds: z.number().int().min(1).max(86_400).optional(),
-        })
-        .parse(request.body);
-      const operation = operations.start('chat', request.params.id, async ({ emit }) => {
-        emit({ kind: 'progress', progress: 10, message: '开始对话' });
-        const { text } = await options.application.runChat(
-          request.params.id,
-          body.prompt,
-          body.timeoutSeconds ?? 300,
-        );
-        emit({ kind: 'progress', progress: 90, message: '对话完成' });
-        emit({ kind: 'output', message: text });
-        return { exitCode: 0 };
-      });
-      reply.code(202);
-      return { data: operation };
-    },
-  );
-
   server.get('/api/v1/backups', async () => ({ data: await options.application.listBackups() }));
 
   server.post('/api/v1/backups/import', async (request, reply) => {
@@ -738,37 +648,6 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
       }
       return { exitCode: report.summary.fail > 0 ? 6 : 0 };
     });
-    reply.code(202);
-    return { data: operation };
-  });
-
-  server.post<{ Params: { id: string } }>('/api/v1/agents/:id/run', async (request, reply) => {
-    const body = z
-      .object({
-        task: z.string().min(1).max(65_536),
-        timeoutSeconds: z.number().int().min(1).max(86_400).default(900),
-      })
-      .parse(request.body);
-    const operation = operations.start(
-      'run',
-      request.params.id,
-      async ({ signal, emit, operationId, traceId }) => {
-        const result = await options.application.runAgent(
-          request.params.id,
-          body.task,
-          body.timeoutSeconds,
-          {
-            mirror: false,
-            signal,
-            operationId,
-            traceId,
-            onStdout: (message) => emit({ kind: 'output', stream: 'stdout', message }),
-            onStderr: (message) => emit({ kind: 'output', stream: 'stderr', message }),
-          },
-        );
-        return { exitCode: result.exitCode, ...(result.usage ? { usage: result.usage } : {}) };
-      },
-    );
     reply.code(202);
     return { data: operation };
   });

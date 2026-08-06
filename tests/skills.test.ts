@@ -87,6 +87,29 @@ describe('SkillService', () => {
     expect(metadata?.digest).toMatch(/^[a-f0-9]{64}$/);
   });
 
+  it('lists a manually-copied skill that has SKILL.md but no .agentctl.yaml (D-033)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-'));
+    roots.push(root);
+    const workspace = path.join(root, 'agent');
+    // 模拟用户手动拷贝进 store 目录：只有 SKILL.md，没有 .agentctl.yaml（仅 install()/导入流程写）。
+    await fs.outputFile(
+      path.join(workspace, 'skills/game-feedback-collector/SKILL.md'),
+      '---\nname: game-feedback-collector\ndescription: 收集游戏反馈\nversion: 1.2.0\n---\n',
+    );
+    // 无 SKILL.md 的目录不应被列出。
+    await fs.outputFile(path.join(workspace, 'skills/not-a-skill/README.md'), 'no skill here\n');
+
+    const list = await new SkillService(workspace, 'claude').list();
+
+    const manual = list.find((s) => s.name === 'game-feedback-collector');
+    expect(manual).toBeDefined();
+    expect(manual?.version).toBe('1.2.0');
+    expect(manual?.source).toBe('manual');
+    expect(manual?.scope).toBe('project');
+    expect(manual?.digest).toMatch(/^[a-f0-9]{64}$/);
+    expect(list.some((s) => s.name === 'not-a-skill')).toBe(false);
+  });
+
   it('stores user-scope skills in runtimeHome and does not project them', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-'));
     roots.push(root);

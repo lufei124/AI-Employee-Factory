@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useNavigate } from 'react-router-dom';
-import YAML from 'yaml';
 import {
   Archive,
   Bot,
@@ -13,7 +12,6 @@ import {
   PlugZap,
   RefreshCw,
   Save,
-  Send,
   Square,
   Store,
   Terminal,
@@ -79,8 +77,6 @@ function OverviewTab({
   const [pendingAction, setPendingAction] = useState<'start' | 'stop' | 'restart'>();
   const [feedback, setFeedback] = useState('');
   const [trashing, setTrashing] = useState(false);
-  const [task, setTask] = useState('');
-  const [operation, setOperation] = useState<OperationDto>();
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
   const terminalGuidance = [
@@ -257,43 +253,6 @@ function OverviewTab({
         </section>
       </div>
 
-      <section className="rounded-xl border border-border bg-card p-5">
-        <div className="mb-4">
-          <h2 className="text-sm font-semibold">执行一次性任务</h2>
-          <span className="text-xs text-muted-foreground">
-            输出会实时进入操作中心，并完整写入隔离日志
-          </span>
-        </div>
-        <Textarea
-          aria-label="任务内容"
-          rows={4}
-          value={task}
-          onChange={(event) => setTask(event.target.value)}
-          placeholder="例如：整理今天的用户反馈并给出优先级建议"
-        />
-        <div className="mt-4 flex items-center justify-between">
-          <span className="font-mono text-xs text-muted-foreground">
-            {operation ? `Operation ${operation.id}` : '默认超时 900 秒'}
-          </span>
-          <Button
-            disabled={!task.trim()}
-            onClick={async () => {
-              try {
-                const next = await api.runAgent(registry.id, task);
-                setOperation(next);
-                setTask('');
-                notify.success('任务已提交到操作中心');
-              } catch (cause) {
-                setError(cause instanceof Error ? cause.message : String(cause));
-              }
-            }}
-          >
-            <Play className="size-4" />
-            运行任务
-          </Button>
-        </div>
-      </section>
-
       <PromptDialog
         open={archiveOpen}
         onOpenChange={setArchiveOpen}
@@ -409,116 +368,18 @@ function DocumentsTab({ agentId }: { agentId: string }) {
 
 function JobsTab({ agentId }: { agentId: string }) {
   const [jobs, setJobs] = useState<JobConfig[]>([]);
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string>();
-  const [kind, setKind] = useState<'agent' | 'script'>('agent');
-  const [id, setId] = useState('');
-  const [time, setTime] = useState('09:00');
-  const [file, setFile] = useState('prompts/daily.md');
-  const [timeout, setTimeoutValue] = useState(900);
-  const [interpreter, setInterpreter] = useState<'node' | 'bash' | 'direct'>('node');
-  const [args, setArgs] = useState('');
-  const [precheck, setPrecheck] = useState(false);
-  const [precheckFile, setPrecheckFile] = useState('scripts/precheck.mjs');
-  const [noDataExitCode, setNoDataExitCode] = useState(3);
   const [error, setError] = useState('');
-  const [archiveJob, setArchiveJob] = useState<JobConfig>();
   const load = async () => setJobs(await api.listJobs(agentId));
   useEffect(() => {
     void load().catch((cause: unknown) => setError(String(cause)));
   }, [agentId]);
-  const save = async () => {
-    const base = {
-      schema_version: 1 as const,
-      id,
-      enabled: false,
-      managed_by: 'admin' as const,
-      schedule: { type: 'daily' as const, time },
-    };
-    const parsedArgs = args.split(/\s+/).filter(Boolean);
-    const job: JobConfig =
-      kind === 'agent'
-        ? {
-            ...base,
-            execution: {
-              type: 'agent',
-              prompt_file: file,
-              timeout_seconds: timeout,
-              concurrency: 'forbid',
-              ...(precheck
-                ? {
-                    precheck: {
-                      script_file: precheckFile,
-                      interpreter,
-                      args: parsedArgs,
-                      no_data_exit_code: noDataExitCode,
-                    },
-                  }
-                : {}),
-            },
-          }
-        : {
-            ...base,
-            execution: {
-              type: 'script',
-              script_file: file,
-              interpreter,
-              args: parsedArgs,
-              timeout_seconds: timeout,
-              concurrency: 'forbid',
-            },
-          };
-    try {
-      if (editingId) await api.updateJob(agentId, job);
-      else await api.createJob(agentId, job);
-      setShowForm(false);
-      setEditingId(undefined);
-      setId('');
-      await load();
-      notify.success(editingId ? '任务已更新' : '任务已创建');
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  };
-  const edit = (job: JobConfig) => {
-    setEditingId(job.id);
-    setId(job.id);
-    setTime(job.schedule.time);
-    setKind(job.execution.type);
-    setTimeoutValue(job.execution.timeout_seconds);
-    if (job.execution.type === 'script') {
-      setFile(job.execution.script_file);
-      setInterpreter(job.execution.interpreter);
-      setArgs(job.execution.args.join(' '));
-      setPrecheck(false);
-    } else {
-      setFile(job.execution.prompt_file);
-      setPrecheck(Boolean(job.execution.precheck));
-      setPrecheckFile(job.execution.precheck?.script_file ?? 'scripts/precheck.mjs');
-      setInterpreter(job.execution.precheck?.interpreter ?? 'node');
-      setArgs(job.execution.precheck?.args.join(' ') ?? '');
-      setNoDataExitCode(job.execution.precheck?.no_data_exit_code ?? 3);
-    }
-    setShowForm(true);
-  };
   return (
     <section className="rounded-xl border border-border bg-card">
       <div className="flex items-center justify-between border-b border-border px-5 py-4">
         <div>
           <h2 className="text-sm font-semibold">定时任务</h2>
-          <span className="text-xs text-muted-foreground">daily · concurrency forbid</span>
+          <span className="text-xs text-muted-foreground">由员工（AI）自行配置 · 只读展示</span>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            setEditingId(undefined);
-            setId('');
-            setShowForm(!showForm);
-          }}
-        >
-          {showForm ? '收起表单' : '新建任务'}
-        </Button>
       </div>
       {error && (
         <div className="mx-5 mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
@@ -526,141 +387,11 @@ function JobsTab({ agentId }: { agentId: string }) {
         </div>
       )}
       <div className="p-5">
-        {showForm && (
-          <div className="mb-6 rounded-lg border border-border p-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="grid gap-1.5">
-                <Label>Job ID</Label>
-                <Input
-                  value={id}
-                  disabled={Boolean(editingId)}
-                  onChange={(event) => setId(event.target.value)}
-                />
-              </div>
-              <div className="grid gap-1.5">
-                <Label>每天执行时间</Label>
-                <Input type="time" value={time} onChange={(event) => setTime(event.target.value)} />
-              </div>
-              <div className="grid gap-1.5">
-                <Label>执行类型</Label>
-                <select
-                  value={kind}
-                  onChange={(event) => setKind(event.target.value as 'agent' | 'script')}
-                  className="h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="agent">Agent prompt</option>
-                  <option value="script">Script</option>
-                </select>
-              </div>
-              <div className="grid gap-1.5">
-                <Label>{kind === 'agent' ? 'Prompt 文件' : '脚本文件'}</Label>
-                <Input value={file} onChange={(event) => setFile(event.target.value)} />
-              </div>
-              <div className="grid gap-1.5">
-                <Label>超时秒数</Label>
-                <Input
-                  type="number"
-                  value={timeout}
-                  onChange={(event) => setTimeoutValue(Number(event.target.value))}
-                />
-              </div>
-              <div className="grid gap-1.5">
-                <Label>解释器</Label>
-                <select
-                  value={interpreter}
-                  onChange={(event) =>
-                    setInterpreter(event.target.value as 'node' | 'bash' | 'direct')
-                  }
-                  className="h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="node">Node.js</option>
-                  <option value="bash">Bash</option>
-                  <option value="direct">直接执行</option>
-                </select>
-              </div>
-              <div className="grid gap-1.5 sm:col-span-2">
-                <Label>参数（空格分隔）</Label>
-                <Input
-                  value={args}
-                  onChange={(event) => setArgs(event.target.value)}
-                  placeholder="--limit 20"
-                />
-              </div>
-            </div>
-            {kind === 'agent' && (
-              <div className="mt-4">
-                <div className="flex items-center justify-between gap-4 rounded-lg border border-border px-4 py-3">
-                  <span>
-                    <strong className="block text-sm font-medium">启用 precheck</strong>
-                    <small className="block text-xs text-muted-foreground">
-                      退出 0 才调用模型；无数据退出码正常跳过
-                    </small>
-                  </span>
-                  <Switch
-                    checked={precheck}
-                    onCheckedChange={setPrecheck}
-                    aria-label="启用 precheck"
-                  />
-                </div>
-                {precheck && (
-                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                    <div className="grid gap-1.5">
-                      <Label>预检脚本</Label>
-                      <Input
-                        value={precheckFile}
-                        onChange={(event) => setPrecheckFile(event.target.value)}
-                      />
-                    </div>
-                    <div className="grid gap-1.5">
-                      <Label>无数据退出码</Label>
-                      <Input
-                        type="number"
-                        value={noDataExitCode}
-                        onChange={(event) => setNoDataExitCode(Number(event.target.value))}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-            <pre className="mt-4 overflow-auto rounded-md bg-code p-4 font-mono text-[11px] leading-relaxed text-code-ink">
-              {YAML.stringify({
-                schema_version: 1,
-                id,
-                enabled: false,
-                schedule: { type: 'daily', time },
-                execution: {
-                  type: kind,
-                  [kind === 'agent' ? 'prompt_file' : 'script_file']: file,
-                  ...(kind === 'script'
-                    ? { interpreter, args: args.split(/\s+/).filter(Boolean) }
-                    : {}),
-                  ...(kind === 'agent' && precheck
-                    ? {
-                        precheck: {
-                          script_file: precheckFile,
-                          interpreter,
-                          args: args.split(/\s+/).filter(Boolean),
-                          no_data_exit_code: noDataExitCode,
-                        },
-                      }
-                    : {}),
-                  timeout_seconds: timeout,
-                  concurrency: 'forbid',
-                },
-              })}
-            </pre>
-            <div className="mt-4 flex justify-end">
-              <Button onClick={() => void save()}>{editingId ? '更新任务' : '保存任务'}</Button>
-            </div>
-          </div>
-        )}
-
         {jobs.length === 0 ? (
           <EmptyState
             icon={<Terminal className="size-5" />}
             title="暂无定时任务"
-            description="创建脚本或 Agent 任务，并明确执行时间与超时。"
+            description="员工（AI）会自行配置定时任务，此处只读展示。"
           />
         ) : (
           <ul className="divide-y divide-border">
@@ -690,187 +421,10 @@ function JobsTab({ agentId }: { agentId: string }) {
                 >
                   {job.enabled ? 'enabled' : 'disabled'}
                 </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={async () => {
-                    try {
-                      await api.jobAction(agentId, job.id, 'run');
-                      notify.success('任务已运行');
-                    } catch (cause) {
-                      setError(cause instanceof Error ? cause.message : String(cause));
-                    }
-                  }}
-                >
-                  运行
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => edit(job)}>
-                  编辑
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={async () => {
-                    try {
-                      await api.jobAction(agentId, job.id, job.enabled ? 'disable' : 'enable');
-                      await load();
-                    } catch (cause) {
-                      setError(cause instanceof Error ? cause.message : String(cause));
-                    }
-                  }}
-                >
-                  {job.enabled ? '禁用' : '启用'}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-destructive hover:text-destructive"
-                  onClick={() => setArchiveJob(job)}
-                >
-                  归档
-                </Button>
               </li>
             ))}
           </ul>
         )}
-      </div>
-
-      <ConfirmDialog
-        open={Boolean(archiveJob)}
-        onOpenChange={(open) => {
-          if (!open) setArchiveJob(undefined);
-        }}
-        title="归档定时任务"
-        description={archiveJob ? `归档 Job ${archiveJob.id}？归档后不再按时执行。` : ''}
-        confirmLabel="确认归档"
-        onConfirm={async () => {
-          if (!archiveJob) return;
-          try {
-            await api.jobAction(agentId, archiveJob.id, 'archive');
-            setArchiveJob(undefined);
-            await load();
-            notify.success('任务已归档');
-          } catch (cause) {
-            setError(cause instanceof Error ? cause.message : String(cause));
-          }
-        }}
-      />
-    </section>
-  );
-}
-
-function ChatTab({ agentId }: { agentId: string }) {
-  const [prompt, setPrompt] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [messages, setMessages] = useState<
-    Array<{ role: 'user' | 'assistant'; text: string; running?: boolean }>
-  >([]);
-  const send = async () => {
-    const trimmed = prompt.trim();
-    if (!trimmed || busy) return;
-    setPrompt('');
-    setError('');
-    setBusy(true);
-    const runId = messages.length;
-    setMessages((current) => [...current, { role: 'user', text: trimmed }]);
-    setMessages((current) => [...current, { role: 'assistant', text: '', running: true }]);
-    try {
-      const operation = await api.chat(agentId, trimmed);
-      let lastSeq = 0;
-      let done = false;
-      for (let i = 0; !done && i < 600; i += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        const events = await api.operationEvents(operation.id, lastSeq);
-        const last = events.at(-1);
-        if (last) {
-          lastSeq = last.seq;
-          const output = events.filter((event) => event.kind === 'output' && event.message);
-          if (output.length > 0) {
-            const text = output.map((event) => event.message).join('\n');
-            setMessages((current) =>
-              current.map((message, index) =>
-                index === runId + 1 ? { role: 'assistant', text } : message,
-              ),
-            );
-          }
-        }
-        const current = await api.operation(operation.id);
-        done = ['succeeded', 'failed', 'cancelled'].includes(current.state);
-      }
-      if (!done) setError('对话超时（10 分钟），请查看操作中心。');
-      const current = await api.operation(operation.id);
-      if (current.state === 'failed') setError(current.error?.message ?? '对话失败。');
-      setMessages((current) =>
-        current.map((message, index) =>
-          index === runId + 1 ? { ...message, running: false } : message,
-        ),
-      );
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-      setMessages((current) =>
-        current.map((message, index) =>
-          index === runId + 1 ? { ...message, running: false } : message,
-        ),
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <section className="rounded-xl border border-border bg-card">
-      <div className="border-b border-border px-5 py-4">
-        <h2 className="text-sm font-semibold">对话</h2>
-        <span className="text-xs text-muted-foreground">
-          单轮问答 · claude -p / codex exec · 输出流式推送
-        </span>
-      </div>
-      {error && (
-        <div className="mx-5 mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-          {error}
-        </div>
-      )}
-      <div className="space-y-3 p-5" aria-live="polite">
-        {messages.length === 0 ? (
-          <EmptyState
-            icon={<MessageSquare className="size-5" />}
-            title="开始对话"
-            description="输入问题并发送，员工将单轮回答。Enter 发送，Shift+Enter 换行。"
-          />
-        ) : (
-          messages.map((message, index) => (
-            <div
-              key={index}
-              className={cn(
-                'max-w-[85%] rounded-lg px-4 py-3 text-sm',
-                message.role === 'user' ? 'ml-auto bg-primary text-primary-foreground' : 'bg-muted',
-              )}
-            >
-              <pre className="whitespace-pre-wrap font-sans text-sm">
-                {message.text || (message.running ? '思考中…' : '')}
-              </pre>
-            </div>
-          ))
-        )}
-      </div>
-      <div className="flex items-end gap-3 border-t border-border p-5">
-        <Textarea
-          value={prompt}
-          rows={3}
-          disabled={busy}
-          placeholder={busy ? '员工正在回答…' : '输入消息，Enter 发送'}
-          onChange={(event) => setPrompt(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault();
-              void send();
-            }
-          }}
-        />
-        <Button disabled={busy || !prompt.trim()} onClick={() => void send()}>
-          <Send className="size-4" />
-          发送
-        </Button>
       </div>
     </section>
   );
@@ -1254,7 +808,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
         aria-label="员工详情"
         className="-mb-px flex gap-1 overflow-x-auto border-b border-border"
       >
-        {['概览', '身份文档', '任务', '对话', 'Skills', '日志', '备份', '诊断'].map((item) => (
+        {['概览', '身份文档', '任务', 'Skills', '日志', '备份', '诊断'].map((item) => (
           <button
             key={item}
             type="button"
@@ -1276,7 +830,6 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
         {tab === '概览' && <OverviewTab detail={detail} guidance={guidance} reload={load} />}
         {tab === '身份文档' && <DocumentsTab agentId={agentId} />}
         {tab === '任务' && <JobsTab agentId={agentId} />}
-        {tab === '对话' && <ChatTab agentId={agentId} />}
         {tab === 'Skills' && <SkillsTab agentId={agentId} />}
         {tab === '日志' && <LogsTab agentId={agentId} />}
         {tab === '备份' && <BackupTab agentId={agentId} />}

@@ -45,7 +45,6 @@ import {
   ensureStateEditAllowed,
   type StateRow,
 } from '../core/current-state.js';
-import { parseStructuredResult } from '../core/usage.js';
 import type { TranscriptSummary } from '../core/transcript.js';
 import {
   buildRuntimeEnvironment,
@@ -343,7 +342,7 @@ export class FactoryApplication {
   // OP1 Stage D：从 transcript 摘要提取经验写回 knowledge/lessons/。
   // 硬约束：仅当 experience_extraction=true 且 transcript_persist=true（Stage C 落地）才生效；
   // 写回复用 knowledgeWrite 的 assertInside+realpath+symlink 硬约束；best-effort，失败不阻断运行。
-  // 公开入口：runAgent/runJob 在 transcript 落盘后调用；测试可直接以 transcriptFile 驱动。
+  // 公开入口：runJob 在 transcript 落盘后调用；测试可直接以 transcriptFile 驱动。
   async extractExperience(id: string, transcriptFile: string): Promise<void> {
     const { agent } = await this.getAgent(id);
     await this.maybeExtractExperience(id, agent, transcriptFile);
@@ -396,7 +395,7 @@ export class FactoryApplication {
     }
   }
 
-  /** 检测并单文件提交员工自维护文档/内容的变更（runAgent/runChat/runJob 成功后调用）。
+  /** 检测并单文件提交员工自维护文档/内容的变更（runJob 成功后调用）。
    *  D-029 拓宽：除四份身份文档外，员工写的内容目录（skills/workflows/knowledge）也自动
    *  版本化——含未跟踪新文件，沿用单文件 git add，绝不用 add -A。 */
   private async commitSelfEvolution(agent: AgentConfig, workspace: string): Promise<void> {
@@ -425,21 +424,6 @@ export class FactoryApplication {
   async listJobs(id: string): Promise<JobConfig[]> {
     const { registry } = await this.getAgent(id);
     return new JobStore(registry.workspace.path).list();
-  }
-
-  async createJob(id: string, input: JobConfig): Promise<JobConfig> {
-    const { registry } = await this.getAgent(id);
-    return new JobStore(registry.workspace.path).create(input);
-  }
-
-  async installJob(id: string, source: string): Promise<JobConfig> {
-    const { registry } = await this.getAgent(id);
-    return new JobStore(registry.workspace.path).install(source);
-  }
-
-  async updateJob(id: string, jobId: string, input: JobConfig): Promise<JobConfig> {
-    const { registry } = await this.getAgent(id);
-    return new JobStore(registry.workspace.path).update(jobId, input);
   }
 
   async listSkills(id: string) {
@@ -509,44 +493,6 @@ export class FactoryApplication {
     return new DoctorService(this.paths, this.registry).run(id);
   }
 
-  async runAgent(id: string, task: string, timeoutSeconds = 900, options: LoggedRunOptions = {}) {
-    if (!task.trim()) throw new AgentCtlError('VALIDATION_ERROR', '任务内容不能为空。');
-    if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0 || timeoutSeconds > 86_400) {
-      throw new AgentCtlError('VALIDATION_ERROR', 'timeout 必须是 1 到 86400 秒。');
-    }
-    const { registry, agent } = await this.getAgent(id);
-    await this.prepareRuntime(registry, agent);
-    // OP4-C：run 追加结构化输出（claude --output-format json / codex --json），
-    // runLogged 解析 usage 供 gen_ai.* span 上报；best-effort，失败不阻断运行。
-    // OP1 Stage C+D：agent.yaml.memory.transcript_persist=true 时持久化会话摘要（0600），
-    // experience_extraction=true 时提取经验写回 knowledge/lessons/（仅当 transcript_persist 已启用）。
-    return new ProcessRunner(this.paths.logsDir)
-      .runLogged(
-        id,
-        getRuntimeAdapter(agent.runtime).run(
-          registry,
-          agent.runtime,
-          task,
-          timeoutSeconds * 1000,
-          true,
-        ),
-        {
-          ...options,
-          provider: agent.runtime.provider,
-          structured: true,
-          ...(agent.memory.transcript_persist === true ? { transcript: true } : {}),
-        },
-      )
-      .then(async (result) => {
-        await this.maybeExtractExperience(id, agent, result.transcriptFile);
-        // TASK-029 自我进化：任务执行结束后检测并单文件提交员工自维护文档变更。
-        await this.commitSelfEvolution(agent, registry.workspace.path);
-        // TASK-031（D-028）：员工自我配置定时任务——任务结束后自动 reconcile 调度。
-        await reconcileEmployeeJobs(registry, agent, this.paths);
-        return result;
-      });
-  }
-
   async chat(id: string): Promise<number> {
     const { registry, agent } = await this.getAgent(id);
     await this.prepareRuntime(registry, agent);
@@ -555,47 +501,6 @@ export class FactoryApplication {
     );
     // OP1 Stage C：chat 交互不落盘 transcript（D-006），仅当显式 opt-in 时经 runLogged 持久化。
     return code;
-  }
-
-  // Web 单轮对话（D-024）：非交互调用（claude -p / codex exec），runLogged 捕获 stdout 到日志，
-  // 返回 stdout 文本供前端渲染。无锁（与 CLI chat 一致）；transcript 沿用 runAgent 的 opt-in 管线。
-  async runChat(id: string, prompt: string, timeoutSeconds = 300): Promise<{ text: string }> {
-    if (!prompt.trim()) throw new AgentCtlError('VALIDATION_ERROR', '消息内容不能为空。');
-    if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0 || timeoutSeconds > 86_400) {
-      throw new AgentCtlError('VALIDATION_ERROR', 'timeout 必须是 1 到 86400 秒。');
-    }
-    const { registry, agent } = await this.getAgent(id);
-    await this.prepareRuntime(registry, agent);
-    const result = await new ProcessRunner(this.paths.logsDir).runLogged(
-      id,
-      // structured: true → claude -p --output-format json / codex exec --json，
-      // 与 runAgent 一致：stdout 为结构化 JSON，可经 parseStructuredResult 提取纯文本，
-      // runLogged 解析 usage 供 gen_ai.* span 上报（OP4-C，best-effort）。
-      getRuntimeAdapter(agent.runtime).run(
-        registry,
-        agent.runtime,
-        prompt,
-        timeoutSeconds * 1000,
-        true,
-      ),
-      {
-        ...(agent.memory.transcript_persist === true ? { transcript: true } : {}),
-        provider: agent.runtime.provider,
-        structured: true,
-        mirror: false,
-      },
-    );
-    // OP1 Stage D：与 runAgent 一致——experience_extraction=true 且 transcript_persist=true 时
-    // 提取经验写回 knowledge/lessons/（仅当 transcriptFile 已生成）。
-    await this.maybeExtractExperience(id, agent, result.transcriptFile);
-    // TASK-029 自我进化：对话结束后检测并单文件提交员工自维护文档变更。
-    await this.commitSelfEvolution(agent, registry.workspace.path);
-    // TASK-031（D-028）：员工自我配置定时任务——对话结束后自动 reconcile 调度。
-    await reconcileEmployeeJobs(registry, agent, this.paths);
-    const raw = await fs.readFile(result.stdoutFile, 'utf8').catch(() => '');
-    // 结构化 result 解析失败（非 JSON/空输出）返回 undefined，降级为原始 stdout 文本。
-    const text = parseStructuredResult(agent.runtime.provider, raw) ?? raw;
-    return { text };
   }
 
   async runtimeAuth(id: string, operation: 'login' | 'status'): Promise<number> {
@@ -921,16 +826,6 @@ export class FactoryApplication {
     return new PruneService(this.paths).run(options);
   }
 
-  async setJobEnabled(id: string, jobId: string, enabled: boolean): Promise<JobConfig> {
-    const { registry, agent } = await this.getAgent(id);
-    const store = new JobStore(registry.workspace.path);
-    const job = await store.setEnabled(jobId, enabled);
-    const service = jobLaunchdService(registry, agent.runtime, job, this.paths);
-    if (enabled) await service.enableScheduled();
-    else await service.uninstall();
-    return job;
-  }
-
   async runJob(id: string, jobId: string, options: LoggedRunOptions = {}) {
     const { registry, agent } = await this.getAgent(id);
     const job = await new JobStore(registry.workspace.path).get(jobId);
@@ -1000,16 +895,6 @@ export class FactoryApplication {
       );
     }
     return summary;
-  }
-
-  async archiveJob(id: string, jobId: string): Promise<void> {
-    const { registry, agent } = await this.getAgent(id);
-    const store = new JobStore(registry.workspace.path);
-    const job = await store.get(jobId);
-    await jobLaunchdService(registry, agent.runtime, job, this.paths)
-      .uninstall()
-      .catch(() => undefined);
-    await store.uninstall(jobId);
   }
 
   async installSkill(id: string, source: string, scope: SkillScope = 'project') {

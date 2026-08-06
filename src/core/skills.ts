@@ -151,9 +151,39 @@ export class SkillService {
           scope: metadata.scope ?? scope,
           digest: metadata.digest || (await digestSkillDirectory(full)),
         });
+      } else {
+        // D-033：手动拷贝进 store 目录的 Skill 无 .agentctl.yaml（该文件仅 install()/导入流程写）。
+        // 只要含合法 frontmatter 的 SKILL.md 就现场合成元数据，使此类 Skill 在 Web 后台可见。
+        const fallback = await this.readSkillMetadataFallback(full, scope);
+        if (fallback) result.push(fallback);
       }
     }
     return result;
+  }
+
+  // D-033：为无 .agentctl.yaml 元数据的手动 Skill 现场合成元数据（不写盘），
+  // 复用 install() 的 frontmatter 解析规则；缺 SKILL.md 或 name 非法时返回 null（不阻断列表）。
+  private async readSkillMetadataFallback(
+    full: string,
+    scope: SkillScope,
+  ): Promise<SkillMetadata | null> {
+    const skillFile = path.join(full, 'SKILL.md');
+    if (!(await fs.pathExists(skillFile))) return null;
+    const text = await fs.readFile(skillFile, 'utf8');
+    const name = agentIdSchema.safeParse(
+      /^---[\s\S]*?^name:\s*([^\s]+)[\s\S]*?^---/m.exec(text)?.[1],
+    );
+    if (!name.success) return null;
+    const version = /^version:\s*([^\s]+)/m.exec(text)?.[1] ?? '0.0.0-local';
+    const stat = await fs.stat(skillFile);
+    return {
+      name: name.data,
+      version,
+      source: 'manual',
+      installed_at: stat.mtime.toISOString(),
+      digest: await digestSkillDirectory(full),
+      scope,
+    };
   }
 
   private async rejectSymlinks(root: string): Promise<void> {

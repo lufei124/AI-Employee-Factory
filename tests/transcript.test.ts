@@ -108,7 +108,7 @@ describe('ProcessRunner transcript persistence (OP1 Stage C)', () => {
   });
 });
 
-describe('FactoryApplication runAgent transcript wiring (OP1 Stage C)', () => {
+describe('FactoryApplication transcript wiring (OP1 Stage C)', () => {
   it('persists a transcript when agent.yaml.memory.transcript_persist is true', async () => {
     const fsExtra = await import('fs-extra');
     const YAML = (await import('yaml')).default;

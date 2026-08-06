@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { FactoryApplication } from '../src/application/factory-application.js';
 import { resolveFactoryPaths } from '../src/core/paths.js';
 import { RegistryStore } from '../src/core/registry.js';
+import { JobStore } from '../src/core/scheduler.js';
 import { buildWebServer } from '../src/web/server.js';
 
 const roots: string[] = [];
@@ -55,13 +56,14 @@ afterEach(async () => {
 });
 
 describe('Web management API', () => {
-  it('manages jobs and exposes skills, logs, and terminal guidance', async () => {
-    const { paths, server, readHeaders, writeHeaders } = await setup();
+  it('lists jobs (read-only) and exposes skills, logs, and terminal guidance', async () => {
+    const { paths, server, readHeaders } = await setup();
     await fs.outputFile(
       path.join(paths.workspaceRoot, 'user-operations/prompts/review.md'),
       '# review\n',
     );
-    const job = {
+    // 定时任务由员工（AI）经 JobStore 落盘；Web 仅只读列举（D-033）。
+    await new JobStore(path.join(paths.workspaceRoot, 'user-operations')).create({
       schema_version: 1,
       id: 'daily-review',
       enabled: false,
@@ -72,17 +74,7 @@ describe('Web management API', () => {
         timeout_seconds: 300,
         concurrency: 'forbid',
       },
-    };
-    expect(
-      (
-        await server.inject({
-          method: 'POST',
-          url: '/api/v1/agents/user-operations/jobs',
-          headers: writeHeaders,
-          payload: job,
-        })
-      ).statusCode,
-    ).toBe(201);
+    });
     expect(
       (
         await server.inject({
@@ -92,14 +84,15 @@ describe('Web management API', () => {
         })
       ).json().data,
     ).toHaveLength(1);
-    const updated = await server.inject({
-      method: 'PUT',
-      url: '/api/v1/agents/user-operations/jobs/daily-review',
-      headers: writeHeaders,
-      payload: { ...job, schedule: { type: 'daily', time: '10:30' } },
-    });
-    expect(updated.statusCode).toBe(200);
-    expect(updated.json().data.schedule.time).toBe('10:30');
+    expect(
+      (
+        await server.inject({
+          method: 'GET',
+          url: '/api/v1/agents/user-operations/jobs',
+          headers: readHeaders,
+        })
+      ).json().data[0].schedule.time,
+    ).toBe('09:30');
     expect(
       (
         await server.inject({

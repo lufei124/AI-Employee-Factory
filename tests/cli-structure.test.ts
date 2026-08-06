@@ -22,7 +22,6 @@ describe('agentctl command surface', () => {
         'restart',
         'status',
         'chat',
-        'run',
         'logs',
         'doctor',
         'backup',
@@ -57,17 +56,7 @@ describe('agentctl command surface', () => {
       ?.commands.find((command) => command.name() === 'sync');
     expect(syncCmd?.options.map((option) => option.flags).join(' ')).toContain('--provider');
     expect(names('bridge')).toEqual(expect.arrayContaining(['authorize', 'status']));
-    expect(names('job')).toEqual(
-      expect.arrayContaining([
-        'list',
-        'validate',
-        'run',
-        'enable',
-        'disable',
-        'install',
-        'uninstall',
-      ]),
-    );
+    expect(names('job')).toEqual(expect.arrayContaining(['list', 'validate', 'run']));
     expect(names('skill')).toEqual(expect.arrayContaining(['list', 'install', 'remove']));
     expect(names('knowledge')).toEqual(expect.arrayContaining(['rebuild', 'recall', 'verify']));
     expect(names('skill-store')).toEqual(

@@ -38,7 +38,6 @@ vi.mock('../web/src/api.js', () => ({
     listTrash: vi.fn(),
     restoreTrash: vi.fn(),
     listBackups: vi.fn(),
-    chat: vi.fn(),
     operation: vi.fn(),
     listAgents: vi.fn(),
   },
@@ -568,52 +567,5 @@ describe('Web console core flows', () => {
     expect(api.removeSkill).toHaveBeenCalledWith('ops', 'research-helper', 'project');
     // 卸载后列表刷新（getAgent 重载 + listSkills 重新拉取）
     expect(await screen.findByText('暂无 项目级 Skill')).toBeInTheDocument();
-  });
-
-  it('对话标签发送消息并轮询读回回答（D-024 单轮对话）', async () => {
-    vi.mocked(api.getAgent).mockResolvedValue({
-      registry: {
-        id: 'ops',
-        name: '运营专员',
-        status: 'stopped',
-        runtime_home: { path: '/private/runtimes/ops/claude' },
-        bridge: { enabled: true, authorization: 'ready', home: '/private/bridges/ops' },
-      },
-      agent: { description: '负责用户运营', runtime: { provider: 'claude', locked: true } },
-    } as never);
-    vi.mocked(api.terminalGuidance).mockResolvedValue({
-      runtimeLogin: 'agentctl runtime sync ops',
-      bridgeAuthorize: 'agentctl bridge authorize ops',
-      chat: 'agentctl chat ops',
-    });
-    vi.mocked(api.chat).mockResolvedValue({
-      id: 'op-chat',
-      type: 'chat',
-      agentId: 'ops',
-      state: 'queued',
-    });
-    // 轮询（1s 间隔，真实 timer）第一次返回输出事件；operation 立即终态 succeeded。
-    vi.mocked(api.operationEvents).mockResolvedValue([
-      { seq: 1, kind: 'output', message: '你好！我是运营专员。' },
-    ]);
-    vi.mocked(api.operation).mockResolvedValue({
-      id: 'op-chat',
-      type: 'chat',
-      agentId: 'ops',
-      state: 'succeeded',
-    });
-    const user = userEvent.setup();
-
-    render(<AgentDetailPage agentId="ops" />);
-    await user.click(await screen.findByRole('button', { name: '对话' }));
-
-    await user.type(screen.getByPlaceholderText('输入消息，Enter 发送'), '你好');
-    await user.click(screen.getByRole('button', { name: '发送' }));
-    expect(api.chat).toHaveBeenCalledWith('ops', '你好');
-    // 后台轮询约 1s 后读到最终回答。
-    expect(
-      await screen.findByText('你好！我是运营专员。', undefined, { timeout: 5000 }),
-    ).toBeInTheDocument();
-    expect(screen.getByText('你好')).toBeInTheDocument();
   });
 });

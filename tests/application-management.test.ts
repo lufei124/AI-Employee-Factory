@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FactoryApplication } from '../src/application/factory-application.js';
 import { resolveFactoryPaths } from '../src/core/paths.js';
 import { RegistryStore } from '../src/core/registry.js';
+import { JobStore } from '../src/core/scheduler.js';
 
 const roots: string[] = [];
 
@@ -62,25 +63,14 @@ async function lastCommit(workspace: string): Promise<string> {
 }
 
 describe('FactoryApplication management use cases', () => {
-  it('creates, updates, and lists jobs while exposing terminal guidance', async () => {
+  it('lists jobs written directly to JobStore while exposing terminal guidance', async () => {
     const { app, paths } = await setup();
     await fs.outputFile(
       path.join(paths.workspaceRoot, 'user-operations/prompts/review.md'),
       '# 每日复盘\n',
     );
-    await app.createJob('user-operations', {
-      schema_version: 1,
-      id: 'daily-review',
-      enabled: false,
-      schedule: { type: 'daily', time: '09:00' },
-      execution: {
-        type: 'agent',
-        prompt_file: 'prompts/review.md',
-        timeout_seconds: 300,
-        concurrency: 'forbid',
-      },
-    });
-    await app.updateJob('user-operations', 'daily-review', {
+    // 人工不再通过应用层写定时任务（D-033 只读）；任务由员工（AI）经 JobStore 直接落盘。
+    await new JobStore(path.join(paths.workspaceRoot, 'user-operations')).create({
       schema_version: 1,
       id: 'daily-review',
       enabled: false,

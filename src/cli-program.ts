@@ -230,30 +230,6 @@ export function createProgram(): Command {
     });
 
   program
-    .command('run <agent-id> <task>')
-    .description('执行单次 Agent 任务')
-    .option('--timeout <seconds>', '超时秒数', '900')
-    .action(async (id: string, task: string, options: { timeout: string }) => {
-      const { paths, application } = context();
-      const operationId = randomUUID();
-      const traceId = randomUUID();
-      const result = await application.runAgent(id, task, Number(options.timeout), {
-        operationId,
-        traceId,
-      });
-      await recordOperation(paths.logsDir, {
-        operation_id: operationId,
-        agent_id: id,
-        kind: 'run',
-        started_at: result.startedAt,
-        finished_at: result.finishedAt,
-        exit_code: result.exitCode,
-        trace_id: traceId,
-      });
-      process.exitCode = result.exitCode;
-    });
-
-  program
     .command('logs <agent-id>')
     .description('查看 Agent 最新日志')
     .option('--lines <count>', '显示行数', '200')
@@ -611,28 +587,6 @@ function registerJobCommands(program: Command): void {
     });
     process.exitCode = result.exitCode;
   });
-  for (const verb of ['enable', 'disable'] as const) {
-    group.command(`${verb} <agent-id> <job-id>`).action(async (id: string, jobId: string) => {
-      const { application } = context();
-      await application.setJobEnabled(id, jobId, verb === 'enable');
-      console.log(chalk.green(`✓ ${jobId} ${verb}d`));
-    });
-  }
-  group.command('install <agent-id> <job-path>').action(async (id: string, source: string) => {
-    const { application } = context();
-    const job = await application.installJob(id, source);
-    console.log(chalk.green(`✓ 已安装任务 ${job.id}`));
-  });
-  group
-    .command('uninstall <agent-id> <job-id>')
-    .option('--dry-run')
-    .option('--yes')
-    .action(async (id: string, jobId: string, options: { dryRun?: boolean; yes?: boolean }) => {
-      if (options.dryRun) return console.log(`将归档任务 ${jobId}`);
-      await confirmDanger(`归档任务 ${jobId}？`, options.yes === true);
-      const { application } = context();
-      await application.archiveJob(id, jobId);
-    });
 }
 
 function registerSkillCommands(program: Command): void {

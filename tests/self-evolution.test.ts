@@ -10,8 +10,8 @@ import { RegistryStore } from '../src/core/registry.js';
 import type { LoggedRunResult } from '../src/core/process-runner.js';
 
 // TASK-029 自我进化：员工可更新 agent/ROLE|GOALS|OPERATING_SYSTEM|POLICIES 与 knowledge/ 知识，
-// 系统在 runAgent/runChat/runJob 后自动检测并单文件 git 提交（evolve: 前缀）。
-// 唯一 seam = FactoryApplication.runAgent：vi.spyOn 注入假 runAgent，验证提交逻辑而非真实 spawn。
+// 系统在 runJob（原 runAgent/runChat 一并移除，D-033）后自动检测并单文件 git 提交（evolve: 前缀）。
+// 唯一 seam = JobRunner 内部的 ProcessRunner.runLogged：vi.spyOn 注入假 runLogged，验证提交逻辑而非真实 spawn。
 
 const tempDirs: string[] = [];
 // 为提交断言提供确定性 git 身份（CI 无全局 git config 时也能过）。
@@ -94,21 +94,49 @@ async function gitLog(workspace: string, relPath: string): Promise<string[]> {
   return result.stdout.split('\n').filter(Boolean);
 }
 
+// D-033：runAgent 已移除，改用 agent 定时任务触发同一后处理链（commitSelfEvolution）。
+// 任务用 managed_by: 'admin'（reconcileEmployeeJobs 只 reconcile employee，故不触发 launchd 安装）。
+async function runAdminJob(app: FactoryApplication, jobId: string, prompt: string) {
+  const workspace = path.join(app.paths.workspaceRoot, 'worker-a');
+  const jobsDir = path.join(workspace, 'automation', 'jobs');
+  const promptsDir = path.join(workspace, 'automation', 'prompts');
+  await fs.outputFile(path.join(promptsDir, `${jobId}.md`), prompt);
+  await fs.outputFile(
+    path.join(jobsDir, `${jobId}.yaml`),
+    [
+      'schema_version: 1',
+      `id: ${jobId}`,
+      'enabled: false',
+      'managed_by: admin',
+      'schedule:',
+      '  type: daily',
+      '  time: "09:00"',
+      'execution:',
+      '  type: agent',
+      `  prompt_file: automation/prompts/${jobId}.md`,
+      '  timeout_seconds: 60',
+      '  concurrency: forbid',
+      '',
+    ].join('\n'),
+  );
+  return app.runJob('worker-a', jobId, {});
+}
+
 describe('员工自我进化（TASK-029）', () => {
-  it('runAgent 后 agent/ROLE.md 变更被单文件自动提交（evolve: 前缀）', async () => {
+  it('runJob 后 agent/ROLE.md 变更被单文件自动提交（evolve: 前缀）', async () => {
     const { app, paths } = await setup();
     const workspace = path.join(paths.workspaceRoot, 'worker-a');
     const roleFile = path.join(workspace, 'agent', 'ROLE.md');
 
-    // 唯一 seam = ProcessRunner.runLogged：mock 底层运行器（模拟员工在执行中更新岗位文档），
-    // 走真实 runAgent 的后处理链（maybeExtractExperience + commitSelfEvolution）。
+    // 唯一 seam = JobRunner 内的 ProcessRunner.runLogged：mock 底层运行器（模拟员工在执行中更新岗位文档），
+    // 走真实 runJob 的后处理链（maybeExtractExperience + commitSelfEvolution）。
     const { ProcessRunner } = await import('../src/core/process-runner.js');
     vi.spyOn(ProcessRunner.prototype, 'runLogged').mockImplementation(async () => {
       await fs.appendFile(roleFile, '\n- 已学习：优先使用异步批量处理。\n');
       return fakeResult('完成。');
     });
 
-    await app.runAgent('worker-a', '学习并更新岗位描述');
+    await runAdminJob(app, 'role-update', '学习并更新岗位描述');
 
     const log = await gitLog(workspace, 'agent/ROLE.md');
     expect(log.some((line) => line.includes('evolve:'))).toBe(true);
@@ -182,7 +210,7 @@ describe('员工自我进化（TASK-029）', () => {
     const { app, paths } = await setup();
     const workspace = path.join(paths.workspaceRoot, 'worker-a');
 
-    // 员工在一次 run 中新建内容文件（未跟踪），系统应在 runAgent 后自动单文件提交。
+    // 员工在一次 run 中新建内容文件（未跟踪），系统应在 runJob 后自动单文件提交。
     const reportsDirty = path.join(workspace, 'skills/reporting/SKILL.md');
     const workflowFile = path.join(workspace, 'workflows/review.md');
     const knowledgeFile = path.join(workspace, 'knowledge/lessons/batch-processing.md');
@@ -199,7 +227,7 @@ describe('员工自我进化（TASK-029）', () => {
     const { ProcessRunner } = await import('../src/core/process-runner.js');
     vi.spyOn(ProcessRunner.prototype, 'runLogged').mockResolvedValue(fakeResult('完成。'));
 
-    await app.runAgent('worker-a', '产出内容');
+    await runAdminJob(app, 'content-output', '产出内容');
 
     for (const rel of [
       'skills/reporting/SKILL.md',
