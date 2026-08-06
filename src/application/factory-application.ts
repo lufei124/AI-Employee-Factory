@@ -520,7 +520,9 @@ export class FactoryApplication {
       await fs.writeFile(path.join(stagingRoot, 'SKILL.md'), renderSkillFile(skill));
       await service.upsert(stagingRoot, 'project');
       await fs.remove(stagingRoot);
-      console.log(`[skill-self] 已自动生成并注册 Skill：${skill.name}@${skill.version}`);
+      // D-035：用 console.warn（stderr）而非 log——飞书 bridge 逐消息解析 claude 的 stream-json
+      // stdout，任何额外 stdout 行都会污染解析。
+      console.warn(`[skill-self] 已自动生成并注册 Skill：${skill.name}@${skill.version}`);
     } catch (error) {
       console.warn(`[skill-self] 自动生成 Skill 失败（跳过）：`, error);
     }

@@ -83,7 +83,7 @@ afterEach(async () => {
 });
 
 describe('claude shim（D-035）', () => {
-  it('renderShim 烘焙 home/workspace/真实 claude 并转发到 _service bridge-run', async () => {
+  it('renderShim 烘焙 home/workspace/真实 claude：仅 -p 转发，其余透传真实 claude', async () => {
     const { paths } = await setup();
     const script = await renderShim(paths, 'worker-a', '/usr/local/bin/agentctl');
     expect(script).toContain(`export AI_EMPLOYEES_HOME="${paths.home}"`);
@@ -92,9 +92,13 @@ describe('claude shim（D-035）', () => {
     const claudeLine = script.match(/export AIEMPLOYEES_REAL_CLAUDE="([^"]+)"/);
     expect(claudeLine?.[1]?.length ?? 0).toBeGreaterThan(0);
     expect(claudeLine?.[1]).not.toContain('claude-shim');
-    expect(script).toContain(
-      `exec "/usr/local/bin/agentctl" _service bridge-run "worker-a" -- "$@"`,
-    );
+    // 仅含 -p 时转发到 _service bridge-run（不带 --，CLI 用 <args...> 透传）。
+    expect(script).toContain(`exec "/usr/local/bin/agentctl" _service bridge-run "worker-a" "$@"`);
+    // 否则直接 exec 真实 claude（预检 --version 不能被拦）。
+    expect(script).toContain(`exec "${claudeLine?.[1]}" "$@"`);
+    // 转发被 `if [ -n "$found_p" ]` 守卫。
+    expect(script).toContain('if [ -n "$found_p" ]');
+    expect(script).toContain('-p|--print) found_p=1');
   });
 
   it('installClaudeShim 幂等：dir 在 runtimes/<id>/claude-shim，重复安装不重写', async () => {
@@ -120,6 +124,36 @@ describe('claude shim（D-035）', () => {
     const env = withClaudeShim({ PATH: '/usr/bin:/bin', OTHER: '1' }, runtimeHome);
     expect(env.PATH).toBe(`${claudeShimDirForRuntime(runtimeHome)}:/usr/bin:/bin`);
     expect(env.OTHER).toBe('1');
+  });
+
+  it('resolveRealClaude 剔除 PATH 里的 claude-shim（防递归）', async () => {
+    const { paths, root } = await setup();
+    // 造一个假 shim 目录前置到 PATH：若 resolveRealClaude 不剔除，会解析到它自身。
+    const fakeShimDir = path.join(root, 'runtimes', 'worker-a', 'claude-shim');
+    await fs.outputFile(path.join(fakeShimDir, 'claude'), '#!/bin/sh\necho FAKE-SHIM\n');
+    await fs.chmod(path.join(fakeShimDir, 'claude'), 0o700);
+    const source = { ...process.env, PATH: `${fakeShimDir}:${process.env.PATH ?? ''}` };
+    // renderShim 内部调用真实 resolveRealClaude(source)，烘焙路径应指向真实 claude 而非假 shim。
+    const script = await renderShim(paths, 'worker-a', process.execPath, source);
+    const realLine = script.match(/export AIEMPLOYEES_REAL_CLAUDE="([^"]+)"/)?.[1];
+    expect(realLine).not.toBe(path.join(fakeShimDir, 'claude'));
+    expect(realLine).not.toContain('claude-shim');
+    expect(realLine?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it('功能：--version 透传真实 claude（预检不挂起），-p 才转发 bridge-run', async () => {
+    const { paths } = await setup();
+    // renderShim 内部调用真实 resolveRealClaude（模块 mock 不影响其内部绑定），烘焙出真实 claude 路径。
+    const script = await renderShim(paths, 'worker-a', process.execPath);
+    const realLine = script.match(/export AIEMPLOYEES_REAL_CLAUDE="([^"]+)"/)?.[1];
+    expect(realLine?.length ?? 0).toBeGreaterThan(0);
+    // 透传分支已烘焙真实 claude：模拟 `shim --version` → exec 真实 claude --version，需快速返回。
+    const { stdout, exitCode } = await execa('sh', ['-c', `exec "${realLine}" --version`], {
+      reject: false,
+      timeout: 15000,
+    });
+    expect(exitCode).toBe(0);
+    expect(stdout.length).toBeGreaterThan(0);
   });
 });
 

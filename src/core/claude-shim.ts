@@ -30,9 +30,15 @@ export function withClaudeShim(
 
 /** 解析真实 claude 可执行文件。安装时（prepareRuntime）PATH 尚不含 shim 目录，`command -v claude` 即真身。 */
 export async function resolveRealClaude(source: NodeJS.ProcessEnv = process.env): Promise<string> {
+  // D-035：先剔除 PATH 中的 claude-shim 目录。bridge 进程带着前置 shim 的 PATH 启动后，
+  // 若再调 resolveRealClaude（如 bridge 复跑 prepareRuntime），`command -v claude` 会解析到 shim
+  // 自身 → 递归。剔除后永远解析到真实 claude。
+  const env = { ...source };
+  const cleanPath = (env.PATH ?? '').split(':').filter((entry) => !entry.includes('claude-shim'));
+  env.PATH = cleanPath.join(':');
   const result = await execa('bash', ['-lc', 'command -v claude'], {
     extendEnv: false,
-    env: source,
+    env,
     reject: false,
   });
   const resolved = result.stdout.trim();
@@ -73,12 +79,22 @@ export async function renderShim(
   const realClaude = await resolveRealClaude(source);
   return [
     '#!/bin/sh',
-    '# AI Employee Factory 飞书 bridge claude shim（D-035）：把每条 claude -p 送回 Factory settle 链。',
+    '# AI Employee Factory 飞书 bridge claude shim（D-035）：仅拦截含 -p 的消息调用，送回 settle 链。',
+    '# 非 -p 调用（如 --version 预检/help）直接透传真实 claude，避免预检被 stdin 读取挂起超时。',
     '# stdin（bridge 的 prompt）经 exec 继承转发给 _service bridge-run。',
+    'found_p=""',
+    'for arg in "$@"; do',
+    '  case "$arg" in',
+    '    -p|--print) found_p=1 ;;',
+    '  esac',
+    'done',
     `export AI_EMPLOYEES_HOME="${paths.home}"`,
     `export AI_EMPLOYEES_WORKSPACE_ROOT="${paths.workspaceRoot}"`,
     `export AIEMPLOYEES_REAL_CLAUDE="${realClaude}"`,
-    `exec "${cliFile}" _service bridge-run "${agentId}" -- "$@"`,
+    'if [ -n "$found_p" ]; then',
+    `  exec "${cliFile}" _service bridge-run "${agentId}" "$@"`,
+    'fi',
+    `exec "${realClaude}" "$@"`,
     '',
   ].join('\n');
 }
