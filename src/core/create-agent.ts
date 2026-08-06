@@ -149,7 +149,10 @@ export class CreateAgentService {
     }
   }
 
-  // D-029：员工蓝图由 description + goals 合成（Web/CLI 可先用 AI 生成后预填）。
+  // D-029 + D-041 M3（决策② 骨架化）：员工蓝图由 description + goals 合成；职责/权限/
+  // 上报降为「基础岗位骨架」——responsibilities 缺省 [description]（岗位定位即初始职责）、
+  // policies 缺省红线模板（生产写入/对外发布/Git push/删除数据须审批）、escalation 缺省通用
+  // 上报。细节由员工在使用中自进化沉淀（进 evolve: 提交历史可回溯）。
   private async resolveProfile(input: CreateAgentInput): Promise<Preset> {
     if (!input.description || !input.goals?.length) {
       throw new AgentCtlError(
@@ -171,7 +174,7 @@ export class CreateAgentService {
         : ['生产写入、对外发布、Git push 和删除数据必须经人工审批'],
       escalation_conditions: input.escalation_conditions?.length
         ? input.escalation_conditions
-        : ['需要生产权限或管理决策'],
+        : ['需要更高权限或需人工决策时上报'],
       skills: input.skills ?? [],
     };
   }

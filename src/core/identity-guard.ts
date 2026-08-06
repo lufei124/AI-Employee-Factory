@@ -40,6 +40,12 @@ export const GUARDED_SECTION_MARKERS: Readonly<Record<string, readonly GuardedMa
     { kind: 'redline_word', label: '删除数据', value: '删除数据' },
     { kind: 'redline_word', label: 'Git push', value: 'Git push' },
   ],
+  // D-041 P1-3：宪法区。CONSTITUTION.md 是员工不可静默改动的顶层身份文档——锚点标题
+  // 缺失即疑似被删除/重写（员工删整个宪法 → 硬门拒绝提交；要改走聊天明确指示）。
+  'agent/CONSTITUTION.md': [
+    { kind: 'role_title', label: '使命', value: '使命' },
+    { kind: 'role_title', label: '变更流程', value: '变更流程' },
+  ],
 };
 
 export interface GuardIssue {

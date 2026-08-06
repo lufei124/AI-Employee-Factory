@@ -3,3 +3,4 @@ node_modules
 coverage
 .agent/task-ids
 package-lock.json
+.claude/settings.local.json

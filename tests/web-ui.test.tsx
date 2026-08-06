@@ -18,13 +18,13 @@ vi.mock('../web/src/api.js', () => ({
     initializeFactory: vi.fn(),
     dashboard: vi.fn(),
     createAgent: vi.fn(),
-    generateEmployeeProfile: vi.fn(),
+    generateSkeleton: vi.fn(),
     getAgent: vi.fn(),
     terminalGuidance: vi.fn(),
     lifecycle: vi.fn(),
     listDocuments: vi.fn(),
+    readDocument: vi.fn(),
     listSkills: vi.fn(),
-    removeSkill: vi.fn(),
     listSkillStoreRepositories: vi.fn(),
     addSkillStoreRepository: vi.fn(),
     removeSkillStoreRepository: vi.fn(),
@@ -69,7 +69,7 @@ describe('Web console core flows', () => {
     expect(await screen.findByText('尚未创建 AI 员工')).toBeInTheDocument();
   });
 
-  it('creates an employee via AI blueprint generation and a reviewable wizard', async () => {
+  it('creates an employee via AI skeleton generation and a reviewable wizard', async () => {
     const writeText = vi.fn().mockRejectedValue(new Error('clipboard permission denied'));
     const execCommand = vi.fn().mockReturnValue(true);
     Object.defineProperty(document, 'execCommand', {
@@ -80,14 +80,11 @@ describe('Web console core flows', () => {
       id: 'content-operator',
       workspace: '/tmp/agents/content-operator',
     });
-    vi.mocked(api.generateEmployeeProfile).mockResolvedValue({
+    vi.mocked(api.generateSkeleton).mockResolvedValue({
       id: 'content-operator',
       name: '内容运营',
       description: '负责内容选题与撰写',
       goals: ['每周输出报告'],
-      responsibilities: ['选题策划'],
-      policies: ['对外发布须审批'],
-      escalation_conditions: ['需要管理决策'],
       skills: [],
     });
     const user = userEvent.setup();
@@ -98,7 +95,7 @@ describe('Web console core flows', () => {
 
     render(<CreateAgentPage />);
     await user.type(screen.getByLabelText('员工描述'), '帮我建一个内容运营');
-    await user.click(screen.getByRole('button', { name: 'AI 生成蓝图' }));
+    await user.click(screen.getByRole('button', { name: 'AI 生成骨架' }));
     // 生成后预填字段，用户可编辑名称（id 由名称派生）。
     await user.clear(screen.getByLabelText('员工名称'));
     await user.type(screen.getByLabelText('员工名称'), 'Content Operator');
@@ -116,9 +113,6 @@ describe('Web console core flows', () => {
       feishu: 'dedicated',
       description: '负责内容选题与撰写',
       goals: ['每周输出报告'],
-      responsibilities: ['选题策划'],
-      policies: ['对外发布须审批'],
-      escalation_conditions: ['需要管理决策'],
       skills: [],
     });
     expect(await screen.findByText('员工创建完成')).toBeInTheDocument();
@@ -136,7 +130,7 @@ describe('Web console core flows', () => {
     expect(await screen.findByText('已复制')).toBeInTheDocument();
   });
 
-  it('prefills a default blueprint on entry, then allows manual override (D-029)', async () => {
+  it('prefills a default skeleton on entry, then allows manual override (D-041 M3)', async () => {
     vi.mocked(api.createAgent).mockResolvedValue({
       id: 'manual-ops',
       workspace: '/tmp/agents/manual-ops',
@@ -144,17 +138,17 @@ describe('Web console core flows', () => {
     const user = userEvent.setup();
 
     render(<CreateAgentPage />);
-    // 进入向导即预填可编辑的默认蓝图（无需触发 AI 生成）。
+    // 进入向导即预填可编辑的基础岗位骨架（无需触发 AI 生成）。
     expect(screen.getByLabelText('员工名称')).toHaveValue('用户运营专员');
     expect(screen.getByLabelText('Agent ID')).toHaveValue('user-operations');
-    expect(api.generateEmployeeProfile).not.toHaveBeenCalled();
+    expect(api.generateSkeleton).not.toHaveBeenCalled();
     // 用户仍可手动覆盖。
     await user.clear(screen.getByLabelText('员工名称'));
     await user.type(screen.getByLabelText('员工名称'), 'Manual Ops');
     await user.clear(screen.getByLabelText('Agent ID'));
     await user.type(screen.getByLabelText('Agent ID'), 'manual-ops');
-    await user.clear(screen.getByLabelText('职责描述'));
-    await user.type(screen.getByLabelText('职责描述'), '手工创建的员工');
+    await user.clear(screen.getByLabelText('职责定位'));
+    await user.type(screen.getByLabelText('职责定位'), '手工创建的员工');
     await user.clear(screen.getByLabelText('核心目标（每行一条）'));
     await user.type(screen.getByLabelText('核心目标（每行一条）'), '目标一');
     await user.click(screen.getByRole('button', { name: '下一步' }));
@@ -521,7 +515,7 @@ describe('Web console core flows', () => {
     ).toBeInTheDocument();
   });
 
-  it('uninstalls a Skill from the Skills tab after an irreversible confirmation', async () => {
+  it('shows the Skills tab as read-only with no install/import/uninstall controls (D-041)', async () => {
     vi.mocked(api.getAgent).mockResolvedValue({
       registry: {
         id: 'ops',
@@ -540,19 +534,16 @@ describe('Web console core flows', () => {
       bridgeAuthorize: 'agentctl bridge authorize ops',
       chat: 'agentctl chat ops',
     });
-    vi.mocked(api.listSkills)
-      .mockResolvedValueOnce([
-        {
-          name: 'research-helper',
-          version: '1.0.0',
-          source: '/tmp/research-helper',
-          installed_at: '2026-08-04T00:00:00.000Z',
-          digest: 'abcdef0123456789',
-          scope: 'project',
-        },
-      ])
-      .mockResolvedValue([]);
-    vi.mocked(api.removeSkill).mockResolvedValue({ removed: true, scope: 'project' });
+    vi.mocked(api.listSkills).mockResolvedValue([
+      {
+        name: 'research-helper',
+        version: '1.0.0',
+        source: '/tmp/research-helper',
+        installed_at: '2026-08-04T00:00:00.000Z',
+        digest: 'abcdef0123456789',
+        scope: 'project',
+      },
+    ]);
     const user = userEvent.setup();
 
     render(
@@ -561,11 +552,54 @@ describe('Web console core flows', () => {
       </MemoryRouter>,
     );
     await user.click(await screen.findByRole('button', { name: 'Skills' }));
-    await user.click(await screen.findByRole('button', { name: '卸载' }));
-    await user.click(screen.getByRole('button', { name: '确认卸载' }));
+    // 只读展示 Skill 信息。
+    expect(await screen.findByText('research-helper')).toBeInTheDocument();
+    expect(screen.getByText(/由员工（AI）自主生成\/沉淀 · 只读展示/)).toBeInTheDocument();
+    // 不再有安装/导入/卸载入口（read-only 化，D-041 决策①）。
+    expect(screen.queryByRole('button', { name: '卸载' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '从商店安装' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /导入/ })).not.toBeInTheDocument();
+  });
 
-    expect(api.removeSkill).toHaveBeenCalledWith('ops', 'research-helper', 'project');
-    // 卸载后列表刷新（getAgent 重载 + listSkills 重新拉取）
-    expect(await screen.findByText('暂无 项目级 Skill')).toBeInTheDocument();
+  it('shows identity documents as read-only preview with no edit control (D-041)', async () => {
+    vi.mocked(api.getAgent).mockResolvedValue({
+      registry: {
+        id: 'ops',
+        name: '运营专员',
+        status: 'stopped',
+        runtime_home: { path: '/private/runtimes/ops/claude' },
+        bridge: { enabled: false, authorization: 'pending', home: '/private/bridges/ops' },
+      },
+      agent: {
+        description: '负责用户运营',
+        runtime: { provider: 'claude', locked: true, model: 'sonnet' },
+      },
+    } as never);
+    vi.mocked(api.terminalGuidance).mockResolvedValue({
+      runtimeLogin: 'agentctl runtime sync ops',
+      bridgeAuthorize: 'agentctl bridge authorize ops',
+      chat: 'agentctl chat ops',
+    });
+    vi.mocked(api.readDocument).mockResolvedValue({
+      key: 'role',
+      path: 'agent/ROLE.md',
+      content: '# 岗位定位\n\n负责用户运营',
+      dirty: false,
+    });
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter initialEntries={['/agents/ops']}>
+        <AgentDetailPage agentId="ops" />
+      </MemoryRouter>,
+    );
+    await user.click(await screen.findByRole('button', { name: '身份文档' }));
+    // 文档以 markdown 预览渲染，标（只读）。
+    expect(screen.getAllByText('岗位').length).toBeGreaterThan(0);
+    expect(screen.getByText('（只读）')).toBeInTheDocument();
+    expect(screen.getAllByText('负责用户运营').length).toBeGreaterThan(0);
+    // 无保存入口；提示走飞书聊天修改。
+    expect(screen.queryByRole('button', { name: /保存/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/身份文档只能通过飞书聊天修改/)).toBeInTheDocument();
   });
 });

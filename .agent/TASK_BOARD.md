@@ -687,3 +687,18 @@ Acceptance criteria: 新建员工 agent.yaml memory 三开关 true；存量员�
 Started at: 2026-08-06 16:05 +0800
 Updated at: 2026-08-06 20:26 +0800
 ```
+
+```text
+Task ID: TASK-042
+Title: 分层自进化协议 M3（D-041）——提案账本对账（proposal-ledger）+ Web 身份文档/Skills 只读化 + 创建骨架模板
+Owner agent: claude-20260806-01
+Status: DONE
+Branch/worktree: main
+Allowed scope: src/core/proposal-ledger.ts（新）、src/application/factory-application.ts、src/core/identity-guard.ts、src/core/identity-baseline.ts、src/core/create-agent.ts、src/core/employee-generator.ts、src/core/templates.ts、src/schemas/agent-schema.ts、templates/agent-skeleton/（新）、web/（DocumentsTab.tsx、SkillsTab.tsx、CreateAgentPage.tsx、api.ts、server.ts）、tests/proposal-ledger.test.ts（新）、tests/create-agent.test.ts、tests/identity-baseline.test.ts、tests/web-management-api.test.ts、tests/web-ui.test.tsx、tests/self-evolution.test.ts、docs/DECISIONS.md、README.md、.agent 簿记
+Forbidden scope: 不做遗忘归档/identity rollback（M4）；不做 doctor 检查项/Web 进化历史/recall 增强（M5）；不引入向量库/新 DB；不引入对外网络外发
+Dependencies: TASK-041（D-041 P1，M2）
+Expected output: 提案账本（~/.ai-employees/logs/proposals/<id>.jsonl）recordProposal/recordDecision + appliedWithoutAnchor 校验 + maybeEnforceIdentityProtocol（enforced 拒提交留现场，advisory 仅 warn）；Web 身份文档标签只读预览（移除编辑入口，后端 PUT 403）；Skills 标签移除安装/导入/卸载入口；创建流程给基础岗位骨架模板（employee-generator 收敛 + resolveProfile 简化 + Web 创建表单字段收敛）
+Acceptance criteria: proposal-ledger 单测全绿；身份文档 Web 只读（无编辑入口 + 后端 PUT 403）；Skills Web 只读；创建给骨架模板且 description 为岗位定位唯一权威；npm test/build/lint 全绿；任务完成即 commit（不 push）
+Started at: 2026-08-06 20:30 +0800
+Updated at: 2026-08-06 21:05 +0800
+```

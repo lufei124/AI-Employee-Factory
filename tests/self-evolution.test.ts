@@ -498,3 +498,154 @@ describe('身份守卫 P0（D-041）', () => {
     expect(log.filter((line) => line.includes('evolve: 更新 身份基线')).length).toBe(0);
   });
 });
+
+describe('提案账本同步 + enforced 对账（D-041 P1-3）', () => {
+  it('settleActive 扫描 proposals：登记提案 + 带 user_anchor 的 applied 提案登记批准决策', async () => {
+    const { app, paths } = await setup();
+    const workspace = path.join(paths.workspaceRoot, 'worker-a');
+
+    // 员工写一份已批准（applied + user_anchor）的提案 → settle 后账本应有 proposal + decision 两行。
+    await fs.writeFile(
+      path.join(workspace, 'agent/proposals/p-approved.md'),
+      [
+        '---',
+        'proposal_id: p-approved-01',
+        'kind: identity',
+        'status: applied',
+        'target_file: agent/ROLE.md',
+        'proposed_at: 2026-08-06T00:00:00+08:00',
+        'user_anchor: 用户说“就按这个改”',
+        '---',
+        '',
+        '现状：...',
+        '拟改：...',
+      ].join('\n'),
+    );
+    await app.settleEmployee('worker-a');
+
+    const { readLedger } = await import('../src/core/proposal-ledger.js');
+    const ledger = await readLedger(paths.logsDir, 'worker-a');
+    expect(ledger).toHaveLength(2);
+    expect(ledger[0]).toMatchObject({
+      event: 'proposal',
+      proposal_id: 'p-approved-01',
+      status: 'applied',
+    });
+    expect(ledger[1]).toMatchObject({
+      event: 'decision',
+      decision: 'approved',
+      target_file: 'agent/ROLE.md',
+      user_anchor: '用户说“就按这个改”',
+    });
+    // 账本写入进 evolve 提交（proposals 目录随自进化链提交）。
+    const proposalLog = await gitLog(workspace, 'agent/proposals/p-approved.md');
+    expect(proposalLog.some((line) => line.includes('evolve:'))).toBe(true);
+  });
+
+  it('enforced：未授权整删 POLICIES 红线词被拒绝提交 + CURRENT_STATE 留痕，合法文件不受影响', async () => {
+    const { app, paths } = await setup();
+    const workspace = path.join(paths.workspaceRoot, 'worker-a');
+    const policiesFile = path.join(workspace, 'agent', 'POLICIES.md');
+    const goalsFile = path.join(workspace, 'agent', 'GOALS.md');
+
+    // 开启 identity_protocol=enforced。
+    const agentYaml = path.join(workspace, 'agent.yaml');
+    const YAML = (await import('yaml')).default;
+    const parsed = YAML.parse(await fs.readFile(agentYaml, 'utf8'));
+    parsed.memory.identity_protocol = 'enforced';
+    await fs.writeFile(agentYaml, YAML.stringify(parsed));
+
+    // 员工在任务中整删红线词（远超 allowedIdentityDiff、无 user_anchor 依据）。
+    const { ProcessRunner } = await import('../src/core/process-runner.js');
+    vi.spyOn(ProcessRunner.prototype, 'runLogged').mockImplementation(async () => {
+      await fs.writeFile(
+        policiesFile,
+        '# 权限与上报规则\n\n## 权限边界\n\n所有操作须谨慎。\n\n## 主动上报\n\n需要时上报。\n',
+      );
+      await fs.appendFile(goalsFile, '\n- 新增目标。\n');
+      return fakeResult('完成。');
+    });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await runAdminJob(app, 'ledger-block', '更新规则');
+
+    // POLICIES.md 未提交（脏文件保留供人工决策）。
+    const policiesLog = await gitLog(workspace, 'agent/POLICIES.md');
+    expect(policiesLog.some((line) => line.includes('evolve:'))).toBe(false);
+    const status = await execa('git', ['status', '--short'], {
+      cwd: workspace,
+      shell: false,
+      extendEnv: false,
+      reject: false,
+    });
+    expect(status.stdout).toContain('POLICIES.md');
+    // warn 留痕包含 enforced 拒绝提交。
+    expect(
+      warnSpy.mock.calls.some((call) =>
+        String(call[0]).includes('[identity-protocol] 检测到未授权身份改动（enforced）'),
+      ),
+    ).toBe(true);
+    // 违规改动不被吸收进基线：POLICIES 基线条目保持原 sha256。
+    const baselineFile = await fs.readFile(
+      path.join(workspace, 'agent/IDENTITY_BASELINE.md'),
+      'utf8',
+    );
+    const { parseIdentityBaseline } = await import('../src/core/identity-baseline.js');
+    const baseline = parseIdentityBaseline(baselineFile);
+    expect(baseline!.docs['agent/POLICIES.md'].content).toContain('人工审批');
+    // CURRENT_STATE 记录「检测到未授权身份改动已拒绝提交」。
+    const stateFile = await fs.readFile(path.join(workspace, 'agent/CURRENT_STATE.md'), 'utf8');
+    expect(stateFile).toContain('未授权身份改动已拒绝提交');
+    // 合法文件（GOALS）仍正常提交，不阻断主流程。
+    const goalsLog = await gitLog(workspace, 'agent/GOALS.md');
+    expect(goalsLog.some((line) => line.includes('evolve:'))).toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  it('enforced：带 user_anchor 的 applied 提案 → 显著改动放行提交', async () => {
+    const { app, paths } = await setup();
+    const workspace = path.join(paths.workspaceRoot, 'worker-a');
+    const roleFile = path.join(workspace, 'agent', 'ROLE.md');
+
+    // 开启 enforced + 预置一份已批准提案（user_anchor 依据）。
+    const agentYaml = path.join(workspace, 'agent.yaml');
+    const YAML = (await import('yaml')).default;
+    const parsed = YAML.parse(await fs.readFile(agentYaml, 'utf8'));
+    parsed.memory.identity_protocol = 'enforced';
+    await fs.writeFile(agentYaml, YAML.stringify(parsed));
+    await fs.writeFile(
+      path.join(workspace, 'agent/proposals/p-role.md'),
+      [
+        '---',
+        'proposal_id: p-role-01',
+        'kind: identity',
+        'status: applied',
+        'target_file: agent/ROLE.md',
+        'proposed_at: 2026-08-06T00:00:00+08:00',
+        'user_anchor: 用户说“岗位定位改成内容运营”',
+        '---',
+        '',
+        '现状：...',
+        '拟改：...',
+      ].join('\n'),
+    );
+
+    const { ProcessRunner } = await import('../src/core/process-runner.js');
+    vi.spyOn(ProcessRunner.prototype, 'runLogged').mockImplementation(async () => {
+      // 大幅改写 ROLE（>30% 改动），但有 user_anchor 依据。
+      await fs.writeFile(
+        roleFile,
+        '# 岗位定位\n\n负责内容运营。\n\n## 长期职责\n\n- 选题策划。\n- 内容撰写。\n- 数据分析。\n- 跨部门协同。\n- 独立跟进完整项目。\n- 输出周报。\n',
+      );
+      return fakeResult('完成。');
+    });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await runAdminJob(app, 'ledger-approved', '按批准方案更新岗位');
+
+    // ROLE.md 有 evolve: 提交（放行）。
+    const roleLog = await gitLog(workspace, 'agent/ROLE.md');
+    expect(roleLog.some((line) => line.includes('evolve:'))).toBe(true);
+    warnSpy.mockRestore();
+  });
+});

@@ -60,13 +60,19 @@ export async function renderAgentWorkspace(input: {
   );
   await fs.writeFile(path.join(workspace, 'README.md'), render(readmeTemplate, values));
   await fs.writeFile(path.join(workspace, 'agent.yaml'), YAML.stringify(config));
+  // D-041 P0-1/P1-3：身份文档播种。岗位骨架（ROLE 岗位定位）由 description 渲染（唯一权威），
+  // 长期职责初始即岗位定位；宪法区（CONSTITUTION）播种红线锚点块，员工不可静默改动。
   await fs.writeFile(
     path.join(workspace, 'agent/ROLE.md'),
-    `# 岗位定位\n\n${config.description}\n\n## 长期职责\n\n${bullets(preset.responsibilities)}\n`,
+    `# 岗位定位\n\n${config.description}\n\n## 长期职责\n\n${bullets(preset.responsibilities)}\n\n## 协作协议\n\n- 你的身份文档分四层：宪法（不可静默改）→ 岗位骨架（岗位定位由系统从 \`agent.yaml.description\` 渲染，是唯一权威）→ 可进化区（GOALS/OPERATING_SYSTEM/POLICIES/skills/knowledge，自主改进）→ 会话/运行区（logs/automation，不入正式记忆）。\n- 想改岗位定位或权限红线 → 写提案（\`agent/proposals/\`）→ 用户在飞书聊天批准 → 再改。\n- 一切改动都会进 \`evolve:\` 单文件提交历史，可回溯。\n`,
+  );
+  await fs.writeFile(
+    path.join(workspace, 'agent/CONSTITUTION.md'),
+    await fs.readFile(path.join(packageRoot(), 'templates/agent-skeleton/CONSTITUTION.md'), 'utf8'),
   );
   await fs.writeFile(
     path.join(workspace, 'agent/GOALS.md'),
-    `# 核心目标\n\n${bullets(preset.goals)}\n`,
+    `# 核心目标\n\n${bullets(preset.goals)}\n\n## 演进记录\n\n- ${new Date().toISOString()}：初始目标（创建员工）。\n`,
   );
   await fs.writeFile(
     path.join(workspace, 'agent/OPERATING_SYSTEM.md'),
@@ -80,7 +86,8 @@ export async function renderAgentWorkspace(input: {
   // （登录/授权/启停/归档恢复）只更新标记块内的行，块外内容员工维护、系统不覆盖。
   await fs.writeFile(path.join(workspace, 'agent/CURRENT_STATE.md'), renderCurrentStateSeed());
   // D-041 P0-3：身份基线播种。agent.yaml.description 为岗位定位唯一权威，ROLE.md 的
-  // `# 岗位定位` 段由系统渲染；基线快照四份身份文档标题+内容，供漂移检测/进化历史。
+  // `# 岗位定位` 段由系统渲染；基线快照五份身份文档（含 CONSTITUTION，D-041 P1-3）标题+
+  // 内容，供漂移检测/进化历史/提案对账。
   await ensureIdentityBaseline({ workspace, description: config.description });
   // D-041 P0-4：「记录→提案→批准」通道目录约定。员工对身份（ROLE/POLICIES/CONSTITUTION）
   // 的显著改动走提案，由用户在飞书聊天中批准后落盘；提案本身随自进化链提交，可回溯。

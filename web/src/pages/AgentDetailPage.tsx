@@ -1,6 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { useNavigate } from 'react-router-dom';
 import {
   Archive,
   Bot,
@@ -11,12 +10,10 @@ import {
   Play,
   PlugZap,
   RefreshCw,
-  Save,
   Square,
   Store,
   Terminal,
   Trash2,
-  Upload,
   Activity,
 } from 'lucide-react';
 import {
@@ -37,7 +34,6 @@ import { EmptyState } from '../components/PageState.js';
 import { Button } from '../components/ui/button.js';
 import { Input } from '../components/ui/input.js';
 import { Label } from '../components/ui/label.js';
-import { Textarea } from '../components/ui/textarea.js';
 import { Switch } from '../components/ui/switch.js';
 import { cn } from '../lib/utils.js';
 
@@ -285,14 +281,12 @@ function OverviewTab({
 function DocumentsTab({ agentId }: { agentId: string }) {
   const [key, setKey] = useState<string>('role');
   const [document, setDocument] = useState<AgentDocument>();
-  const [content, setContent] = useState('');
   const [error, setError] = useState('');
   const load = async (nextKey: string) => {
     setError('');
     try {
       const value = await api.readDocument(agentId, nextKey);
       setDocument(value);
-      setContent(value.content);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -300,15 +294,6 @@ function DocumentsTab({ agentId }: { agentId: string }) {
   useEffect(() => {
     void load(key);
   }, [agentId, key]);
-  const save = async () => {
-    try {
-      const saved = await api.saveDocument(agentId, key, content);
-      setDocument(saved);
-      notify.success('身份文档已保存');
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  };
   return (
     <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
       <aside className="flex flex-col gap-1">
@@ -334,33 +319,32 @@ function DocumentsTab({ agentId }: { agentId: string }) {
           <div>
             <h2 className="text-sm font-semibold">
               {documentKeys.find(([value]) => value === key)?.[1]}
+              <span className="ml-2 align-middle text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                （只读）
+              </span>
             </h2>
             <span className="text-xs text-muted-foreground">
               {document?.path}
               {document?.dirty ? ' · Git 未提交' : ''}
             </span>
           </div>
-          <Button onClick={() => void save()}>
-            <Save className="size-4" />
-            保存
-          </Button>
+          {document?.dirty && (
+            <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-semibold text-warning">
+              工作区有未提交改动
+            </span>
+          )}
         </div>
         {error && (
           <div className="mx-5 mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
             {error}
           </div>
         )}
-        <div className="grid gap-0 lg:grid-cols-2">
-          <Textarea
-            aria-label="Markdown 内容"
-            className="min-h-[420px] resize-y rounded-none border-0 border-r border-border bg-background font-mono text-xs"
-            value={content}
-            onChange={(event) => setContent(event.target.value)}
-          />
-          <article className="max-h-[520px] overflow-auto p-5 text-sm leading-relaxed [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:text-base [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-semibold [&_p]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-xs [&_pre]:my-2 [&_pre]:overflow-auto [&_pre]:rounded-md [&_pre]:bg-code [&_pre]:p-3 [&_pre]:font-mono [&_pre]:text-xs [&_pre]:text-code-ink [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground">
-            <ReactMarkdown>{content}</ReactMarkdown>
-          </article>
-        </div>
+        <article className="max-h-[560px] overflow-auto p-5 text-sm leading-relaxed [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:text-base [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-semibold [&_p]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-xs [&_pre]:my-2 [&_pre]:overflow-auto [&_pre]:rounded-md [&_pre]:bg-code [&_pre]:p-3 [&_pre]:font-mono [&_pre]:text-xs [&_pre]:text-code-ink [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground">
+          <ReactMarkdown>{document?.content ?? ''}</ReactMarkdown>
+        </article>
+        <p className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
+          身份文档只能通过飞书聊天修改（向员工提出变更，经批准后由员工更新）。
+        </p>
       </section>
     </div>
   );
@@ -434,24 +418,10 @@ function SkillsTab({ agentId }: { agentId: string }) {
   const [skills, setSkills] = useState<SkillMetadata[]>([]);
   const [scope, setScope] = useState<SkillScope>('project');
   const [error, setError] = useState('');
-  const [removing, setRemoving] = useState<SkillMetadata>();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const navigate = useNavigate();
   const load = async () => setSkills(await api.listSkills(agentId));
   useEffect(() => {
-    inputRef.current?.setAttribute('webkitdirectory', '');
     void load().catch((cause: unknown) => setError(String(cause)));
   }, [agentId]);
-  const upload = async (files: FileList | null) => {
-    if (!files?.length) return;
-    try {
-      await api.uploadSkill(agentId, [...files], scope);
-      await load();
-      notify.success('Skill 已导入');
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  };
   const groups: Array<{ scope: SkillScope; label: string; hint: string }> = [
     { scope: 'project', label: '项目级', hint: '随工作区版本管理，进入默认备份' },
     { scope: 'user', label: '用户级', hint: '员工运行时身份，仅随 Runtime 备份' },
@@ -463,30 +433,9 @@ function SkillsTab({ agentId }: { agentId: string }) {
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
         <div>
           <h2 className="text-sm font-semibold">Skills</h2>
-          <span className="text-xs text-muted-foreground">按项目级 / 用户级分类展示</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => navigate(`/skill-store?agent=${encodeURIComponent(agentId)}`)}
-          >
-            <Store className="size-4" />
-            从商店安装
-          </Button>
-          <Button variant="outline" size="sm" asChild>
-            <label className="cursor-pointer">
-              <Upload className="size-4" />
-              导入目录
-              <input
-                ref={inputRef}
-                type="file"
-                multiple
-                hidden
-                onChange={(event) => void upload(event.target.files)}
-              />
-            </label>
-          </Button>
+          <span className="text-xs text-muted-foreground">
+            由员工（AI）自主生成/沉淀 · 只读展示
+          </span>
         </div>
       </div>
       <div className="flex gap-1 border-b border-border px-5 py-3">
@@ -521,7 +470,7 @@ function SkillsTab({ agentId }: { agentId: string }) {
           <EmptyState
             icon={<Store className="size-5" />}
             title={`暂无 ${activeGroup.label} Skill`}
-            description="从商店安装，或按上方选中的作用域导入本地 Skill 目录。"
+            description="员工（AI）会在工作中自主生成并沉淀 Skill，此处只读展示。"
           />
         ) : (
           <ul className="divide-y divide-border">
@@ -543,45 +492,14 @@ function SkillsTab({ agentId }: { agentId: string }) {
                 >
                   {activeGroup.label}
                 </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-destructive hover:text-destructive"
-                  onClick={() => setRemoving(skill)}
-                >
-                  <Trash2 className="size-4" />
-                  卸载
-                </Button>
               </li>
             ))}
           </ul>
         )}
       </div>
-
-      <ConfirmDialog
-        open={Boolean(removing)}
-        onOpenChange={(open) => {
-          if (!open) setRemoving(undefined);
-        }}
-        title="卸载 Skill"
-        description={
-          removing
-            ? `卸载 Skill ${removing.name}（${removing.scope === 'project' ? '项目级' : '用户级'}）？此操作不可恢复。`
-            : ''
-        }
-        confirmLabel="确认卸载"
-        onConfirm={async () => {
-          if (!removing) return;
-          try {
-            await api.removeSkill(agentId, removing.name, removing.scope);
-            setRemoving(undefined);
-            await load();
-            notify.success('Skill 已卸载');
-          } catch (cause) {
-            setError(cause instanceof Error ? cause.message : String(cause));
-          }
-        }}
-      />
+      <p className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
+        Skill 的安装、导入与卸载由员工（AI）自主管理，Web 只读展示。
+      </p>
     </section>
   );
 }

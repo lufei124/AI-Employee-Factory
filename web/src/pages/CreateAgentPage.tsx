@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { ChevronLeft, ChevronRight, Check, Sparkles } from 'lucide-react';
-import { api, type GeneratedProfile } from '../api.js';
+import { api, type GeneratedSkeleton } from '../api.js';
 import { PageHeader } from '../components/PageHeader.js';
 import { CopyButton } from '../components/CopyButton.js';
 import { Button } from '../components/ui/button.js';
@@ -10,18 +10,24 @@ import { Textarea } from '../components/ui/textarea.js';
 import { Switch } from '../components/ui/switch.js';
 import { cn } from '../lib/utils.js';
 
-// D-029：进入向导即预填一份可编辑的默认蓝图，用户可手动修改或「AI 生成蓝图」
-// 用一句话描述重新生成。默认蓝图保证离屏即可看到可编辑的完整骨架。
+// D-029 + D-041 M3（决策② 骨架化）：进入向导即预填一份基础岗位骨架，用户可手动修改或
+// 「AI 生成骨架」用一句话重新生成。创建只给基础骨架（岗位名/id/描述/目标），职责/权限/
+// 上报降为预览区（展示系统将播种的红线模板），不再作为编辑字段——细节由员工在使用中
+// 自进化沉淀（Web 只读 + 飞书聊天为唯一修改通道）。
 const DEFAULT_BRIEF = '帮我建一名用户运营专员，负责收集和分析用户反馈，提炼产品洞察并闭环跟进。';
-const DEFAULT_PROFILE: GeneratedProfile = {
+const DEFAULT_PROFILE: GeneratedSkeleton = {
   id: 'user-operations',
   name: '用户运营专员',
   description: '专注于用户运营，负责收集与分析用户反馈，提炼运营洞察并闭环跟进，提升产品体验。',
   goals: ['建立用户反馈收集渠道', '每周输出运营洞察报告', '推动高优先级反馈闭环跟进'],
-  responsibilities: ['收集与整理用户反馈', '分析反馈并提炼共性洞察', '跟进高优先级问题至解决'],
-  policies: ['对外发布须经人工审批', '删除数据须经人工审批', 'Git push 须经人工审批'],
-  escalation_conditions: ['涉及资源投入或对外沟通时上报', '需要更高权限时申请'],
-  skills: ['feedback-analyze', 'feedback-collect'],
+  skills: [],
+};
+
+/** 预览区展示系统将播种的默认职责/权限/上报（resolveProfile 缺省值，与 create-agent.ts 对齐）。 */
+const DEFAULT_PREVIEW = {
+  responsibilities: '岗位定位（初始职责即职责定位，随使用细化）',
+  policies: '生产写入、对外发布、Git push 和删除数据必须经人工审批',
+  escalation: '需要更高权限或需人工决策时上报',
 };
 
 function agentIdFromName(name: string, fallback: string): string {
@@ -45,7 +51,7 @@ function fromLines(value: string): string[] {
     .filter(Boolean);
 }
 
-const STEPS = ['描述与蓝图', '运行环境', '确认创建'];
+const STEPS = ['描述与骨架', '运行环境', '确认创建'];
 
 export function CreateAgentPage() {
   const [step, setStep] = useState(0);
@@ -57,11 +63,6 @@ export function CreateAgentPage() {
   const [name, setName] = useState(DEFAULT_PROFILE.name);
   const [description, setDescription] = useState(DEFAULT_PROFILE.description);
   const [goals, setGoals] = useState(toLines(DEFAULT_PROFILE.goals));
-  const [responsibilities, setResponsibilities] = useState(
-    toLines(DEFAULT_PROFILE.responsibilities),
-  );
-  const [policies, setPolicies] = useState(toLines(DEFAULT_PROFILE.policies));
-  const [escalation, setEscalation] = useState(toLines(DEFAULT_PROFILE.escalation_conditions));
   const [skills, setSkills] = useState(toLines(DEFAULT_PROFILE.skills));
   const [runtime, setRuntime] = useState<'claude' | 'codex'>('claude');
   const [feishu, setFeishu] = useState<'dedicated' | 'disabled'>('dedicated');
@@ -76,20 +77,14 @@ export function CreateAgentPage() {
     feishu,
     description,
     goals: fromLines(goals),
-    responsibilities: fromLines(responsibilities),
-    policies: fromLines(policies),
-    escalation_conditions: fromLines(escalation),
     skills: fromLines(skills),
   };
   const canContinue = id.length > 0 && description.length > 0 && fromLines(goals).length > 0;
 
-  const applyProfile = useCallback((profile: GeneratedProfile) => {
+  const applyProfile = useCallback((profile: GeneratedSkeleton) => {
     setName(profile.name);
     setDescription(profile.description);
     setGoals(toLines(profile.goals));
-    setResponsibilities(toLines(profile.responsibilities));
-    setPolicies(toLines(profile.policies));
-    setEscalation(toLines(profile.escalation_conditions));
     setSkills(toLines(profile.skills));
     setIdManuallyEdited((edited) => {
       if (!edited) {
@@ -108,8 +103,8 @@ export function CreateAgentPage() {
       setGenerating(true);
       setError('');
       try {
-        const profile = await api.generateEmployeeProfile(source);
-        applyProfile(profile);
+        const skeleton = await api.generateSkeleton(source);
+        applyProfile(skeleton);
         setGenerated(true);
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
@@ -198,9 +193,9 @@ export function CreateAgentPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="员工蓝图"
+        eyebrow="员工骨架"
         title="创建 AI 员工"
-        description="用一句话描述员工用法，AI 自动生成可编辑蓝图；生成可迁移、可诊断且身份隔离的本地员工。"
+        description="用一句话描述员工用法，AI 自动生成基础岗位骨架；职责、权限等细节由员工在使用中自进化沉淀（Web 只读，修改请通过飞书聊天）。"
       />
 
       <ol className="flex items-center gap-2">
@@ -249,12 +244,12 @@ export function CreateAgentPage() {
                   onClick={() => void generate(brief)}
                 >
                   <Sparkles className={cn('size-4', generating && 'animate-pulse')} />
-                  {generating ? 'AI 生成中…' : 'AI 生成蓝图'}
+                  {generating ? 'AI 生成中…' : 'AI 生成骨架'}
                 </Button>
                 <p className="text-xs text-muted-foreground">
                   {generated
                     ? '已生成，可修改下方字段后继续。'
-                    : 'AI 会生成岗位名、职责、目标与权限边界。'}
+                    : 'AI 会生成岗位名、职责定位与核心目标。'}
                 </p>
               </div>
             </div>
@@ -291,7 +286,7 @@ export function CreateAgentPage() {
 
             <div className="grid gap-5 sm:grid-cols-2">
               <div className="grid gap-1.5 sm:col-span-2">
-                <Label htmlFor="create-desc">职责描述</Label>
+                <Label htmlFor="create-desc">职责定位</Label>
                 <Textarea
                   id="create-desc"
                   rows={3}
@@ -309,41 +304,38 @@ export function CreateAgentPage() {
                 />
               </div>
               <div className="grid gap-1.5">
-                <Label htmlFor="create-resp">长期职责（每行一条）</Label>
-                <Textarea
-                  id="create-resp"
-                  rows={4}
-                  value={responsibilities}
-                  onChange={(event) => setResponsibilities(event.target.value)}
-                />
-              </div>
-              <div className="grid gap-1.5">
-                <Label htmlFor="create-policies">权限与上报规则（每行一条）</Label>
-                <Textarea
-                  id="create-policies"
-                  rows={4}
-                  value={policies}
-                  onChange={(event) => setPolicies(event.target.value)}
-                />
-              </div>
-              <div className="grid gap-1.5">
-                <Label htmlFor="create-escalation">主动上报情形（每行一条）</Label>
-                <Textarea
-                  id="create-escalation"
-                  rows={3}
-                  value={escalation}
-                  onChange={(event) => setEscalation(event.target.value)}
-                />
-              </div>
-              <div className="grid gap-1.5 sm:col-span-2">
-                <Label htmlFor="create-skills">技能（每行一个，英文 kebab-case）</Label>
+                <Label htmlFor="create-skills">技能（每行一个，英文 kebab-case，可留空）</Label>
                 <Textarea
                   id="create-skills"
-                  rows={3}
+                  rows={4}
                   value={skills}
                   onChange={(event) => setSkills(event.target.value)}
                 />
               </div>
+            </div>
+
+            <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-primary">
+                将播种的基础模板预览
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                创建只给基础岗位骨架；职责、权限、上报等细节由员工在工作中自进化沉淀，不在创建时编辑
+                ——后续修改一律通过飞书聊天。
+              </p>
+              <dl className="mt-3 space-y-2 text-sm">
+                <div className="flex gap-3">
+                  <dt className="w-16 shrink-0 text-muted-foreground">职责</dt>
+                  <dd className="text-foreground">{DEFAULT_PREVIEW.responsibilities}</dd>
+                </div>
+                <div className="flex gap-3">
+                  <dt className="w-16 shrink-0 text-muted-foreground">权限</dt>
+                  <dd className="text-foreground">{DEFAULT_PREVIEW.policies}</dd>
+                </div>
+                <div className="flex gap-3">
+                  <dt className="w-16 shrink-0 text-muted-foreground">上报</dt>
+                  <dd className="text-foreground">{DEFAULT_PREVIEW.escalation}</dd>
+                </div>
+              </dl>
             </div>
           </div>
         )}
@@ -414,8 +406,9 @@ export function CreateAgentPage() {
             <dl className="divide-y divide-border rounded-lg border border-border">
               {[
                 ['Agent', `${name} · ${id}`],
-                ['职责描述', description],
+                ['职责定位', description],
                 ['核心目标', `${fromLines(goals).length} 条`],
+                ['技能', fromLines(skills).length ? `${fromLines(skills).length} 个` : '无'],
                 ['Runtime', runtime === 'claude' ? 'Claude Code' : 'OpenAI Codex'],
                 ['飞书', feishu === 'dedicated' ? '独立机器人' : '不启用'],
               ].map(([key, value]) => (

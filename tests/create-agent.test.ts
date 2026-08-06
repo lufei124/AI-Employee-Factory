@@ -248,4 +248,46 @@ describe('CreateAgentService', () => {
       await fs.pathExists(path.join(minimal.workspace, '.codex/skills/ai-employee-factory')),
     ).toBe(true);
   });
+
+  it('seeds the identity skeleton: CONSTITUTION anchors, GOALS 演进记录, ROLE 协作协议, identity baseline (D-041 M3)', async () => {
+    const { service } = await setup();
+    const created = await service.create({
+      id: 'skeleton',
+      name: '骨架员工',
+      runtime: 'claude',
+      feishu: 'disabled',
+      description: '负责用户反馈闭环',
+      goals: ['收集反馈', '闭环跟进'],
+    });
+    const workspace = created.workspace;
+    // 宪法区：播种红线锚点块 + 变更流程标题（identity-guard 硬门依赖）。
+    const constitution = await fs.readFile(path.join(workspace, 'agent/CONSTITUTION.md'), 'utf8');
+    expect(constitution).toContain('# 使命');
+    expect(constitution).toContain('<!-- constitution:anchors -->');
+    expect(constitution).toContain('# 变更流程');
+    expect(constitution).toContain('agent/proposals/');
+    // GOALS 带演进记录留痕行（每次改追加一行，可回溯）。
+    const goals = await fs.readFile(path.join(workspace, 'agent/GOALS.md'), 'utf8');
+    expect(goals).toContain('## 演进记录');
+    expect(goals).toContain('初始目标（创建员工）');
+    // ROLE 带协作协议（四区模型 + 提案通道）。
+    const role = await fs.readFile(path.join(workspace, 'agent/ROLE.md'), 'utf8');
+    expect(role).toContain('## 协作协议');
+    expect(role).toContain('宪法');
+    // 身份基线含五份文档（含 CONSTITUTION，D-041 P1-3）。
+    const baseline = await fs.readFile(path.join(workspace, 'agent/IDENTITY_BASELINE.md'), 'utf8');
+    for (const doc of [
+      'agent/ROLE.md',
+      'agent/GOALS.md',
+      'agent/OPERATING_SYSTEM.md',
+      'agent/POLICIES.md',
+      'agent/CONSTITUTION.md',
+    ]) {
+      expect(baseline).toContain(doc);
+    }
+    // 提案通道目录约定已播种。
+    expect(await fs.pathExists(path.join(workspace, 'agent/proposals/README.md'))).toBe(true);
+    // 宪法区由系统播种、可 git 提交可回溯。
+    expect(await fs.pathExists(path.join(workspace, 'agent/CONSTITUTION.md'))).toBe(true);
+  });
 });

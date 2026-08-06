@@ -24,10 +24,17 @@ import type {
 import { FileLock } from '../core/locks.js';
 import { initializeFactory, readConfig } from '../core/config.js';
 import { CreateAgentService, type CreateAgentInput } from '../core/create-agent.js';
-import { generateEmployeeProfile } from '../core/employee-generator.js';
+import { generateEmployeeProfile, generateEmployeeSkeleton } from '../core/employee-generator.js';
 import { renderRawExperience, rawExperienceRelPath } from '../core/experience.js';
 import { validateIdentityGuard } from '../core/identity-guard.js';
 import { ensureIdentityBaseline } from '../core/identity-baseline.js';
+import {
+  maybeEnforceIdentityProtocol,
+  parseProposalFrontmatter,
+  recordDecision,
+  recordProposal,
+  truncateLedger,
+} from '../core/proposal-ledger.js';
 import {
   appendReflectionSignal,
   estimateImportance,
@@ -213,6 +220,16 @@ export class FactoryApplication {
   ): Promise<Awaited<ReturnType<typeof generateEmployeeProfile>>> {
     await this.initialize();
     return generateEmployeeProfile(brief, options?.model ? { model: options.model } : undefined);
+  }
+
+  // D-041 M3（决策② 骨架化）：创建阶段「一句话 → 基础岗位骨架」。字段收敛为
+  // id/name/description/goals/skills，职责/权限/上报由系统按红线模板播种。
+  async generateSkeleton(
+    brief: string,
+    options?: { model?: string },
+  ): Promise<Awaited<ReturnType<typeof generateEmployeeSkeleton>>> {
+    await this.initialize();
+    return generateEmployeeSkeleton(brief, options?.model ? { model: options.model } : undefined);
   }
 
   async listAgents(): Promise<AgentSummary[]> {
@@ -535,8 +552,18 @@ export class FactoryApplication {
    *  版本化——含未跟踪新文件，沿用单文件 git add，绝不用 add -A。
    *  D-041 P0-1 硬门：ROLE.md / POLICIES.md 提交前过 identity-guard，锚点缺失（章节标题 /
    *  红线词被删）→ 跳过该文件提交并 console.warn 留现场（保留脏文件供 git diff / checkout），
-   *  不悄悄回滚，不阻断其他文件的提交。 */
-  private async commitSelfEvolution(agent: AgentConfig, workspace: string): Promise<void> {
+   *  不悄悄回滚，不阻断其他文件的提交。
+   *  D-041 P1-3 对账：CONSTITUTION.md 同样受 identity-guard 只读硬门（宪法区员工不可静默改动，
+   *  只允许用户聊天明确指示修改）。enforced 模式下未授权身份改动（appliedWithoutAnchor）由
+   *  blockedRel 拦截提交；settleActive 在基线重快照前算好并传入（防止改动被吸收进基线）。 */
+  private async commitSelfEvolution(
+    agent: AgentConfig,
+    workspace: string,
+    blockedRel?: ReadonlySet<string>,
+  ): Promise<void> {
+    // D-041 P1-3：enforced 对账。settleActive 已在 ensureIdentityBaseline 前算出 blockedRel；
+    // 其他入口（如 maybeAutoCreateSkill 直接调用）未传时在此自行对账。
+    const blocked = blockedRel ?? (await this.enforceIdentityProtocol(agent, workspace));
     const relPaths = [
       // D-041 P1-1：agent.yaml 随自进化链单文件提交。系统回填（ensureMemoryFlags 写默认开关）与
       // 员工对非 runtime 块的合法改动（如 self-maintained 备注）都进 evolve: 历史可回溯。
@@ -546,6 +573,9 @@ export class FactoryApplication {
       agent.identity.goals_file,
       agent.identity.operating_system_file,
       agent.identity.policies_file,
+      // D-041 P1-3：宪法区。员工不可静默改动（只允许用户聊天明确指示修改），提交前过
+      // identity-guard 硬门；enforced 模式下的未授权改动由 blockedRel 拦截。
+      'agent/CONSTITUTION.md',
       'skills',
       'workflows',
       'knowledge',
@@ -563,8 +593,20 @@ export class FactoryApplication {
       'AGENTS.md',
     ];
     for (const relPath of relPaths) {
+      // D-041 P1-3：enforced 对账拦截——跳过违规文件的提交（保留脏文件供人工决策）。
+      if (blocked.has(relPath)) {
+        console.warn(
+          `[identity-protocol] 已拒绝提交 ${relPath}：未授权身份改动（enforced）。` +
+            `保留工作区脏文件供 git diff / git checkout 人工决策。`,
+        );
+        continue;
+      }
       // D-041 P0-1：身份文档提交前过内容级硬门——锚点缺失则拒绝提交（保留脏文件）。
-      if (relPath === agent.identity.role_file || relPath === agent.identity.policies_file) {
+      if (
+        relPath === agent.identity.role_file ||
+        relPath === agent.identity.policies_file ||
+        relPath === 'agent/CONSTITUTION.md'
+      ) {
         const file = path.join(workspace, relPath);
         if (await fs.pathExists(file)) {
           const content = await fs.readFile(file, 'utf8');
@@ -590,6 +632,50 @@ export class FactoryApplication {
         );
       }
     }
+  }
+
+  /** D-041 P1-3：enforced 模式身份对账，返回被拦截的身份文档相对路径集合（供提交跳过）。
+   *  advisory 仅 warn 不拦截；对账/记录失败 best-effort（不阻断自进化链）。 */
+  private async enforceIdentityProtocol(
+    agent: AgentConfig,
+    workspace: string,
+  ): Promise<Set<string>> {
+    const blocked = new Set<string>();
+    try {
+      const protocol = agent.memory.identity_protocol ?? 'advisory';
+      const enforced = await maybeEnforceIdentityProtocol({
+        workspace,
+        agentId: agent.id,
+        logsRoot: this.paths.logsDir,
+        protocol,
+        recordState: async (message: string) => {
+          const file = path.join(workspace, 'agent', 'CURRENT_STATE.md');
+          const result = await updateCurrentState(file, { last_event: message }).catch(
+            (error: unknown) => {
+              console.warn(
+                `[identity-protocol] 更新 ${agent.id} 的当前状态失败：${error instanceof Error ? error.message : String(error)}`,
+              );
+              return undefined;
+            },
+          );
+          if (result !== undefined && (await this.isDirty(workspace, file))) {
+            await this.commitAgentFile(
+              workspace,
+              'agent/CURRENT_STATE.md',
+              'chore: 记录未授权身份改动',
+            );
+          }
+        },
+      });
+      if (enforced.blocked) {
+        for (const entry of enforced.unauthorized) blocked.add(entry.relPath);
+      }
+    } catch (error) {
+      console.warn(
+        `[identity-protocol] 身份对账失败（跳过）：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    return blocked;
   }
 
   /** D-034：任务结束后自动 adopt/upsert 员工在任务中直接写盘的 skill，并投影到运行器发现目录。
@@ -1150,8 +1236,8 @@ export class FactoryApplication {
 
   // D-035：员工自进化沉淀链统一入口。抽取自 runJob 后处理，runJob 与飞书 bridge 逐消息共用。
   // D-041：链序升级——经验两级（一级原始始终落盘 → 二级重要性提炼）→ 宿主平台 skill →
-  // 系统提示回填 → 身份基线 → 记忆开关回填 → 员工自建 skill adopt/生成 → 自进化提交 →
-  // 任务 reconcile。
+  // 系统提示回填 → 提案账本同步 + 身份对账（enforced 拦截）→ 身份基线（排除被拦截文档）→
+  // 记忆开关回填 → 员工自建 skill adopt/生成 → 自进化提交 → 任务 reconcile。
   private async settleActive(
     id: string,
     agent: AgentConfig,
@@ -1189,12 +1275,22 @@ export class FactoryApplication {
       },
       memory: agent.memory,
     });
+    // D-041 P1-3：提案账本同步——员工写提案（agent/proposals/*.md）时登记账本；
+    // 带 user_anchor 的 applied 提案登记为批准决策（对账时作为批准依据）。账本同步必须在
+    // 身份基线重快照之前，否则违规改动会被基线吸收、对账无从发现。
+    await this.syncProposalLedger(id, registry.workspace.path);
+    // D-041 P1-3：enforced 模式身份对账。返回被拦截的文档集合（供基线排除 + 提交跳过）。
+    // 必须在 ensureIdentityBaseline 之前：被拦截的违规改动不吸收进基线，保留既有基线条目，
+    // 使下次 settle 仍能发现并继续拦截。
+    const blockedRel = await this.enforceIdentityProtocol(agent, registry.workspace.path);
     // D-041 P0-3：身份基线回填（存量员工幂等）。agent.yaml.description 为唯一权威，ROLE.md
     // `# 岗位定位` 段由系统渲染；此处快照四份身份文档到 agent/IDENTITY_BASELINE.md。回填写入
     // 由下方 commitSelfEvolution 单文件提交（evolve: 更新 IDENTITY_BASELINE.md，可回溯）。
     const baseline = await ensureIdentityBaseline({
       workspace: registry.workspace.path,
       description: agent.description,
+      // 被对账拦截的文档不吸收进基线（防止违规改动被基线认可）。
+      excludeDocs: [...blockedRel],
     });
     if (baseline.wrote) {
       await this.commitAgentFile(
@@ -1214,9 +1310,49 @@ export class FactoryApplication {
     await this.autoAdoptSelfSkills(id, agent);
     await this.maybeAutoCreateSkill(id, agent, transcriptFile);
     // TASK-029 自我进化：检测并单文件提交员工自维护文档变更。
-    await this.commitSelfEvolution(agent, registry.workspace.path);
+    await this.commitSelfEvolution(agent, registry.workspace.path, blockedRel);
     // TASK-031（D-028）：员工自我配置定时任务 reconcile。
     await reconcileEmployeeJobs(registry, agent, this.paths);
+  }
+
+  // D-041 P1-3：提案账本同步。扫描 agent/proposals/*.md，将提案登记进账本
+  // （recordProposal）；`status: applied` 且带 user_anchor 的提案登记为批准决策
+  // （recordDecision, approved），供 appliedWithoutAnchor 对账作为批准依据。best-effort，
+  // 失败仅 warn 不阻断。账本写入进 evolve: 提交由 commitSelfEvolution（agent/proposals）处理。
+  private async syncProposalLedger(id: string, workspace: string): Promise<void> {
+    try {
+      const proposalsDir = path.join(workspace, 'agent', 'proposals');
+      if (!(await fs.pathExists(proposalsDir))) return;
+      const entries = await fs.readdir(proposalsDir);
+      for (const entry of entries) {
+        if (!entry.endsWith('.md')) continue;
+        const file = path.join(proposalsDir, entry);
+        const content = await fs.readFile(file, 'utf8').catch(() => '');
+        const frontmatter = parseProposalFrontmatter(content);
+        if (!frontmatter.proposal_id) continue;
+        await recordProposal(this.paths.logsDir, id, frontmatter);
+        // 已批准且带 user_anchor 的提案 → 登记批准决策（对账依据）。重复调用幂等由
+        // hasApprovedAnchor 判定，不重复登记不影响结论。
+        if (
+          frontmatter.status === 'applied' &&
+          frontmatter.user_anchor?.trim() &&
+          frontmatter.target_file
+        ) {
+          await recordDecision(this.paths.logsDir, id, {
+            proposal_id: frontmatter.proposal_id,
+            decision: 'approved',
+            target_file: frontmatter.target_file,
+            user_anchor: frontmatter.user_anchor,
+          });
+        }
+      }
+      // P2-3 上限：账本超限截断为最近 N 行。
+      await truncateLedger(this.paths.logsDir, id);
+    } catch (error) {
+      console.warn(
+        `[proposal-ledger] 提案账本同步失败（跳过）：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   // D-041 P1-1：存量员工记忆开关幂等回填。agent.yaml 中 transcript_persist /

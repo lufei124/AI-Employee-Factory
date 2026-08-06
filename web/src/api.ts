@@ -40,6 +40,16 @@ export interface GeneratedProfile {
   skills: string[];
 }
 
+// D-041 M3（决策② 骨架化）：创建阶段「基础岗位骨架」输出——只含岗位名/id/描述/目标/技能，
+// 职责/权限/上报由系统按红线模板播种，不在创建时编辑。
+export interface GeneratedSkeleton {
+  id?: string;
+  name: string;
+  description: string;
+  goals: string[];
+  skills: string[];
+}
+
 export interface OperationDto {
   id: string;
   type: string;
@@ -197,6 +207,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ brief }),
     }),
+  generateSkeleton: (brief: string) =>
+    request<GeneratedSkeleton>('/agents/generate', {
+      method: 'POST',
+      body: JSON.stringify({ brief }),
+    }),
   getAgent: (id: string) => request<AgentDetail>(`/agents/${encodeURIComponent(id)}`),
   terminalGuidance: (id: string) =>
     request<{ runtimeLogin: string; bridgeAuthorize: string; chat: string }>(
@@ -229,37 +244,8 @@ export const api = {
     ),
   readDocument: (id: string, key: string) =>
     request<AgentDocument>(`/agents/${encodeURIComponent(id)}/documents/${key}`),
-  saveDocument: (id: string, key: string, content: string) =>
-    request<AgentDocument>(`/agents/${encodeURIComponent(id)}/documents/${key}`, {
-      method: 'PUT',
-      body: JSON.stringify({ content }),
-    }),
   listJobs: (id: string) => request<JobConfig[]>(`/agents/${encodeURIComponent(id)}/jobs`),
   listSkills: (id: string) => request<SkillMetadata[]>(`/agents/${encodeURIComponent(id)}/skills`),
-  uploadSkill: (id: string, files: File[], scope?: SkillScope) => {
-    const data = new FormData();
-    for (const file of files) {
-      const relative =
-        (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
-      data.append('files', file, relative);
-    }
-    if (scope) data.append('scope', scope);
-    return request<{ name: string; version: string; scope: SkillScope }>(
-      `/agents/${encodeURIComponent(id)}/skills/upload`,
-      {
-        method: 'POST',
-        body: data,
-      },
-    );
-  },
-  removeSkill: (id: string, name: string, scope?: SkillScope) =>
-    request<{ removed: boolean; scope: SkillScope }>(
-      `/agents/${encodeURIComponent(id)}/skills/${encodeURIComponent(name)}`,
-      {
-        method: 'DELETE',
-        body: JSON.stringify({ confirmName: name, ...(scope ? { scope } : {}) }),
-      },
-    ),
   listSkillStoreRepositories: () => request<StoreRepository[]>('/skill-store/repositories'),
   addSkillStoreRepository: (input: { name: string; url: string; description?: string }) =>
     request<StoreRepository>('/skill-store/repositories', {

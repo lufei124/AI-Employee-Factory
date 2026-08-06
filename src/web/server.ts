@@ -221,13 +221,14 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
     return { data: created };
   });
 
-  // D-029：创建阶段「描述 → 生成员工蓝图」。同步等待本地 Claude 生成，Web 端转圈。
+  // D-029 + D-041 M3（决策② 骨架化）：创建阶段「一句话 → 基础岗位骨架」。同步等待本地
+  // Claude 生成，Web 端转圈。字段收敛为 id/name/description/goals/skills。
   server.post('/api/v1/agents/generate', async (request) => {
     const body = z
       .object({ brief: z.string().min(1), model: z.string().optional() })
       .parse(request.body);
     return {
-      data: await options.application.generateProfile(
+      data: await options.application.generateSkeleton(
         body.brief,
         body.model ? { model: body.model } : undefined,
       ),
@@ -289,17 +290,17 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
     }),
   );
 
+  // D-041 M3（决策① Web 只读）：身份文档只能通过飞书聊天修改（向员工提出变更，经批准后由
+  // 员工更新）。Web 编辑入口移除，PUT 本批直接 403（CLI 与飞书聊天是唯一改身份通道）。
   server.put<{ Params: { id: string; key: string } }>(
     '/api/v1/agents/:id/documents/:key',
-    async (request) => {
-      const body = z.object({ content: z.string() }).parse(request.body);
-      return {
-        data: await options.application.saveDocument(
-          request.params.id,
-          request.params.key,
-          body.content,
-        ),
-      };
+    async (_request, reply) => {
+      apiError(
+        reply,
+        403,
+        'READONLY',
+        '身份文档只读：修改请通过飞书聊天向员工提出，经批准后由员工更新。',
+      );
     },
   );
 

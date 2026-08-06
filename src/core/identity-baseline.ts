@@ -24,12 +24,14 @@ import { validateIdentityGuard } from './identity-guard.js';
 /** 基线文件相对工作区的路径。 */
 export const IDENTITY_BASELINE_FILE = 'agent/IDENTITY_BASELINE.md';
 
-/** 四份身份文档（相对工作区）。 */
+/** 五份身份文档（相对工作区）。D-041 P1-3 起包含 CONSTITUTION.md——宪法区同样是
+ *  员工不可静默改动的身份文档，纳入基线快照供提案对账（appliedWithoutAnchor）。 */
 export const IDENTITY_DOCS = [
   'agent/ROLE.md',
   'agent/GOALS.md',
   'agent/OPERATING_SYSTEM.md',
   'agent/POLICIES.md',
+  'agent/CONSTITUTION.md',
 ] as const;
 
 export type IdentityDoc = (typeof IDENTITY_DOCS)[number];
@@ -136,20 +138,28 @@ export function parseIdentityBaseline(content: string): IdentityBaseline | null 
  * 幂等判定忽略 generated_at（每次调用都变），仅当描述或任一文档内容与既有基线不一致时
  * 才重写并返回 wrote=true（供调用方决定是否走自进化提交）；完全一致则跳过写盘（mtime 不变，
  * 不产生 evolve 提交）。
+ *
+ * D-041 P1-3：`excludeDocs` 供身份对账（enforced 模式）使用——被判定为未授权改动的文档
+ * **不吸收进基线**（保留既有基线条目），防止违规改动被基线快照认可后在下次 settle 被放行提交。
  */
 export async function ensureIdentityBaseline(input: {
   workspace: string;
   description: string;
+  excludeDocs?: readonly string[];
 }): Promise<{ wrote: boolean; baseline: IdentityBaseline }> {
-  const { workspace, description } = input;
+  const { workspace, description, excludeDocs = [] } = input;
   const contents = await readIdentityDocs(workspace);
-  const docs = {} as Record<IdentityDoc, DocBaseline>;
-  for (const doc of IDENTITY_DOCS) docs[doc] = snapshotDoc(contents[doc]);
-
+  const excludedSet = new Set(excludeDocs);
   const existingFile = await fs
     .readFile(path.join(workspace, IDENTITY_BASELINE_FILE), 'utf8')
     .catch(() => '');
   const existing = existingFile.trim() ? parseIdentityBaseline(existingFile) : null;
+  const docs = {} as Record<IdentityDoc, DocBaseline>;
+  for (const doc of IDENTITY_DOCS) {
+    // 被排除的文档沿用既有基线条目（不重快照），使违规改动不被吸收。
+    docs[doc] =
+      excludedSet.has(doc) && existing?.docs[doc] ? existing.docs[doc] : snapshotDoc(contents[doc]);
+  }
   const sameAsExisting =
     existing !== null &&
     existing.description === description &&

@@ -36,6 +36,10 @@ function seed(workspace: string, role: string): void {
     path.join(workspace, 'agent/POLICIES.md'),
     `# 权限与上报规则\n\n## 权限边界\n\n生产写入、对外发布、Git push 和删除数据必须经人工审批。\n\n## 主动上报\n\n需要生产权限或管理决策时上报。\n`,
   );
+  fs.writeFileSync(
+    path.join(workspace, 'agent/CONSTITUTION.md'),
+    `# 使命\n\n帮助用户提升产品体验。\n\n# 变更流程\n\n1. 写提案 → 用户批准 → 再改。\n`,
+  );
 }
 
 async function setup(): Promise<string> {
@@ -115,6 +119,40 @@ describe('ensureIdentityBaseline（D-041 P0-3）', () => {
     for (const doc of IDENTITY_DOCS) {
       expect(parsed!.docs[doc].sha256).toBe(baseline.docs[doc].sha256);
     }
+  });
+
+  it('CONSTITUTION.md 纳入基线快照（D-041 P1-3）：改动可被漂移检测捕捉', async () => {
+    const ws = await setup();
+    await ensureIdentityBaseline({ workspace: ws, description: 'd' });
+    const before = await fs.readFile(path.join(ws, 'agent/CONSTITUTION.md'), 'utf8');
+    void before;
+    fs.writeFileSync(path.join(ws, 'agent/CONSTITUTION.md'), '# 无关内容\n\n删除宪法。\n');
+    const drift = await baselineDrift(ws);
+    expect(drift!.drift).toBe(true);
+    expect(drift!.docs['agent/CONSTITUTION.md']).toBeDefined();
+  });
+
+  it('excludeDocs：被排除的文档保留既有基线条目，不吸收未授权改动（D-041 P1-3）', async () => {
+    const ws = await setup();
+    await ensureIdentityBaseline({ workspace: ws, description: 'd' });
+    const originalEntry = (await ensureIdentityBaseline({ workspace: ws, description: 'd' }))
+      .baseline.docs['agent/POLICIES.md'];
+    // 员工整删 POLICIES 红线词（未授权改动）。
+    fs.writeFileSync(
+      path.join(ws, 'agent/POLICIES.md'),
+      `# 权限与上报规则\n\n## 权限边界\n\n所有操作须谨慎。\n\n## 主动上报\n\n需要生产权限或管理决策时上报。\n`,
+    );
+    const { baseline } = await ensureIdentityBaseline({
+      workspace: ws,
+      description: 'd',
+      excludeDocs: ['agent/POLICIES.md'],
+    });
+    // POLICIES 沿用例旧基线条目（sha256 不变 = 违规未被吸收）。
+    expect(baseline.docs['agent/POLICIES.md'].sha256).toBe(originalEntry.sha256);
+    // 其余文档正常刷新为当前内容。
+    expect(baseline.docs['agent/ROLE.md'].sha256).toBe(
+      snapshotDoc(fs.readFileSync(path.join(ws, 'agent/ROLE.md'), 'utf8')).sha256,
+    );
   });
 });
 

@@ -61,7 +61,9 @@ agentctl web --no-open       # 只打印本地地址
 agentctl web --port 43120    # 指定本机端口
 ```
 
-页面覆盖首次初始化、总览、员工创建向导、生命周期、五类身份文档、Job、Skill、实时日志、备份恢复和 Doctor。长时间任务在“操作中心”里通过 SSE 显示进度；完整日志仍保存在员工专属日志目录。
+页面覆盖首次初始化、总览、员工创建向导、生命周期、身份文档、Job、Skill、实时日志、备份恢复和 Doctor。长时间任务在“操作中心”里通过 SSE 显示进度；完整日志仍保存在员工专属日志目录。
+
+身份文档与 Skills 均为**只读信息台**（D-041 决策①）：身份文档以 Markdown 预览展示（标「只读」，dirty 显示未提交徽章），修改只能通过飞书聊天向员工提出、经批准后由员工更新（`PUT /documents` 后端直接 403）；Skill 的安装/导入/卸载由员工（AI）自主管理，Web 只读展示。
 
 Web 只监听 `127.0.0.1`，每次启动生成一次性 fragment token，交换为 `HttpOnly`/`SameSite=Strict` cookie，修改请求同时检查 Host、Origin 和 CSRF token。关闭 `agentctl web` 后服务和由它启动的未完成子进程会停止。
 
@@ -69,11 +71,11 @@ CC Switch Provider 同步、Codex 登录、飞书扫码/App 授权和交互聊�
 
 每个员工的 `agent/CURRENT_STATE.md` 由系统与员工共同维护：运行器登录、飞书授权、服务启停、归档/恢复等生命周期事件会自动更新状态行并单文件 git 提交；员工（AI）在工作开始/结束时按运行指南更新「工作进展」段（claude 侧已放行编辑该文件）。任务/对话完成不自动写状态。
 
-员工（AI）可在任务执行中自我进化：按运行指南更新自己的岗位（`agent/ROLE.md`）、目标（`agent/GOALS.md`）、工作系统（`agent/OPERATING_SYSTEM.md`）与规则（`agent/POLICIES.md`），或写回工作过程中的经验到 `knowledge/`、沉淀 `skills/` 与 `workflows/`——系统会自动检测并单文件 git 提交（`evolve:` 前缀），让下次执行更准确。
+员工（AI）可在任务执行中自我进化：按运行指南更新自己的目标（`agent/GOALS.md`）、工作系统（`agent/OPERATING_SYSTEM.md`）与规则（`agent/POLICIES.md`），或写回工作过程中的经验到 `knowledge/`、沉淀 `skills/` 与 `workflows/`——系统会自动检测并单文件 git 提交（`evolve:` 前缀），让下次执行更准确。岗位定位（`agent/ROLE.md` 的 `# 岗位定位` 段）与宪法（`agent/CONSTITUTION.md`）由系统从 `agent.yaml.description` 渲染/播种，员工只可提案，改动经用户在飞书聊天批准后由员工落盘。
 
-## 创建员工（描述 → AI 生成蓝图）
+## 创建员工（描述 → AI 生成骨架）
 
-用一句话描述员工用法，AI 自动生成可编辑的岗位蓝图（岗位名、职责、目标、权限边界），确认后创建。不需要、也没有预设：
+用一句话描述员工用法，AI 自动生成可编辑的**基础岗位骨架**（岗位名、id、职责定位、核心目标、技能），确认后创建。创建只给骨架——职责/权限/上报等细节由系统按红线模板播种，之后由员工在使用中自进化沉淀（Web 只读，修改走飞书聊天）。不需要、也没有预设：
 
 ```bash
 agentctl create \
@@ -82,7 +84,7 @@ agentctl create \
   --feishu dedicated
 ```
 
-`--describe` 先用本地 Claude CLI 生成蓝图，再创建；`--dry-run` 可先预览。也可跳过 AI，手动给 `--description` 和 `--goal`。Web 管理台创建页提供同一流程：输入描述 → 「AI 生成蓝图」→ 编辑字段 → 确认创建。
+`--describe` 先用本地 Claude CLI 生成骨架，再创建；`--dry-run` 可先预览。也可跳过 AI，手动给 `--description` 和 `--goal`。Web 管理台创建页提供同一流程：输入描述 → 「AI 生成骨架」→ 编辑字段 → 确认创建（职责/权限/上报以只读「将播种的基础模板预览」展示，不直接编辑）。
 
 Claude 默认使用 CC Switch 当前启用的 Provider。创建后将 Provider 同步到员工隔离环境：
 
@@ -242,9 +244,10 @@ AI 员工的进化（记忆/岗位/目标/规则/技能）**只在聊天/干活�
 
 **身份守卫**（`agentctl doctor` 可查）：
 
-- **红线锚点硬门**：`agent/POLICIES.md` 的红线词（`人工审批`/`生产写入`/`对外发布`/`删除数据`/`Git push`）与 `agent/ROLE.md` 的岗位定位/长期职责标题**不可删除或削弱**——系统在 `evolve:` 提交前校验，违规文件拒绝提交并留现场（`git diff` 可查），不自动回滚。
-- **身份基线**：系统把四份身份文档快照到 `agent/IDENTITY_BASELINE.md`（含 sha256），`agent.yaml.description` 为岗位定位唯一权威；基线漂移可被 doctor / 进化历史检测。
+- **红线锚点硬门**：`agent/POLICIES.md` 的红线词（`人工审批`/`生产写入`/`对外发布`/`删除数据`/`Git push`）、`agent/ROLE.md` 的岗位定位/长期职责标题与 `agent/CONSTITUTION.md` 的使命/变更流程标题**不可删除或削弱**——系统在 `evolve:` 提交前校验，违规文件拒绝提交并留现场（`git diff` 可查），不自动回滚。
+- **身份基线**：系统把五份身份文档（含 `CONSTITUTION.md`）快照到 `agent/IDENTITY_BASELINE.md`（含 sha256），`agent.yaml.description` 为岗位定位唯一权威；基线漂移可被 doctor / 进化历史检测。
 - **提案审批**：对核心身份的改动走 `agent/proposals/*.md`（现状→拟改→理由→证据 `because of ...`）→ 飞书聊天里**用户明确「同意/批准」后**才落盘；员工不得自行 proposed→applied。
+- **提案账本对账**（P1-3）：员工写提案/批准决策登记到轻量 JSONL 账本 `~/.ai-employees/logs/proposals/<id>.jsonl`（0600，上限 5000 行）。每次 settle 对账——ROLE/POLICIES/CONSTITUTION 相对基线**超出可进化范围**（整删/重写/锚点缺失）的改动，若无带 `user_anchor` 的 `applied` 提案依据，即判「未授权身份改动」。`identity_protocol` 默认 `advisory`（仅告警）；显式设为 `enforced` 后违规文件**拒绝提交** + CURRENT_STATE 留痕（保留脏文件供人工决策，不自动回滚）。
 
 ## 备份与换电脑
 
@@ -296,7 +299,7 @@ agentctl archive user-operations
 
 ## 当前限制与 Roadmap
 
-v1 不包含常驻 Web 服务、局域网/远程访问、账号系统、浏览器内终端、多 Agent 共享机器人 Router、Agent 自由互聊、云端多租户、Skill 市场、生产数据写入、知识图谱或 systemd 实现。核心模型是「单一 AI 员工 + 定时 Job + Web 单轮对话」；Chief 编排、Todo 状态机与 MCP 接入已于 TASK-030（D-027）移除。后续优先项是 systemd adapter、显式 runtime 迁移工作流、可选的加密 Secret provider、任务完成自动写状态、飞书入站。分层自进化协议后续阶段（D-041 M2-M5）：三个自进化开关默认开 + 经验两级化（原始记录始终落盘 + 重要性累积触发提炼）、提案对账账本 + Web 只读收敛 + 创建骨架化、遗忘归档 + 身份 git 回滚、doctor 检查项 + Web 进化历史 + 检索增强。
+v1 不包含常驻 Web 服务、局域网/远程访问、账号系统、浏览器内终端、多 Agent 共享机器人 Router、Agent 自由互聊、云端多租户、Skill 市场、生产数据写入、知识图谱或 systemd 实现。核心模型是「单一 AI 员工 + 定时 Job + Web 单轮对话」；Chief 编排、Todo 状态机与 MCP 接入已于 TASK-030（D-027）移除。后续优先项是 systemd adapter、显式 runtime 迁移工作流、可选的加密 Secret provider、任务完成自动写状态、飞书入站。分层自进化协议后续阶段（D-041 M2-M5）：三个自进化开关默认开 + 经验两级化（M2 已完成）、提案对账账本 + Web 只读收敛 + 创建骨架化（M3 已完成）、遗忘归档 + 身份 git 回滚（M4）、doctor 检查项 + Web 进化历史 + 检索增强（M5）。
 
 ## 开发验证
 

@@ -1,5 +1,25 @@
 # Decisions
 
+## D-041：分层自进化协议 M3——提案账本对账 + Web 只读化 + 创建骨架模板
+
+- 状态：Accepted（已实施，TASK-042）
+- 日期：2026-08-06
+- 背景：P0（TASK-040）建了「身份不可静默削弱」地板，P1（TASK-041）让自进化链「默认开 + 有沉淀」。本批（M3/P1-3）把「人工只能通过飞书聊天改身份」变成系统级硬约束：**提案账本对账**（员工未经用户批准就大改核心身份 → 系统可拦截）+ **Web 只读化**（决策①落地）+ **创建骨架化**（决策②落地）。三者共同闭环「创建只给基础岗位模板，之后边用边进化，Web 纯看，修改只走聊天」。
+- 决定：
+  - **P1-3 身份修订对账账本（硬门）**（新增 `src/core/proposal-ledger.ts`）：
+    - 轻量 JSONL 账本 `~/.ai-employees/logs/proposals/<agent-id>.jsonl`（0600）：`recordProposal`（扫描 `agent/proposals/*.md` frontmatter 登记）/ `recordDecision`（`applied` + `user_anchor` 的提案登记为批准决策，作批准依据）/ `readLedger` / `truncateLedger`（上限 5000 行防无限累积，P2-3）。账本写入 best-effort，失败仅 warn 不阻断。
+    - `appliedWithoutAnchor(workspace, ledger)`：ROLE/POLICIES/CONSTITUTION 相对基线的改动若**超出 `allowedIdentityDiff` 可进化范围**（整删/重写/锚点缺失）且无带 `user_anchor` 的 `applied` 提案 → 判定「未授权身份改动」。基线缺失返回空（交 doctor 告警，不硬判避免存量首次 settle 误伤）。
+    - `maybeEnforceIdentityProtocol` 按 `identity_protocol` 分级：默认 `advisory`（仅 warn 留痕，不阻断）；`enforced`（用户显式开启）→ 违规文件**不提交** + warn + CURRENT_STATE 记录「检测到未授权身份改动已拒绝提交」。**提交拒绝 ≠ 恢复文件**——保留工作区脏文件供人工 `git diff`/`git checkout` 决策，不悄悄回滚。
+    - **接线（settleActive 顺序不变量）**：`syncProposalLedger` → `enforceIdentityProtocol` → `ensureIdentityBaseline(excludeDocs: blockedRel)` → `commitSelfEvolution(blockedRel)`。**enforced 对账必须跑在基线重快照之前**——被拦截的违规改动经 `excludeDocs` 不吸收进基线（保留既有基线条目），否则违规会被基线快照认可、下次 settle 放行提交。
+    - **CONSTITUTION 纳入受保护区**：`IDENTITY_DOCS` 扩为五份（含 `agent/CONSTITUTION.md`）；`identity-guard` 新增 CONSTITUTION 锚点（`使命`/`变更流程` 标题）；`commitSelfEvolution` relPaths 增补 CONSTITUTION。宪法区员工不可静默改动，要改走聊天明确指示。
+  - **① Web 只读化**：`DocumentsTab` 移除 `save`/`Textarea` 编辑 → `ReactMarkdown` 全文预览 + `（只读）` 标 + 「工作区有未提交改动」dirty 徽章 + 页脚「身份文档只能通过飞书聊天修改」。后端 `PUT /api/v1/agents/:id/documents/:key` 直接 403 `READONLY`（CLI 与飞书聊天是唯一改身份通道）。`SkillsTab` 移除「从商店安装 / 导入目录 / 卸载」入口（后端路由与 CLI `agentctl skill` 保留为用户逃生口）；`api.ts` 移除 `saveDocument`/`uploadSkill`/`removeSkill` 前端调用。
+  - **② 创建骨架化**：新 `templates/agent-skeleton/`（CONSTITUTION.md 播种红线锚点块 + 变更流程；ROLE/GOALS/OPERATING_SYSTEM/POLICIES 与渲染基准对齐）。`employee-generator.ts` 新 `generateEmployeeSkeleton(brief)`——prompt 收敛产出 `{id, name, description, goals[1-3], skills[0-2]}`，保留 `generatedProfileSchema`/`generateEmployeeProfile` 兼容（CLI 仍用完整蓝图）。`create-agent.ts resolveProfile` 简化：responsibilities 缺省 `[description]`（岗位定位即初始职责）、policies 缺省红线模板、escalation 缺省通用上报。Web `CreateAgentPage` Step 1 重写：一句话 + name/id/description/goals/skills 编辑字段，responsibilities/policies/escalation 降为「将播种的基础模板预览」只读区（不再可编辑——细节由员工在使用中自进化沉淀）。`templates.ts`：ROLE 增 `## 协作协议` 段、GOALS 增 `## 演进记录` 留痕行、基线注释更新为五份文档。后端 `GET /api/v1/agents/generate` 改走 `generateSkeleton`（Web 用骨架，CLI `--describe` 仍走完整 `generateProfile`）。
+- 边界：本批 **不引入 knowledge 遗忘归档 / identity rollback CLI**（M4）、**不做 doctor 检查项 / Web 进化历史页 / recall 增强**（M5）。`identity_protocol` 默认 `advisory`，`enforced` 需用户显式开启；P1 声明而未生效的 `identity_edits`（`proposal_required|direct`）本批仍仅声明。
+- 原因：提案账本让「人工只能通过聊天改身份」有系统层兜底——显著合法改动必有一份 `applied`+`user_anchor` 提案作依据，没有依据的显著改动即未经批准，enforced 下拒绝提交（但不回滚，留人工决策现场）；Web 纯看避免人工在浏览器直接改身份与飞书聊天通道冲突；骨架创建把「人工一次性确认」收敛到最小字段，身份细节全部交由自进化沉淀。
+- 影响：新增 `proposal-ledger.ts` + `tests/proposal-ledger.test.ts`；`identity-baseline.ts`（IDENTITY_DOCS 五份 + excludeDocs）；`identity-guard.ts`（CONSTITUTION 锚点）；`factory-application.ts`（syncProposalLedger/enforceIdentityProtocol + settleActive 链序 + commitSelfEvolution blockedRel + generateSkeleton）；`templates.ts` + `templates/agent-skeleton/`；`employee-generator.ts`（generateEmployeeSkeleton）；`create-agent.ts`（resolveProfile 简化）；`web/server.ts`（PUT documents 403 + generate 改骨架）；`web/api.ts` + `CreateAgentPage.tsx` + `AgentDetailPage.tsx`（只读化 + 骨架表单）；增测 create-agent（CONSTITUTION/演进记录/协作协议/基线五份）、identity-baseline（CONSTITUTION 纳入 + excludeDocs）、web-management-api（PUT 403）、web-ui（骨架表单 + 只读断言）、self-evolution（账本同步 + enforced 拦截 + user_anchor 放行）；全量测试 421 通过（此前 394）。
+
+---
+
 ## D-041：分层自进化协议 P1——三开关默认开 + 经验两级化（raw 始终落盘 + 重要性触发提炼）
 
 - 状态：Accepted（已实施，TASK-041）

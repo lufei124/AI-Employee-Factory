@@ -324,6 +324,29 @@ describe('Web management API', () => {
     await server.close();
   });
 
+  it('rejects identity document edits with 403 READONLY (D-041 决策①)', async () => {
+    const { server, writeHeaders } = await setup();
+    const denied = await server.inject({
+      method: 'PUT',
+      url: '/api/v1/agents/user-operations/documents/role',
+      headers: writeHeaders,
+      payload: { content: '# 岗位定位\n\n私自改写' },
+    });
+
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json().error.code).toBe('READONLY');
+    expect(denied.json().error.message).toContain('身份文档只读');
+    // GET 仍只读可用（文档内容未被修改）。
+    const doc = await server.inject({
+      method: 'GET',
+      url: '/api/v1/agents/user-operations/documents/role',
+      headers: writeHeaders,
+    });
+    expect(doc.statusCode).toBe(200);
+    expect(doc.json().data.path).toContain('ROLE.md');
+    await server.close();
+  });
+
   it('streams an imported backup into the controlled backup directory', async () => {
     const { server, readHeaders, writeHeaders } = await setup();
     const boundary = '----agentctl-backup-boundary';
