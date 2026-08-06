@@ -91,13 +91,22 @@ export class LaunchdServiceAdapter implements ServiceAdapter {
       });
       if (result.exitCode !== 0)
         throw new AgentCtlError('OPERATION_FAILED', `launchd 加载失败：${result.stderr}`);
+      // D-040：bootstrap 后服务即已加载。RunAtLoad<true/> 的服务（如桥接）会自动拉起，
+      // 周期服务（StartInterval/Calendar）按调度运行——都不需要再 kickstart。
+      // 此前无条件 kickstart -k：对已运行的服务是多余重启（会断掉飞书长连接），
+      // 且 launchd 对「刚 kill 的服务立即重启」强制等 10s ThrottleInterval，使 start() 偶发卡 10 秒。
+      return;
     }
-    const kick = await execa('launchctl', ['kickstart', '-k', `${domain}/${this.input.label}`], {
-      shell: false,
-      reject: false,
-    });
-    if (kick.exitCode !== 0)
-      throw new AgentCtlError('OPERATION_FAILED', `launchd 启动失败：${kick.stderr}`);
+    // 服务已加载但未运行（如刚 bootout 后仅 install）时，用无 -k 的 kickstart 拉起，
+    // 避免 kill 已运行进程、避免触发 10s throttle。
+    if (existing.state === 'stopped') {
+      const kick = await execa('launchctl', ['kickstart', `${domain}/${this.input.label}`], {
+        shell: false,
+        reject: false,
+      });
+      if (kick.exitCode !== 0)
+        throw new AgentCtlError('OPERATION_FAILED', `launchd 启动失败：${kick.stderr}`);
+    }
   }
 
   async enableScheduled(): Promise<void> {
