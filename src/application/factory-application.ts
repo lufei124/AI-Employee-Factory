@@ -25,9 +25,24 @@ import { FileLock } from '../core/locks.js';
 import { initializeFactory, readConfig } from '../core/config.js';
 import { CreateAgentService, type CreateAgentInput } from '../core/create-agent.js';
 import { generateEmployeeProfile } from '../core/employee-generator.js';
-import { DefaultExperienceExtractor } from '../core/experience.js';
+import { renderRawExperience, rawExperienceRelPath } from '../core/experience.js';
 import { validateIdentityGuard } from '../core/identity-guard.js';
 import { ensureIdentityBaseline } from '../core/identity-baseline.js';
+import {
+  appendReflectionSignal,
+  estimateImportance,
+  readReflectionSignals,
+  reflectionSignalsPath,
+  shouldReflect,
+  truncateReflectionSignals,
+} from '../core/reflection.js';
+import {
+  refineExperience,
+  readLastRefinedAt,
+  renderRefineBrief,
+  renderRefinedExperience,
+  refinedExperienceRelPath,
+} from '../core/experience-refiner.js';
 import { DoctorService } from '../core/doctor.js';
 import { AgentCtlError } from '../core/errors.js';
 import { JobRunner } from '../core/job-runner.js';
@@ -73,6 +88,7 @@ import {
   type SyncCache,
 } from '../core/runtime.js';
 import type { AgentConfig, AgentRole, RuntimeProvider } from '../schemas/agent-schema.js';
+import { resolveMemoryFlags } from '../schemas/agent-schema.js';
 import type { ExecutionContext } from '../runtimes/runtime-adapter.js';
 import type { JobConfig } from '../schemas/job-schema.js';
 import type { RegistryAgent } from '../schemas/registry-schema.js';
@@ -390,26 +406,95 @@ export class FactoryApplication {
   }
 
   // OP1 Stage D：从 transcript 摘要提取经验写回 knowledge/lessons/。
-  // 硬约束：仅当 experience_extraction=true 且 transcript_persist=true（Stage C 落地）才生效；
-  // 写回复用 knowledgeWrite 的 assertInside+realpath+symlink 硬约束；best-effort，失败不阻断运行。
+  // D-041 P1-2 经验两级化：一级原始记录（lessons/raw/）始终落盘，不依赖任何开关（防丢现场）；
+  // 二级提炼（lessons/refined/）由重要性累积触发。写回复用 knowledgeWrite 的
+  // assertInside+realpath+symlink 硬约束；best-effort，失败不阻断运行。
   // 公开入口：runJob 在 transcript 落盘后调用；测试可直接以 transcriptFile 驱动。
   async extractExperience(id: string, transcriptFile: string): Promise<void> {
     const { agent } = await this.getAgent(id);
-    await this.maybeExtractExperience(id, agent, transcriptFile);
+    await this.maybeRecordRawExperience(id, agent, transcriptFile);
+    await this.maybeRefineExperience(id, agent, transcriptFile);
   }
 
-  private async maybeExtractExperience(
+  // D-041 P1-2 一级：原始经验记录始终落盘。transcript 摘要一到即同步写
+  // `knowledge/lessons/raw/<date>-<agent>.md`——不依赖 experience_extraction 开关。
+  // 原始记录是二级提炼的证据源（experience-refiner 的 `because of raw/<file>`）。
+  private async maybeRecordRawExperience(
     id: string,
     agent: AgentConfig,
     transcriptFile: string | undefined,
   ): Promise<void> {
-    if (agent.memory.experience_extraction !== true) return;
-    if (agent.memory.transcript_persist !== true) return;
     if (!transcriptFile) return;
-    const summary = await this.readTranscriptSummary(id, transcriptFile);
-    const assets = new DefaultExperienceExtractor({ agentId: id }).extract(summary);
-    for (const asset of assets) {
-      await this.knowledgeWrite(id, asset.relPath, asset.content);
+    try {
+      const { registry } = await this.getAgent(id);
+      const summary = await this.readTranscriptSummary(id, transcriptFile);
+      const relPath = rawExperienceRelPath(summary, { agentId: id });
+      const workspace = registry.workspace.path;
+      const file = path.join(workspace, 'knowledge', relPath);
+      await fs.ensureDir(path.dirname(file));
+      await fs.writeFile(file, renderRawExperience(summary, { agentId: id }), { flag: 'wx' });
+    } catch (error) {
+      console.warn(`[experience-raw] 一级原始经验记录写入失败（跳过）：`, error);
+    }
+  }
+
+  // D-041 P1-2 二级：重要性累积触发经验提炼。先向 reflection-signals 追加本次信号，
+  // 达标（或距上次提炼过久）才调本地 Claude CLI 提炼并写回 lessons/refined/。
+  // 门控：experience_extraction=true（resolveMemoryFlags 归一默认开）且 reflection_enabled!==false；
+  // 仅 claude 运行时可用（依赖本地 claude CLI）；best-effort，失败不阻断运行。
+  private async maybeRefineExperience(
+    id: string,
+    agent: AgentConfig,
+    transcriptFile: string | undefined,
+  ): Promise<void> {
+    const flags = resolveMemoryFlags(agent.memory);
+    if (flags.experience_extraction === false) return;
+    if (agent.memory.reflection_enabled === false) return;
+    if (agent.runtime.provider !== 'claude') return;
+    if (!transcriptFile) return;
+    try {
+      const { registry } = await this.getAgent(id);
+      const summary = await this.readTranscriptSummary(id, transcriptFile);
+      const signalsFile = reflectionSignalsPath(registry.workspace.path);
+      const topics = summary.topics.length > 0 ? summary.topics : ['会话'];
+      const signal = {
+        date: new Date().toISOString(),
+        importance: estimateImportance({
+          topics,
+          decisions: summary.decisions,
+          lessons: summary.lessons,
+        }),
+        topics,
+        decisions: summary.decisions,
+        lessons: summary.lessons,
+        transcriptFile,
+      };
+      await appendReflectionSignal(signalsFile, signal);
+      // D-041 P2-3 同源：信号文件只保留最近 5000 行，防无限累积（提炼失败时信号仍持续追加）。
+      await truncateReflectionSignals(signalsFile).catch(() => undefined);
+      const signals = await readReflectionSignals(signalsFile);
+      const lastRefinedAt = await readLastRefinedAt(registry.workspace.path);
+      // 未达阈值且从未提炼时不应触发（避免首条消息即提炼）——shouldReflect 对无信号场景返回 false。
+      if (!shouldReflect(signals, { lastRefinedAt })) return;
+      const refined = await refineExperience(renderRefineBrief(signals), {
+        ...(agent.runtime.model ? { model: agent.runtime.model } : {}),
+      });
+      const relPath = refinedExperienceRelPath({ agentId: id });
+      const workspace = registry.workspace.path;
+      const file = path.join(workspace, 'knowledge', relPath);
+      await fs.ensureDir(path.dirname(file));
+      await fs.writeFile(file, renderRefinedExperience(refined, { agentId: id }), { flag: 'wx' });
+      await this.knowledgeIndex(registry).then((index) => index.ingest());
+      await this.commitAgentFile(
+        registry.workspace.path,
+        `knowledge/${relPath}`,
+        'evolve: 提炼经验',
+      );
+      // D-041 P2-3 同源：信号已收敛为提炼产物，重置累积（保底仍由 shouldReflect 的 idle 触发）。
+      await fs.rm(signalsFile, { force: true });
+      console.warn(`[experience-refine] 已提炼经验：knowledge/${relPath}`);
+    } catch (error) {
+      console.warn(`[experience-refine] 经验提炼失败（跳过，原始记录仍在 raw/）：`, error);
     }
   }
 
@@ -453,6 +538,10 @@ export class FactoryApplication {
    *  不悄悄回滚，不阻断其他文件的提交。 */
   private async commitSelfEvolution(agent: AgentConfig, workspace: string): Promise<void> {
     const relPaths = [
+      // D-041 P1-1：agent.yaml 随自进化链单文件提交。系统回填（ensureMemoryFlags 写默认开关）与
+      // 员工对非 runtime 块的合法改动（如 self-maintained 备注）都进 evolve: 历史可回溯。
+      // runtime 块（provider/model/locked）由 config_hash 指纹守护，改动会触发漂移拦截。
+      'agent.yaml',
       agent.identity.role_file,
       agent.identity.goals_file,
       agent.identity.operating_system_file,
@@ -538,14 +627,15 @@ export class FactoryApplication {
   }
 
   /** D-034：opt-in 自动生成——从 transcript 检测重复模式，达到阈值后生成并注册 Skill。
-   *  仅当 skill_self_creation=true 且 transcript_persist=true；best-effort，失败不阻断 runJob。 */
+   *  仅当 skill_self_creation=true 且 transcript_persist=true（resolveMemoryFlags 归一）；best-effort，失败不阻断 runJob。 */
   private async maybeAutoCreateSkill(
     id: string,
     agent: AgentConfig,
     transcriptFile: string | undefined,
   ): Promise<void> {
-    if (agent.memory.skill_self_creation !== true) return;
-    if (agent.memory.transcript_persist !== true) return;
+    const flags = resolveMemoryFlags(agent.memory);
+    if (flags.skill_self_creation === false) return;
+    if (flags.transcript_persist === false) return;
     if (agent.runtime.provider !== 'claude') return; // 生成依赖本地 claude CLI
     if (!transcriptFile) return;
     try {
@@ -826,7 +916,8 @@ export class FactoryApplication {
       },
     };
     const result = await new ProcessRunner(this.paths.logsDir).runLogged(id, ctx, {
-      transcript: agent.memory.transcript_persist === true,
+      // D-041 P1-1：transcript 判定经 resolveMemoryFlags 归一（缺失开关按默认 true 启用）。
+      transcript: resolveMemoryFlags(agent.memory).transcript_persist,
       stdin,
       // D-036：启用 structured 解析，best-effort 抽取 token/成本（bridge 非 JSON 输出则返回空）。
       provider: agent.runtime.provider,
@@ -1058,14 +1149,19 @@ export class FactoryApplication {
   }
 
   // D-035：员工自进化沉淀链统一入口。抽取自 runJob 后处理，runJob 与飞书 bridge 逐消息共用。
-  // 顺序保持：经验提取 → skill adopt/生成 → 自我进化提交 → 任务 reconcile。
+  // D-041：链序升级——经验两级（一级原始始终落盘 → 二级重要性提炼）→ 宿主平台 skill →
+  // 系统提示回填 → 身份基线 → 记忆开关回填 → 员工自建 skill adopt/生成 → 自进化提交 →
+  // 任务 reconcile。
   private async settleActive(
     id: string,
     agent: AgentConfig,
     registry: RegistryAgent,
     transcriptFile?: string,
   ): Promise<void> {
-    await this.maybeExtractExperience(id, agent, transcriptFile);
+    // D-041 P1-2 一级：原始经验记录始终落盘（不依赖任何开关，防丢现场）。
+    await this.maybeRecordRawExperience(id, agent, transcriptFile);
+    // D-041 P1-2 二级：重要性累积触发经验提炼（门控 experience_extraction / reflection_enabled）。
+    await this.maybeRefineExperience(id, agent, transcriptFile);
     // TASK-037（D-037）：存量员工幂等补宿主平台 skill（ai-employee-factory），新建即在
     // renderAgentWorkspace 播种；此处覆盖存量员工（飞书消息/runJob/定时 settle 都会走到）。
     await ensureFactorySkill({
@@ -1107,6 +1203,12 @@ export class FactoryApplication {
         'evolve: 更新 身份基线',
       );
     }
+    // D-041 P1-1：存量员工记忆开关幂等回填（undefined→默认 true，显式 false 尊重不回填）。
+    // agent.yaml 写入由 commitSelfEvolution 单文件提交（evolve: 更新 agent.yaml，可回溯）。
+    if (await this.ensureMemoryFlags(id)) {
+      // 回填后需以新 memory 重建 agent 视图，供后续步骤（adopt/commit）使用一致配置。
+      agent = (await this.getAgent(id)).agent;
+    }
     // D-034 员工自建 Skill：先自动 adopt/upsert 员工写盘的 skill 并投影，
     // 再按需检测重复模式自动生成。顺序在 commitSelfEvolution 之前，使新元数据被 evolve: 提交。
     await this.autoAdoptSelfSkills(id, agent);
@@ -1115,6 +1217,39 @@ export class FactoryApplication {
     await this.commitSelfEvolution(agent, registry.workspace.path);
     // TASK-031（D-028）：员工自我配置定时任务 reconcile。
     await reconcileEmployeeJobs(registry, agent, this.paths);
+  }
+
+  // D-041 P1-1：存量员工记忆开关幂等回填。agent.yaml 中 transcript_persist /
+  // experience_extraction / skill_self_creation 缺失（undefined）时写默认 true；
+  // 显式 false 尊重用户关闭意图，不回填。已含全部开关或值未变则跳过写入（幂等，不产生
+  // 空 evolve 提交）。返回是否发生写入。
+  private async ensureMemoryFlags(id: string): Promise<boolean> {
+    try {
+      const { registry } = await this.getAgent(id);
+      const yamlFile = path.join(registry.workspace.path, 'agent.yaml');
+      const doc = YAML.parse(await fs.readFile(yamlFile, 'utf8')) as {
+        memory?: Record<string, unknown>;
+      };
+      const memory = doc.memory ?? {};
+      const changed = (
+        ['transcript_persist', 'experience_extraction', 'skill_self_creation'] as const
+      )
+        .map((key) => {
+          if (memory[key] === undefined) {
+            memory[key] = true;
+            return true;
+          }
+          return false;
+        })
+        .some(Boolean);
+      if (!changed) return false;
+      await atomicWriteFile(yamlFile, YAML.stringify(doc), 0o644);
+      console.warn(`[memory-flags] 已回填 ${id} 的缺失自进化开关为默认 true。`);
+      return true;
+    } catch (error) {
+      console.warn(`[memory-flags] 回填失败（跳过）：`, error);
+      return false;
+    }
   }
 
   // D-035：对飞书员工执行一次无 transcript 的沉淀（仅 adopt/提交/reconcile，供定时扫描与手动触发）。
@@ -1129,8 +1264,10 @@ export class FactoryApplication {
     if (job.execution.type === 'agent') await this.prepareRuntime(registry, agent);
     // OP1 Stage C+D：agent.yaml.memory.transcript_persist=true 时持久化会话摘要（经 options 透传），
     // experience_extraction=true 时提取经验写回 knowledge/lessons/（仅当 transcript_persist 已启用）。
-    const runOptions: LoggedRunOptions =
-      agent.memory.transcript_persist === true ? { ...options, transcript: true } : options;
+    // D-041 P1-1：判定经 resolveMemoryFlags 归一（缺失开关按默认 true 启用）。
+    const runOptions: LoggedRunOptions = resolveMemoryFlags(agent.memory).transcript_persist
+      ? { ...options, transcript: true }
+      : options;
     return new JobRunner(this.paths)
       .run(registry, agent.runtime, job, runOptions)
       .then(async (result) => {
