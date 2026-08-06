@@ -672,3 +672,18 @@ Acceptance criteria: identity-guard/identity-baseline 单测全绿；self-evolut
 Started at: 2026-08-06 15:20 +0800
 Updated at: 2026-08-06 15:20 +0800
 ```
+
+```text
+Task ID: TASK-041
+Title: 分层自进化协议 P1（D-041 M2）——三开关默认开 + 两级经验（原始始终落盘 + 重要性触发提炼）+ schema 新字段
+Owner agent: claude-20260806-01
+Status: DONE
+Branch/worktree: main
+Allowed scope: src/schemas/agent-schema.ts、src/core/create-agent.ts、src/application/factory-application.ts、src/core/reflection.ts（新）、src/core/experience-refiner.ts（新）、src/core/experience.ts、tests/reflection.test.ts（新）、tests/experience-refiner.test.ts（新）、tests/memory-enforcement.test.ts（新或增补）、tests/schemas.test.ts、tests/bridge-settle.test.ts、tests/self-evolution.test.ts、docs/DECISIONS.md、README.md、.agent 簿记
+Forbidden scope: 不做 proposal-ledger 账本/Web 只读/骨架创建（M3）；不做遗忘归档/identity rollback（M4）；不引入向量库/新 DB；不引入对外网络外发
+Dependencies: TASK-040（D-041 P0 身份守卫，M1）
+Expected output: 三自进化开关默认开（transcript_persist/experience_extraction/skill_self_creation undefined→true），存量员工幂等回填；经验两级化——一级原始记录始终写 knowledge/lessons/raw/（不依赖开关，防丢现场），二级经验提炼由 experience_extraction 控制 + 重要性累积触发（reflection-signals）+ because of 证据引用；schema 新增 reflection_enabled/identity_protocol/identity_edits（全 optional）
+Acceptance criteria: 新建员工 agent.yaml memory 三开关 true；存量员工 settle 回填 true；runBridgeMessage 用 resolveMemoryFlags；reflection/experience-refiner 单测全绿；experience_extraction=false 时原始记录仍写、提炼不写；npm test/build/lint 全绿；任务完成即 commit（不 push）
+Started at: 2026-08-06 16:05 +0800
+Updated at: 2026-08-06 20:26 +0800
+```

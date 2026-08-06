@@ -1,5 +1,23 @@
 # Decisions
 
+## D-041：分层自进化协议 P1——三开关默认开 + 经验两级化（raw 始终落盘 + 重要性触发提炼）
+
+- 状态：Accepted（已实施，TASK-041）
+- 日期：2026-08-06
+- 背景：P0（TASK-040）已建「身份不可静默削弱」地板（identity-guard / identity-baseline / proposals 通道）。本批（M2/P1）让自进化链真正「默认开 + 有沉淀」：三个自进化开关默认启用并存量回填；经验提取两级化——一级原始记录始终落盘（不依赖任何开关，防丢现场），二级提炼按「重要性累积」触发（对齐 Generative Agents poignancy / Reflexion 滑动窗口，而非每轮提炼=噪音+成本）。schema 新增字段全 optional，零迁移。
+- 决定：
+  - **P1-1 三开关默认开 + 存量回填**：`agent-schema.ts` 新增 `DEFAULT_MEMORY_FLAGS = { transcript_persist: true, experience_extraction: true, skill_self_creation: true }` + `resolveMemoryFlags(memory)`（undefined→true，显式 false 尊重不回填；返回具体对象类型以兼容 `exactOptionalPropertyTypes`）。新建员工 `create-agent.ts buildAgentConfig` memory 块显式写三个 `true`（agent.yaml 自文档化）。存量员工 `settleActive` 新增 `ensureMemoryFlags(agent)` 幂等回填（写 agent.yaml，由 `commitSelfEvolution` 新增的 `agent.yaml` relPath 单文件提交，`evolve: 更新 agent.yaml` 可回溯）。`computeConfigHash` 只 hash runtime 块 → memory 变更不触发 config_hash 漂移，registry 无需动。`runBridgeMessage`/`runJob`/`maybeAutoCreateSkill` 的 transcript/开关判定统一改经 `resolveMemoryFlags`。
+  - **P1-2 经验两级化**：
+    - **一级（始终写）**：`maybeRecordRawExperience` 在 transcript 摘要一到即同步写 `knowledge/lessons/raw/<date>-<agent>.md`（`flag:'wx'` 防重，best-effort 失败仅 warn）——**不依赖任何开关**，是二级提炼的证据源（`source_agent`/`source_transcript` frontmatter 记录出处）。
+    - **二级（重要性触发）**：新增 `src/core/reflection.ts`——`estimateImportance`（轻量启发式：基准 1 + 决策 ≤2 + 经验 ≤2 + 多主题 +1，封顶 5）、`appendReflectionSignal`（`knowledge/.reflection-signals.jsonl`，0600 纯追加）、`shouldReflect`（累积 importance ≥ 阈值 3，**或**距上次提炼 > 24h 保底；从未提炼时以最早信号为参照，**避免首条消息即提炼**，符合「按重要性累积而非每轮」）、`truncateReflectionSignals`（上限 5000 行防无限累积）。新增 `src/core/experience-refiner.ts`——`refineExperience` 复用 employee-generator/skill-generator 的「本地 claude CLI → 结构化 JSON → Zod」范式，产出 `{insight, evidence[], writeup}`，`evidence` 必须引用 `raw/` 具体文件/行 → 写回 `knowledge/lessons/refined/<date>-<slug>.md`，正文带 `because of: knowledge/lessons/raw/<file>:<line>` 证据引用；`readLastRefinedAt` 供保底触发参照。
+    - **门控**：`maybeRefineExperience` 仅当 `resolveMemoryFlags(agent.memory).experience_extraction !== false` 且 `reflection_enabled !== false` 且运行时为 claude（依赖本地 CLI）；提炼成功后信号文件 `rm` 重置累积（保底仍由 idle 触发），产物 `evolve: 提炼经验` 单文件提交。`experience_extraction` 语义变更为「是否二级提炼」——一级原始记录始终写。
+  - **P1-4 schema 新字段**（全 optional 向后兼容）：`memory.reflection_enabled`（bool）、`memory.identity_protocol`（`'advisory'|'enforced'`，默认 advisory）、`memory.identity_edits`（`'proposal_required'|'direct'`，本批仅声明，M3 提案对账时生效）。`agentConfigSchema.parse` 天然兼容旧文件。
+- 边界：P1 **不引入 proposal-ledger 账本 / Web 只读 / 骨架创建**（M3）、**不做遗忘归档 / identity rollback**（M4）、**不引入向量库 / 新 DB / 对外网络外发**。提炼依赖本地 claude CLI（provider=codex 不触发），失败降级不阻断运行（原始记录仍在 raw/，不丢现场）。二级提炼是 best-effort 非硬门——未达阈值/CLI 失败仅 warn。
+- 原因：三开关默认开让存量员工无需人工操作即获得与新建员工一致的自进化能力（同 D-039 的 settleActive 回填点语义）；经验两级化对齐「记录→验证→提炼→写回」门控——原始记录始终留底、提炼有据可查（`because of` 证据引用），避免无限累积与无依据的自我改写。
+- 影响：新增 `reflection.ts`/`experience-refiner.ts` + `tests/reflection.test.ts`/`tests/experience-refiner.test.ts`；`agent-schema.ts`（DEFAULT_MEMORY_FLAGS + resolveMemoryFlags + P1-4 字段）；`create-agent.ts`（显式三 true）；`factory-application.ts`（maybeRecordRawExperience/maybeRefineExperience/ensureMemoryFlags + settleActive 链序 raw→refine→…→reconcile + runBridgeMessage/runJob/autoCreateSkill 经 resolveMemoryFlags + commitSelfEvolution relPaths 增补 agent.yaml）；`experience.ts`（renderRawExperience/rawExperienceRelPath）；增测 memory-enforcement（存量回填）/schemas（P1-4 + resolveMemoryFlags）/create-agent（三开关显式 true）/experience（raw 始终写、extraction=false 时 refined 不写）；全量测试 394 通过（此前 372）。
+
+---
+
 ## D-041：分层自进化协议 P0——身份守卫（identity-guard + identity-baseline + proposals 通道）
 
 - 状态：Accepted（已实施，TASK-040）
