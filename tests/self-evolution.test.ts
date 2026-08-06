@@ -9,6 +9,16 @@ import { resolveFactoryPaths } from '../src/core/paths.js';
 import { RegistryStore } from '../src/core/registry.js';
 import type { LoggedRunResult } from '../src/core/process-runner.js';
 
+import type * as SkillGeneratorModule from '../src/core/skill-generator.js';
+
+// D-034：自动生成路径需 mock generateSkill（避免真实 claude CLI），同时保留 renderSkillFile 真实实现。
+vi.mock('../src/core/skill-generator.js', async () => {
+  const original = await vi.importActual<typeof SkillGeneratorModule>(
+    '../src/core/skill-generator.js',
+  );
+  return { ...original, generateSkill: vi.fn() };
+});
+
 // TASK-029 自我进化：员工可更新 agent/ROLE|GOALS|OPERATING_SYSTEM|POLICIES 与 knowledge/ 知识，
 // 系统在 runJob（原 runAgent/runChat 一并移除，D-033）后自动检测并单文件 git 提交（evolve: 前缀）。
 // 唯一 seam = JobRunner 内部的 ProcessRunner.runLogged：vi.spyOn 注入假 runLogged，验证提交逻辑而非真实 spawn。
@@ -21,7 +31,7 @@ function now(): string {
   return new Date().toISOString();
 }
 
-function fakeResult(stdout: string): LoggedRunResult {
+function fakeResult(stdout: string, transcriptFile?: string): LoggedRunResult {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentctl-evolve-stdout-'));
   tempDirs.push(dir);
   const stdoutFile = path.join(dir, 'stdout.log');
@@ -36,6 +46,7 @@ function fakeResult(stdout: string): LoggedRunResult {
     metadataFile: path.join(dir, 'metadata.json'),
     startedAt: now(),
     finishedAt: now(),
+    ...(transcriptFile ? { transcriptFile } : {}),
   };
 }
 
@@ -248,5 +259,97 @@ describe('员工自我进化（TASK-029）', () => {
     expect(status.stdout).not.toContain('workflows/review.md');
     expect(status.stdout).not.toContain('lessons/batch-processing');
     expect(status.stdout).toContain('tasks/ACTIVE.md');
+  });
+
+  it('runJob 后员工写盘 skills/ 自动 adopt（补元数据 + 投影）并被 evolve 提交（D-034）', async () => {
+    const { app, paths } = await setup();
+    const workspace = path.join(paths.workspaceRoot, 'worker-a');
+    const skillDir = path.join(workspace, 'skills', 'self-made');
+    // 员工在任务中直接写 SKILL.md（无 .agentctl.yaml）。
+    const { ProcessRunner } = await import('../src/core/process-runner.js');
+    vi.spyOn(ProcessRunner.prototype, 'runLogged').mockImplementation(async () => {
+      await fs.outputFile(
+        path.join(skillDir, 'SKILL.md'),
+        '---\nname: self-made\ndescription: 自建\nversion: 0.1.0\n---\n# 自建\n',
+      );
+      return fakeResult('完成。');
+    });
+
+    await runAdminJob(app, 'self-skill', '沉淀一个可复用技能');
+
+    // 自动 adopt：补写 .agentctl.yaml + 投影软链。
+    expect(await fs.pathExists(path.join(skillDir, '.agentctl.yaml'))).toBe(true);
+    expect(
+      (await fs.lstat(path.join(workspace, '.claude', 'skills', 'self-made'))).isSymbolicLink(),
+    ).toBe(true);
+    // 投影软链目标真实存在（软链内容相对 .claude/skills，指向 store 根）。
+    const link = await fs.readlink(path.join(workspace, '.claude', 'skills', 'self-made'));
+    expect(await fs.pathExists(path.resolve(workspace, '.claude', 'skills', link))).toBe(true);
+    // .agentctl.yaml 与 SKILL.md 均被 evolve 单文件提交。
+    const logSkill = await gitLog(workspace, 'skills/self-made/SKILL.md');
+    expect(logSkill.some((line) => line.includes('evolve:'))).toBe(true);
+    const logMeta = await gitLog(workspace, 'skills/self-made/.agentctl.yaml');
+    expect(logMeta.some((line) => line.includes('evolve:'))).toBe(true);
+  });
+
+  it('skill_self_creation 开启且 transcript 命中重复模式时自动生成并注册 Skill（D-034）', async () => {
+    const { app, paths } = await setup();
+    const workspace = path.join(paths.workspaceRoot, 'worker-a');
+    // 开启 skill_self_creation + transcript_persist。
+    const agentYaml = path.join(workspace, 'agent.yaml');
+    const YAML = (await import('yaml')).default;
+    const parsed = YAML.parse(await fs.readFile(agentYaml, 'utf8'));
+    parsed.memory.transcript_persist = true;
+    parsed.memory.skill_self_creation = true;
+    await fs.writeFile(agentYaml, YAML.stringify(parsed));
+    // 预置一条历史信号，使本次命中阈值（threshold=2）。
+    await fs.outputFile(
+      path.join(workspace, 'knowledge', '.skill-signals.jsonl'),
+      `${JSON.stringify({ topic: 'report', date: new Date().toISOString() })}\n`,
+    );
+    // mock generateSkill 返回一个蓝图。
+    const { generateSkill } = await import('../src/core/skill-generator.js');
+    (generateSkill as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      name: 'reporting',
+      version: '1.0.0',
+      short_description: '生成报告',
+      description: '按模板生成报告',
+      instructions: '# 步骤\n1. 读取数据\n2. 生成报告',
+      triggers: ['生成报告'],
+    });
+    // transcript 含重复信号 topic + lesson。
+    const transcriptDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentctl-evolve-transcript-'));
+    tempDirs.push(transcriptDir);
+    const transcriptFile = path.join(transcriptDir, 'transcript.jsonl');
+    await fs.writeFile(
+      transcriptFile,
+      `${JSON.stringify({
+        agent_id: 'worker-a',
+        operation: 'run',
+        started_at: now(),
+        finished_at: now(),
+        exit_code: 0,
+        topics: ['report'],
+        decisions: [],
+        lessons: ['下次用统一模板生成 report'],
+        tail: [],
+      })}\n`,
+    );
+    const { ProcessRunner } = await import('../src/core/process-runner.js');
+    vi.spyOn(ProcessRunner.prototype, 'runLogged').mockResolvedValue(
+      fakeResult('完成。', transcriptFile),
+    );
+
+    await runAdminJob(app, 'auto-skill', '生成报告');
+
+    // 自动生成并注册：store 根出现 SKILL.md + 元数据 + 投影。
+    expect(await fs.pathExists(path.join(workspace, 'skills/reporting/SKILL.md'))).toBe(true);
+    expect(await fs.pathExists(path.join(workspace, 'skills/reporting/.agentctl.yaml'))).toBe(true);
+    expect(
+      (await fs.lstat(path.join(workspace, '.claude', 'skills', 'reporting'))).isSymbolicLink(),
+    ).toBe(true);
+    // 被 evolve 提交。
+    const log = await gitLog(workspace, 'skills/reporting/SKILL.md');
+    expect(log.some((line) => line.includes('evolve:'))).toBe(true);
   });
 });

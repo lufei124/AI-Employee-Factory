@@ -6,6 +6,7 @@ import { Command } from 'commander';
 import { confirm, input, password, select } from '@inquirer/prompts';
 import type { CreateAgentInput } from './core/create-agent.js';
 import type { GeneratedProfile } from './core/employee-generator.js';
+import { generateSkill, renderSkillFile } from './core/skill-generator.js';
 import { AgentCtlError } from './core/errors.js';
 import { OperationStore } from './core/operation-store.js';
 import { resolveFactoryPaths, displayPath } from './core/paths.js';
@@ -631,6 +632,65 @@ function registerSkillCommands(program: Command): void {
         );
         const { application } = context();
         await application.removeSkill(id, name, options.scope);
+      },
+    );
+  group
+    .command('create-self <agent-id> <brief>')
+    .description('D-034 用本地 Claude 为员工生成并注册一个 Skill（自建）')
+    .option('--model <model>', '生成所用 Claude 模型')
+    .option('--scope <project|user>', '作用域（默认 project）', 'project')
+    .option('--dry-run', '只预览将生成的 SKILL.md，不落盘')
+    .action(
+      async (
+        id: string,
+        brief: string,
+        options: { model?: string; scope?: 'project' | 'user'; dryRun?: boolean },
+      ) => {
+        if (options.dryRun) {
+          const skill = await generateSkill(brief, options.model ? { model: options.model } : {});
+          return console.log(renderSkillFile(skill));
+        }
+        const { application } = context();
+        const metadata = await application.createSkillForAgent(id, brief, {
+          ...(options.model ? { model: options.model } : {}),
+          ...(options.scope ? { scope: options.scope } : {}),
+        });
+        console.log(chalk.green(`✓ 已为员工生成并注册 Skill ${metadata.name}@${metadata.version}`));
+      },
+    );
+  group
+    .command('adopt <agent-id> <skill-name>')
+    .description('D-034 给员工手动写盘的 skill 补写元数据并投影（原位修复）')
+    .option('--scope <project|user>', '作用域（默认 project）', 'project')
+    .action(async (id: string, name: string, options: { scope?: 'project' | 'user' }) => {
+      const { application } = context();
+      const metadata = await application.adoptSkill(id, name, options.scope);
+      console.log(chalk.green(`✓ 已 adopt Skill ${metadata.name}@${metadata.version}`));
+    });
+  group
+    .command('rollback <agent-id> <skill-name>')
+    .description('D-034 从 .archive 恢复员工某 skill 的历史版本')
+    .option('--scope <project|user>', '作用域（默认 project）', 'project')
+    .option('--archive-ref <ref>', '归档引用（缺省取最新）')
+    .option('--yes')
+    .action(
+      async (
+        id: string,
+        name: string,
+        options: { scope?: 'project' | 'user'; archiveRef?: string; yes?: boolean },
+      ) => {
+        await confirmDanger(
+          `回滚 Skill ${name}（${options.scope ?? 'project'}）到历史版本？`,
+          options.yes === true,
+        );
+        const { application } = context();
+        const metadata = await application.rollbackSkill(
+          id,
+          name,
+          options.scope,
+          options.archiveRef,
+        );
+        console.log(chalk.green(`✓ 已回滚 Skill ${metadata.name}@${metadata.version}`));
       },
     );
 

@@ -1,6 +1,7 @@
 import fs from 'fs-extra';
 import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { execa } from 'execa';
 import YAML from 'yaml';
 import {
@@ -31,8 +32,20 @@ import { assertInside, assertInsideReal, type FactoryPaths } from '../core/paths
 import type { RegistryStore } from '../core/registry.js';
 import { JobStore } from '../core/scheduler.js';
 import { reconcileEmployeeJobs } from '../core/job-reconcile.js';
-import { SkillService, type SkillMetadata, type SkillScope } from '../core/skills.js';
+import {
+  SkillService,
+  digestSkillDirectory,
+  type SkillMetadata,
+  type SkillScope,
+} from '../core/skills.js';
 import { SkillStoreService } from '../core/skill-store.js';
+import { generateSkill, renderSkillFile } from '../core/skill-generator.js';
+import {
+  appendSkillSignal,
+  detectRepeatedSkillOpportunity,
+  pickCandidateTopic,
+  readSkillSignals,
+} from '../core/skill-opportunity.js';
 import { OperationStore, type OperationSummary } from '../core/operation-store.js';
 import { OperationManager } from '../core/operation-manager.js';
 import { PruneService, type PruneOptions, type PruneResult } from '../core/prune.js';
@@ -418,6 +431,83 @@ export class FactoryApplication {
           `evolve: 更新 ${path.basename(entry.path)}`,
         );
       }
+    }
+  }
+
+  /** D-034：任务结束后自动 adopt/upsert 员工在任务中直接写盘的 skill，并投影到运行器发现目录。
+   *  纯修复、始终开启、best-effort（失败仅 console.warn，不阻断 runJob）。 */
+  private async autoAdoptSelfSkills(id: string, agent: AgentConfig): Promise<void> {
+    try {
+      const { registry } = await this.getAgent(id);
+      const service = new SkillService(
+        registry.workspace.path,
+        agent.runtime.provider,
+        registry.runtime_home.path,
+      );
+      const skillsRoot = path.join(registry.workspace.path, 'skills');
+      if (!(await fs.pathExists(skillsRoot))) return;
+      const entries = await fs.readdir(skillsRoot, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue; // 跳过 .archive/.staging
+        const target = path.join(skillsRoot, entry.name);
+        const skillFile = path.join(target, 'SKILL.md');
+        if (!(await fs.pathExists(skillFile))) continue;
+        const metaFile = path.join(target, '.agentctl.yaml');
+        if (await fs.pathExists(metaFile)) {
+          // 已有元数据：digest 变化则 upsert（源=该目录本身，同名版本化）。
+          const meta = YAML.parse(await fs.readFile(metaFile, 'utf8')) as SkillMetadata;
+          if (meta.digest === (await digestSkillDirectory(target))) continue;
+          await service.upsert(target, 'project');
+        } else {
+          // 手动/员工写盘尚无元数据：adopt 补写元数据 + 投影。
+          await service.adopt(entry.name, 'project');
+        }
+      }
+    } catch (error) {
+      console.warn(`[skill-self] 自动 adopt 失败（跳过）：`, error);
+    }
+  }
+
+  /** D-034：opt-in 自动生成——从 transcript 检测重复模式，达到阈值后生成并注册 Skill。
+   *  仅当 skill_self_creation=true 且 transcript_persist=true；best-effort，失败不阻断 runJob。 */
+  private async maybeAutoCreateSkill(
+    id: string,
+    agent: AgentConfig,
+    transcriptFile: string | undefined,
+  ): Promise<void> {
+    if (agent.memory.skill_self_creation !== true) return;
+    if (agent.memory.transcript_persist !== true) return;
+    if (agent.runtime.provider !== 'claude') return; // 生成依赖本地 claude CLI
+    if (!transcriptFile) return;
+    try {
+      const { registry } = await this.getAgent(id);
+      const summary = await this.readTranscriptSummary(id, transcriptFile);
+      const signalsFile = path.join(registry.workspace.path, 'knowledge', '.skill-signals.jsonl');
+      const history = await readSkillSignals(signalsFile);
+      const service = new SkillService(
+        registry.workspace.path,
+        agent.runtime.provider,
+        registry.runtime_home.path,
+      );
+      const existingSkillNames = (await service.list()).map((skill) => skill.name);
+      const detected = detectRepeatedSkillOpportunity(summary, history, existingSkillNames);
+      // 记录本次候选 topic 到历史（无论是否命中，供下次累计）。
+      const candidate = detected?.topic ?? pickCandidateTopic(summary);
+      if (candidate) await appendSkillSignal(signalsFile, candidate);
+      if (!detected) return; // 未达阈值
+      const skill = await generateSkill(detected.brief);
+      const stagingRoot = path.join(
+        registry.workspace.path,
+        'skills',
+        `.staging-self-${skill.name}-${randomUUID()}`,
+      );
+      await fs.ensureDir(stagingRoot);
+      await fs.writeFile(path.join(stagingRoot, 'SKILL.md'), renderSkillFile(skill));
+      await service.upsert(stagingRoot, 'project');
+      await fs.remove(stagingRoot);
+      console.log(`[skill-self] 已自动生成并注册 Skill：${skill.name}@${skill.version}`);
+    } catch (error) {
+      console.warn(`[skill-self] 自动生成 Skill 失败（跳过）：`, error);
     }
   }
 
@@ -838,6 +928,10 @@ export class FactoryApplication {
       .run(registry, agent.runtime, job, runOptions)
       .then(async (result) => {
         await this.maybeExtractExperience(id, agent, result.transcriptFile);
+        // D-034 员工自建 Skill：任务结束后先自动 adopt/upsert 员工写盘的 skill 并投影，
+        // 再按需检测重复模式自动生成。顺序在 commitSelfEvolution 之前，使新元数据被 evolve: 提交。
+        await this.autoAdoptSelfSkills(id, agent);
+        await this.maybeAutoCreateSkill(id, agent, result.transcriptFile);
         // TASK-029 自我进化：任务执行结束后检测并单文件提交员工自维护文档变更。
         await this.commitSelfEvolution(agent, registry.workspace.path);
         // TASK-031（D-028）：员工自我配置定时任务——任务结束后自动 reconcile 调度。
@@ -878,6 +972,9 @@ export class FactoryApplication {
       'automation/jobs/**',
       'automation/prompts/**',
     ]);
+    // D-034：员工自建 Skill——放行 skills/** 的 Edit/Write，使员工在任务中能直接写
+    // skills/<name>/SKILL.md 而无需反复确认（与四份身份文档同款 glob 放行，幂等）。
+    await ensureAgentDocsAllowed(registry.workspace.path, ['skills/**']);
     const config = await readConfig(this.paths);
     // OP5-D：Registry 本机绑定的 Provider 名（不进便携文件），指定时按该 Provider 同步；缺省 live。
     const summary = await syncCcSwitchClaudeProvider(
@@ -904,6 +1001,64 @@ export class FactoryApplication {
       agent.runtime.provider,
       registry.runtime_home.path,
     ).install(source, scope);
+  }
+
+  /** D-034：按需/任务驱动——用本地 Claude 为一个 brief 生成 Skill 蓝图并注册到员工。 */
+  async createSkillForAgent(
+    id: string,
+    brief: string,
+    options: { model?: string; scope?: SkillScope } = {},
+  ): Promise<SkillMetadata> {
+    const { registry, agent } = await this.getAgent(id);
+    const skill = await generateSkill(brief, options.model ? { model: options.model } : {});
+    const stagingRoot = path.join(
+      registry.workspace.path,
+      'skills',
+      `.staging-self-${skill.name}-${randomUUID()}`,
+    );
+    await fs.ensureDir(stagingRoot);
+    await fs.writeFile(path.join(stagingRoot, 'SKILL.md'), renderSkillFile(skill));
+    try {
+      const metadata = await new SkillService(
+        registry.workspace.path,
+        agent.runtime.provider,
+        registry.runtime_home.path,
+      ).upsert(stagingRoot, options.scope ?? 'project');
+      // 按需生成直接落盘新 skill，随 self-evolution 提交。
+      await this.commitSelfEvolution(agent, registry.workspace.path);
+      return metadata;
+    } finally {
+      await fs.remove(stagingRoot);
+    }
+  }
+
+  /** D-034：给员工某手动写盘的 skill 补写元数据并投影（原位修复，零 LLM）。 */
+  async adoptSkill(
+    id: string,
+    name: string,
+    scope: SkillScope = 'project',
+  ): Promise<SkillMetadata> {
+    const { registry, agent } = await this.getAgent(id);
+    return new SkillService(
+      registry.workspace.path,
+      agent.runtime.provider,
+      registry.runtime_home.path,
+    ).adopt(name, scope);
+  }
+
+  /** D-034：从 .archive 恢复员工某 skill 的历史版本。 */
+  async rollbackSkill(
+    id: string,
+    name: string,
+    scope: SkillScope = 'project',
+    archiveRef?: string,
+  ): Promise<SkillMetadata> {
+    const { registry, agent } = await this.getAgent(id);
+    return new SkillService(
+      registry.workspace.path,
+      agent.runtime.provider,
+      registry.runtime_home.path,
+    ).rollback(name, scope, archiveRef);
   }
 
   async removeSkill(id: string, name: string, scope: SkillScope = 'project'): Promise<void> {

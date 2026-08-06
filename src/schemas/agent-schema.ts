@@ -56,6 +56,10 @@ export const portableMemorySchema = z.object({
   // 的 assertInside+realpath+symlink 硬约束）。optional 向后兼容旧 agent.yaml（缺失视为未启用）。
   // 硬约束：仅当 transcript_persist=true（Stage C 落地）时才生效，Stage D 不独立启用。
   experience_extraction: z.boolean().optional(),
+  // D-034：true 时从 transcript 检测重复出现的可复用模式（skill_self_creation），达到阈值后
+  // 自动生成并注册 Skill（best-effort，失败不阻断 runJob）。optional 向后兼容旧 agent.yaml。
+  // 硬约束：仅当 transcript_persist=true（信号来源）时才生效，不独立启用。
+  skill_self_creation: z.boolean().optional(),
 });
 export type PortableMemorySchema = z.infer<typeof portableMemorySchema>;
 

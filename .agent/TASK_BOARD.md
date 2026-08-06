@@ -627,3 +627,18 @@ Acceptance criteria:
 Started at: 2026-08-05 16:04 +0800
 Updated at: 2026-08-05 16:04 +0800
 ```
+
+```text
+Task ID: TASK-034
+Title: AI 员工自建 Skill（D-034）——完整闭环：触发+生成+校验+投影+回滚
+Owner agent: claude-20260806-01
+Status: COMPLETED
+Branch/worktree: main
+Allowed scope: src/core/skill-generator.ts、src/core/skill-opportunity.ts、src/core/skills.ts、src/core/employee-generator.ts、src/application/factory-application.ts、src/schemas/agent-schema.ts、src/core/current-state.ts、src/cli-program.ts、src/web/server.ts、tests/skills.test.ts、tests/skill-generator.test.ts、tests/skill-opportunity.test.ts、tests/self-evolution.test.ts、docs/DECISIONS.md、docs/GLOSSARY.md、.agent 簿记
+Forbidden scope: 不改变 install() 外部导入的 CONFLICT 语义；不引入对外网络外发；不扩大任务范围
+Dependencies: 用户批准的完整闭环+双触发方案（AskUserQuestion）、D-029 自进化基础设施、D-033 skill 元数据 fallback
+Expected output: 员工可自建/自更新 skill 并被投影到 .claude/skills 真正用上；自动检测重复模式(opt-in)+按需 CLI；同名版本化不抛 CONFLICT；.archive 回滚
+Acceptance criteria: tests/skills.test.ts 新增 upsert/adopt/rollback 用例全绿；skill-generator/skill-opportunity 单测全绿；self-evolution 端到端（runJob 后自动 adopt+投影+evolve 提交）通过；npm test/build/lint 全绿；任务完成即 commit（不 push）
+Started at: 2026-08-06 11:20 +0800
+Updated at: 2026-08-06 11:20 +0800
+```

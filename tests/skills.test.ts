@@ -218,3 +218,148 @@ describe('SkillService', () => {
     await expect(service.remove('missing-skill', 'project')).rejects.toThrow('Skill 不存在');
   });
 });
+
+describe('SkillService.upsert / adopt / rollback (D-034)', () => {
+  it('upserts a new skill like install', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-'));
+    roots.push(root);
+    const workspace = path.join(root, 'agent');
+    const source = path.join(root, 'new-skill');
+    await fs.outputFile(
+      path.join(source, 'SKILL.md'),
+      '---\nname: new-skill\ndescription: new\nversion: 1.0.0\n---\n',
+    );
+    const service = new SkillService(workspace, 'claude');
+
+    const metadata = await service.upsert(source);
+
+    expect(metadata.version).toBe('1.0.0');
+    expect(await fs.pathExists(path.join(workspace, 'skills/new-skill/.agentctl.yaml'))).toBe(true);
+    expect(
+      (await fs.lstat(path.join(workspace, '.claude/skills/new-skill'))).isSymbolicLink(),
+    ).toBe(true);
+  });
+
+  it('upserts a same-name skill as a versioned replacement (no CONFLICT)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-'));
+    roots.push(root);
+    const workspace = path.join(root, 'agent');
+    const source1 = path.join(root, 'v1');
+    const source2 = path.join(root, 'v2');
+    await fs.outputFile(
+      path.join(source1, 'SKILL.md'),
+      '---\nname: shared\ndescription: first\nversion: 1.0.0\n---\n',
+    );
+    await fs.outputFile(
+      path.join(source2, 'SKILL.md'),
+      '---\nname: shared\ndescription: second\nversion: 1.1.0\n---\n',
+    );
+    const service = new SkillService(workspace, 'claude');
+    await service.upsert(source1);
+
+    const metadata = await service.upsert(source2);
+
+    expect(metadata.version).toBe('1.1.0');
+    const stored = await fs.readFile(path.join(workspace, 'skills/shared/SKILL.md'), 'utf8');
+    expect(stored).toContain('second');
+    // 旧版已进 .archive
+    const archive = path.join(workspace, 'skills/.archive');
+    const archived = (await fs.readdir(archive)).filter((e) => e.startsWith('shared-'));
+    expect(archived.length).toBeGreaterThan(0);
+  });
+
+  it('upsert is a no-op when the digest is unchanged', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-'));
+    roots.push(root);
+    const workspace = path.join(root, 'agent');
+    const source = path.join(root, 'same');
+    await fs.outputFile(
+      path.join(source, 'SKILL.md'),
+      '---\nname: same\ndescription: d\nversion: 1.0.0\n---\n',
+    );
+    const service = new SkillService(workspace, 'claude');
+    const first = await service.upsert(source);
+    const metaBefore = await fs.readFile(
+      path.join(workspace, 'skills/same/.agentctl.yaml'),
+      'utf8',
+    );
+
+    const second = await service.upsert(source);
+
+    expect(second.digest).toBe(first.digest);
+    const metaAfter = await fs.readFile(path.join(workspace, 'skills/same/.agentctl.yaml'), 'utf8');
+    expect(metaAfter).toBe(metaBefore);
+  });
+
+  it('adopt writes metadata and projects a manually-written skill', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-'));
+    roots.push(root);
+    const workspace = path.join(root, 'agent');
+    // 模拟员工任务中直接写盘：只有 SKILL.md，无 .agentctl.yaml。
+    await fs.outputFile(
+      path.join(workspace, 'skills/self-made/SKILL.md'),
+      '---\nname: self-made\ndescription: self\nversion: 0.3.0\n---\n',
+    );
+    const service = new SkillService(workspace, 'claude');
+
+    const metadata = await service.adopt('self-made');
+
+    expect(metadata.source).toBe('self');
+    expect(metadata.version).toBe('0.3.0');
+    expect(await fs.pathExists(path.join(workspace, 'skills/self-made/.agentctl.yaml'))).toBe(true);
+    expect(
+      (await fs.lstat(path.join(workspace, '.claude/skills/self-made'))).isSymbolicLink(),
+    ).toBe(true);
+  });
+
+  it('adopt rejects a directory whose frontmatter name mismatches the dir name', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-'));
+    roots.push(root);
+    const workspace = path.join(root, 'agent');
+    await fs.outputFile(
+      path.join(workspace, 'skills/foo/SKILL.md'),
+      '---\nname: bar\ndescription: d\n---\n',
+    );
+    const service = new SkillService(workspace, 'claude');
+
+    await expect(service.adopt('foo')).rejects.toThrow('不一致');
+    // 未写入元数据
+    expect(await fs.pathExists(path.join(workspace, 'skills/foo/.agentctl.yaml'))).toBe(false);
+  });
+
+  it('adopt rejects a missing SKILL.md without touching the store', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-'));
+    roots.push(root);
+    const workspace = path.join(root, 'agent');
+    await fs.outputFile(path.join(workspace, 'skills/empty/README.md'), 'no skill');
+    const service = new SkillService(workspace, 'claude');
+
+    await expect(service.adopt('empty')).rejects.toThrow('Skill 不存在');
+    expect(await fs.pathExists(path.join(workspace, 'skills/empty/.agentctl.yaml'))).toBe(false);
+  });
+
+  it('rollback restores an earlier archived version', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-'));
+    roots.push(root);
+    const workspace = path.join(root, 'agent');
+    const source1 = path.join(root, 'r1');
+    const source2 = path.join(root, 'r2');
+    await fs.outputFile(
+      path.join(source1, 'SKILL.md'),
+      '---\nname: rollback-me\ndescription: first\nversion: 1.0.0\n---\n',
+    );
+    await fs.outputFile(
+      path.join(source2, 'SKILL.md'),
+      '---\nname: rollback-me\ndescription: second\nversion: 2.0.0\n---\n',
+    );
+    const service = new SkillService(workspace, 'claude');
+    await service.upsert(source1);
+    await service.upsert(source2);
+
+    const rolled = await service.rollback('rollback-me');
+
+    expect(rolled.version).toBe('1.0.0');
+    const stored = await fs.readFile(path.join(workspace, 'skills/rollback-me/SKILL.md'), 'utf8');
+    expect(stored).toContain('first');
+  });
+});

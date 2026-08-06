@@ -94,8 +94,9 @@ export async function generateEmployeeProfile(
   }
 }
 
-/** 从模型输出中提取 JSON 对象：剥离 markdown 代码围栏（模型常包裹 ```json … ```）。 */
-function extractJson(text: string): unknown {
+/** 从模型输出中提取 JSON 对象：剥离 markdown 代码围栏（模型常包裹 ```json … ```）。
+ *  导出供 skill-generator 复用（D-034）。 */
+export function extractJson(text: string): unknown {
   const trimmed = text.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fenced) {

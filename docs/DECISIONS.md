@@ -302,4 +302,21 @@ archive/remove 优先移入归档区。默认备份排除凭据和 runtime；包
 
 ---
 
+## D-034：AI 员工自建 Skill（完整闭环：触发 + 生成 + 校验 + 投影 + 回滚）
+
+- 状态：Accepted（已实施，TASK-034）
+- 日期：2026-08-06
+- 背景：员工在任务中无法让自己真正用上新 skill。已有 skill 存储/投影/版本化基础设施（`SkillService.install`、D-029 `commitSelfEvolution`、`experience_extraction`），但缺「员工自主生成 + 注册 + 校验 + 回滚」的编排层。调研确认 Claude 里「注册 skill」的本质 = 把合法 `SKILL.md` 放进发现目录（无编程式 API，下次会话自动发现）；参考 Voyager（技能库版本化）、Claude Agent SDK skills（注册=落盘契约）、PraisonAI（Shadow Git Checkpoints 回滚）。
+- 关键缺口：员工手写 `workspace/skills/<name>/SKILL.md` 只被 D-033 fallback 识别为「可见」，不会被软链投影到 `.claude/skills/<name>`（投影只在 `install()` 时做）→ Claude 实际发现不到、用不了。
+- 决定：
+  - **生成器** `src/core/skill-generator.ts`：复用 employee-generator（D-029）的 `claude -p --output-format json` + `parseStructuredResult` + `extractJson` + Zod 范式；`generateSkill(brief)` 产出 `GeneratedSkill`（name/version/instructions/triggers），`renderSkillFile` 渲染 SKILL.md。安全 prompt 锁定 workspace 沙箱。
+  - **SkillService 扩展**（`src/core/skills.ts`）：`upsert`（同名版本化替换，不抛 CONFLICT；digest 相同幂等 no-op）；`adopt`（给已写盘 manual skill 补写 `.agentctl.yaml` + 投影，零 LLM）；`rollback`（从 `.archive` 恢复历史版本）；`project()` 幂等化。替换前旧版备份到 `skills/.archive/<name>-<version>-<ts>/`（保留最近 5 版）。
+  - **触发层**（`runJob` 后，`commitSelfEvolution` 之前）：`autoAdoptSelfSkills`（纯修复、始终开启，扫描 `skills/*/` adopt/upsert 并投影）+ `maybeAutoCreateSkill`（opt-in `memory.skill_self_creation`，复用 `readTranscriptSummary` 检测重复模式，`knowledge/.skill-signals.jsonl` 累计，阈值命中后 `generateSkill` + `upsert`）。两者 best-effort，失败仅 `console.warn` 不阻断 runJob。
+  - **按需/任务驱动**：CLI 新增 `agentctl skill create-self/adopt/rollback` 子命令；`prepareRuntime` 为 `skills/**` 幂等补 Edit/Write 放行（员工任务中可直接写 `skills/`）。
+- 边界：`install` 保持外部导入的 CONFLICT 语义不变；生成/校验失败绝不写 store，回滚只发生在版本化替换瞬间；自动生成仅当 `skill_self_creation=true` 且 `transcript_persist=true` 且 provider=claude。
+- 原因：员工自建 skill 是「把重复劳动沉淀为可复用能力」的最小人工路径；投影是让 Claude 真正用上的关键一环。
+- 影响：新增 `skill-generator.ts`/`skill-opportunity.ts`；`skills.ts` 增 `parseSkillFrontmatter`/`upsert`/`adopt`/`rollback`；`factory-application.ts` 挂双 hook + 公开方法 `createSkillForAgent`/`adoptSkill`/`rollbackSkill`；schema 增 `skill_self_creation`；CLI 增三子命令。
+
+---
+
 > 后续决策按 `D-XXX - 标题` 格式追加。模板见 [.agent/decisions/ADR-0000-template.md](../.agent/decisions/ADR-0000-template.md)。重要技术取舍（架构、API、数据、依赖、跨模块规则）须记录于此。
