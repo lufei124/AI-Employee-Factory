@@ -2,58 +2,40 @@
 
 ## 身份
 
-Task ID: TASK-035
+Task ID: TASK-040
 
-Task title: 飞书主入口员工自进化（D-035）——逐消息 shim + 周期 settle 扫描，完整沉淀闭环
+Task title: 分层自进化协议 P0（身份守卫，D-041）——identity-guard + identity-baseline + proposals 目录约定 + 系统提示文案
 
 Outgoing/current agent: claude-20260806-01
 
-Intended next role/agent: 用户或后续维护者（TASK-035 已实施，待 commit；后续增强：真实飞书 bridge 端到端冒烟、settle 周期间隔按使用调优、Web 观察 settle 状态等可立项）
+Intended next role/agent: 用户或后续维护者（TASK-040 已实施并 commit；后续阶段 M2-M5：三开关默认开 + 经验两级化、提案账本 + Web 只读 + 创建骨架化、遗忘归档 + identity rollback CLI、doctor 检查项 + Web 进化历史 + 检索增强）
 
 Branch/worktree: main
 
-Status: 飞书逐消息 shim + 周期 settle 完整闭环已实现并全量测试通过，待 commit（未 push）
+Status: 分层自进化协议 P0 已实现，全量测试/构建/lint 通过，已 commit（未 push）
 
-更新时间：2026-08-06 13:55 +0800
+更新时间：2026-08-06 15:55 +0800
 
 ## 已完成
 
-- **`src/application/factory-application.ts`**：
-  - 抽取私有 `settleActive(id, agent, registry, transcriptFile?)` 复用沉淀链：`maybeExtractExperience` → `autoAdoptSelfSkills` → `maybeAutoCreateSkill` → `commitSelfEvolution` → `reconcileEmployeeJobs`。`runJob` 后处理 `.then` 改调它（行为不变，顺序保持）。
-  - 新增公开 `settleEmployee(id)`（无 transcript，仅 adopt/提交/reconcile，供周期扫描与手动触发）。
-  - 新增公开 `runBridgeMessage(id, args, stdin)`（逐消息）：`resolveRealClaude`（env `AIEMPLOYEES_REAL_CLAUDE` 优先）→ 构造 `ExecutionContext`（真实 claude + workspace cwd + `buildRuntimeEnvironment` + LARK env）→ `new ProcessRunner(logsDir).runLogged(id, ctx, { transcript: transcript_persist, stdin })` → `settleActive(id, agent, registry, result.transcriptFile)` → 返回 exitCode。
-  - 新增 `listBridgeEnabledIds()`。
-  - `prepareRuntime` 幂等 `installClaudeShim`；`lifecycleAction` start/restart 装周期 settle 任务、stop 卸载（best-effort）；`archiveAgent` 卸载。
-  - 常量 `FEISHU_SETTLE_INTERVAL_SECONDS = 300`。
-
-- **`src/core/claude-shim.ts`（新）**：`claudeShimDir(paths, agentId)` / `claudeShimDirForRuntime(runtimeHome)` / `withClaudeShim(env, runtimeHome)`（把 shim 目录前置到 PATH）/ `resolveRealClaude(source)`（`bash -lc 'command -v claude'`）/ `renderShim`（烘焙 AI_EMPLOYEES_HOME、AI_EMPLOYEES_WORKSPACE_ROOT、AIEMPLOYEES_REAL_CLAUDE，`exec <cliFile> _service bridge-run <id> -- "$@"`）/ `installClaudeShim`（幂等：内容不变则跳过重写，mode 0o700）。
-
-- **`src/core/process-runner.ts`**：`LoggedRunOptions` 增 `stdin?: string`；`runLogged` 提供则写子进程 stdin 后关闭（缺省不连父 stdin，保持现状）。
-
-- **`src/services/launchd-service.ts`**：`LaunchdPlistInput` 增 `startInterval?: number`；`renderLaunchdPlist` 渲染 `<key>StartInterval</key>`，与 `StartCalendarInterval` 互斥（设了则忽略 calendar，launchd 同时指定为配置错误）。
-
-- **`src/services/factory-services.ts`**：`ServiceAdapterFactory` 增 `settle`；`LaunchdServiceAdapterFactory.settle` 生成 `com.aiemployees.<id>.settle`（`_service settle <id>` + StartInterval）；`bridge` env 经 `withClaudeShim` 前置 shim；模块级 `settleLaunchdService` 兼容。`systemd-service.ts` 增 settle 桩（DEPENDENCY_MISSING）。
-
-- **`src/core/bridge.ts`**：`BridgeAdapter.context` 交互 env 经 `withClaudeShim` 前置 shim PATH。
-
-- **`src/runtimes/runtime-adapter.ts`**：`RuntimeOperation` 增 `'bridge-run'`。
-
-- **`src/cli-program.ts`**：`_service settle <id>` → `settleEmployee`；`_service bridge-run <id> <args...>`（`allowUnknownOption`/`allowExcessArguments`，读 stdin 调 `runBridgeMessage`；commander14 的 `-- <args...>` variadic 有坑，故用 `<args...>` 透传）→ help 说明；`bridge settle [<id>]`（`--install/--uninstall/--interval` 管理周期任务）。
-
-- **测试**：`tests/bridge-settle.test.ts`（新，7 用例）：renderShim 内容、installClaudeShim 幂等、withClaudeShim 前置 PATH、renderLaunchdPlist StartInterval 互斥、settleLaunchdService 参数烘焙、runBridgeMessage 端到端（mock runLogged 写真实 transcript + 触发 settle 链 adopt 员工 skill + 返回 exitCode）、settleEmployee adopt+evolve 提交。`tests/process-runner.test.ts` 增 stdin 转发。`tests/lifecycle-reconcile.test.ts` mock 补 `settleLaunchdService`。
-
-- **文档**：`docs/DECISIONS.md` 新增 **D-035** ADR；`.agent/TASK_BOARD.md` / `.agent/FILE_LOCKS.md` 登记并标记 TASK-035。
+- **`src/core/identity-guard.ts`（新，D-041 P0-1）**：声明式 `GUARDED_SECTION_MARKERS`（ROLE.md 岗位定位/长期职责标题 + POLICIES.md 五个红线词）、`validateIdentityGuard(relPath, content)` → `{ok, issues}`、`stripGuardSections`（提案剥离用）。纯函数零 I/O。
+- **`src/application/factory-application.ts`**：`commitSelfEvolution` 对 `agent.identity.role_file`/`policies_file` 提交前过 identity-guard——锚点缺失 → `console.warn('[identity-guard] 拒绝提交 …')` 留现场 + 跳过该文件提交（保留脏文件），不阻断其他文件；relPaths 增补 `agent/proposals`。`settleActive` 加 `ensureIdentityBaseline` 回填（写盘即 `evolve: 更新 身份基线` 单文件提交）。
+- **`src/core/identity-baseline.ts`（新，D-041 P0-3）**：`ensureIdentityBaseline`（幂等，忽略 generated_at，仅描述/文档内容变化才重写）、`baselineDrift`（按文件 added/removed/changed）、`allowedIdentityDiff`（改动占比<30% + 锚点仍在 → 可进化）、`parseIdentityBaseline`/`snapshotDoc`/`diffDoc`/`renderIdentityBaseline`。基线文件 `agent/IDENTITY_BASELINE.md`。
+- **`src/core/templates.ts`**：`renderAgentWorkspace` 播种基线 + `agent/proposals/README.md`（frontmatter/正文/协议约定）；`ensureRuntimePrompt` 回填条件扩为「缺宿主平台 **或** 缺 `## 分层自进化协议` 标记」（D-041 P0-2，D-039 之后创建但仍是旧自我进化文案的员工也重渲）。
+- **系统提示文案**：`templates/claude-agent/ENTRY.md.tmpl` + `codex-agent/ENTRY.md.tmpl`「自我进化」→「分层自进化协议」（宪法/岗位定位只提案不直改、可进化区红线词不可删/显著改动先提案、提案审批四步、永不改 agent.yaml/settings.json）；`templates/factory-skill/SKILL.md` 补「六、自进化协议」小节。
+- **测试**：`tests/identity-guard.test.ts`（新 11 用例）、`tests/identity-baseline.test.ts`（新 12 用例）、`tests/self-evolution.test.ts`（增 5 用例：删红线词拒提交留现场、删岗位定位标题拒提交、合法强化仍提交、proposals 提交、基线回填幂等）、`tests/bridge-settle.test.ts`（增 D-041 回填用例）。
+- **文档**：`docs/DECISIONS.md` 新增 **D-041** ADR；`README.md` 增「分层自进化协议」小节 + Roadmap 更新；`.agent/TASK_BOARD.md` / `.agent/FILE_LOCKS.md` 登记 TASK-040。
 
 ## 验证
 
-- `npm test`：全量 332 通过（串行 `--no-file-parallelism` 全绿）。
+- `npm test`：全量 372 通过（此前 332，新增 40 用例，串行 `--no-file-parallelism` 全绿）。
 - `npm run build`：通过。
-- `npm run lint`：eslint + prettier 全绿。
-- CLI 冒烟：`node dist/cli.js _service --help` 显示 settle/bridge-run；`agentctl bridge settle --help` 显示 --install/--uninstall/--interval；`_service bridge-run smoke-worker -- -p --query` 用假 claude（AIEMPLOYEES_REAL_CLAUDE）验证 stdin prompt 转发 + settle 链 adopt 员工 skill（`.claude/skills/smoke-skill` 投影软链生成）；`_service settle smoke-worker` 与 `agentctl bridge settle smoke-worker` exit 0。
+- `npm run lint`：eslint + prettier 全绿（唯一 warn 为 gitignored `.claude/settings.local.json`，非本次改动）。
 
 ## 待确认 / 后续
 
-- 未 commit（用户批准的方案 + AGENTS.md 常驻规则「任务完成即 commit」，等待授权后提交 main，不 push）。
-- shim 是「不改上游 bridge」的唯一 seam：真实飞书 `lark-coding-agent-bridge` 端到端冒烟（真实 claude + 真实飞书消息）需用户在有飞书凭据的环境验证。
-- 周期 settle 间隔默认 300s（`FEISHU_SETTLE_INTERVAL_SECONDS`）为初值，可按使用反馈调优。
-- Web 侧暂未暴露 settle 状态/手动触发（CLI 已覆盖），可后置立项。
+- 已 commit（用户批准的 D-041 方案 + AGENTS.md 常驻规则「任务完成即 commit」，已提交 main，不 push）。
+- **M2（P1 开关 + 两级经验）**：schema 新字段 + `ensureMemoryFlags` + `reflection.ts`/`experience-refiner.ts`（三开关默认开、原始记录始终落盘 + 重要性累积触发提炼）。
+- **M3（P1 对账 + Web 只读 + 创建骨架）**：`proposal-ledger.ts` 账本 + Web 文档/Skills 只读化 + 骨架模板创建。
+- **M4（P2）**：`knowledge-retention.ts` 遗忘归档 + `identity rollback` CLI。
+- **M5（P3）**：doctor 6 检查项 + Web 进化历史页 + recall 增强。

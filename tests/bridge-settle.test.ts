@@ -278,12 +278,12 @@ describe('settleEmployee 无 transcript 沉淀（D-035）', () => {
     expect(stdout).toMatch(/evolve/);
   });
 
-  it('回填旧员工系统提示词：缺「宿主平台」时重渲为当前模板，已含则不动（D-039）', async () => {
+  it('回填旧员工系统提示词：缺「宿主平台」或「分层自进化协议」时重渲为当前模板，已含则不动（D-039/D-041）', async () => {
     const { app } = await setup();
     const { registry } = await app.getAgent('worker-a');
     const promptFile = path.join(registry.workspace.path, 'CLAUDE.md');
 
-    // 模拟 D-037 之前创建的旧员工：系统提示缺「宿主平台」小节，且该旧版已被 git 基线提交
+    // 模拟 D-039 之前创建的旧员工：系统提示缺「宿主平台」小节，且该旧版已被 git 基线提交
     // （当前 createAgent 的 scaffold 已含宿主平台，需先把旧版 commit 成基线再触发回填）。
     const legacy =
       '# 用户运营专员 运行指南\n\n请先阅读 agent/、knowledge/、skills/ 与 tasks/ 中的正式文件。\n';
@@ -299,8 +299,8 @@ describe('settleEmployee 无 transcript 沉淀（D-035）', () => {
     expect(upgraded).toContain('## 宿主平台（AI Employee Factory）');
     expect(upgraded).toContain('员工 A');
     expect(upgraded).toContain('## 记忆权威顺序');
-    // 升级后内容与新建员工模板同构（含完整系统提示骨架）。
-    expect(upgraded).toContain('## 自我进化');
+    // 升级后内容与新建员工模板同构（含完整系统提示骨架 + 新协议）。
+    expect(upgraded).toContain('## 分层自进化协议');
     expect(upgraded).toContain('## 定时任务自我配置');
     // 升级写入被自进化链单文件提交。
     const { stdout } = await execa('git', ['-C', registry.workspace.path, 'log', '--oneline'], {
@@ -308,11 +308,36 @@ describe('settleEmployee 无 transcript 沉淀（D-035）', () => {
     });
     expect(stdout).toMatch(/evolve: 更新 CLAUDE\.md/);
 
-    // 幂等：已含「宿主平台」小节的员工不被覆盖（员工对系统提示的编辑保持原样）。
+    // 幂等：已含「宿主平台 + 分层自进化协议」小节的员工不被覆盖（员工对系统提示的编辑保持原样）。
     const before = await fs.readFile(promptFile, 'utf8');
     await fs.appendFile(promptFile, '\n# 员工手动补充的说明\n');
     await app.settleEmployee('worker-a');
     const after = await fs.readFile(promptFile, 'utf8');
     expect(after).toBe(before + '\n# 员工手动补充的说明\n');
+  });
+
+  it('回填旧员工：已含「宿主平台」但仍是旧「自我进化」文案 → 重渲为新协议（D-041）', async () => {
+    const { app } = await setup();
+    const { registry } = await app.getAgent('worker-a');
+    const promptFile = path.join(registry.workspace.path, 'CLAUDE.md');
+
+    // 模拟 D-039 之后创建、但尚未回填新协议的员工：含宿主平台 + 旧「自我进化」标题。
+    const d039 =
+      '# 员工 运行指南\n\n## 宿主平台（AI Employee Factory）\n\n你是 AI 员工。\n\n## 自我进化\n\n你可以在工作中持续改进自己的正式文档。\n';
+    await fs.writeFile(promptFile, d039);
+    await execa('git', ['-C', registry.workspace.path, 'add', 'CLAUDE.md'], { reject: false });
+    await execa('git', ['-C', registry.workspace.path, 'commit', '-m', 'd039 baseline'], {
+      reject: false,
+    });
+
+    await app.settleEmployee('worker-a');
+
+    const upgraded = await fs.readFile(promptFile, 'utf8');
+    expect(upgraded).toContain('## 分层自进化协议');
+    expect(upgraded).not.toContain('## 自我进化');
+    // 幂等：第二次 settle 不覆盖。
+    const before = await fs.readFile(promptFile, 'utf8');
+    await app.settleEmployee('worker-a');
+    expect(await fs.readFile(promptFile, 'utf8')).toBe(before);
   });
 });

@@ -229,6 +229,23 @@ agentctl skill-store install user-operations my-skills skills/hello --scope proj
 
 原生记忆从不是唯一业务事实源，也不能绕过权限。
 
+## 分层自进化协议（D-041）
+
+AI 员工的进化（记忆/岗位/目标/规则/技能）**只在聊天/干活中由 AI 自己持续优化，人工不直接编辑**（修正也通过飞书聊天）；Web 端只读展示。身份文档分四区，按「写入者 / 修订节奏 / 保护强度」不同对待，所有改动进 `evolve:` 单文件提交历史、可回溯：
+
+| 区                     | 文件                                                       | 写入者                       | 保护                                                      |
+| ---------------------- | ---------------------------------------------------------- | ---------------------------- | --------------------------------------------------------- |
+| **宪法区**（不可变）   | `agent/CONSTITUTION.md`                                    | 仅人（聊天明确指示）         | 内容级硬门：红线锚点只增不改                              |
+| **岗位骨架区**（静态） | `agent/ROLE.md`（`# 岗位定位` 段）                         | 仅人（聊天改）；员工只可提案 | 硬门：章节标题不可删；`agent.yaml.description` 为唯一权威 |
+| **可进化区**           | `GOALS/OPERATING_SYSTEM/POLICIES`、`skills/`、`knowledge/` | 员工自主                     | 全部 `evolve:` 单文件提交 + 记录→提案→批准 + 陈旧归档     |
+| **会话/运行区**        | `logs/`、`usage.db`、`automation/`                         | 系统/员工                    | 不入正式记忆、有上限                                      |
+
+**身份守卫**（`agentctl doctor` 可查）：
+
+- **红线锚点硬门**：`agent/POLICIES.md` 的红线词（`人工审批`/`生产写入`/`对外发布`/`删除数据`/`Git push`）与 `agent/ROLE.md` 的岗位定位/长期职责标题**不可删除或削弱**——系统在 `evolve:` 提交前校验，违规文件拒绝提交并留现场（`git diff` 可查），不自动回滚。
+- **身份基线**：系统把四份身份文档快照到 `agent/IDENTITY_BASELINE.md`（含 sha256），`agent.yaml.description` 为岗位定位唯一权威；基线漂移可被 doctor / 进化历史检测。
+- **提案审批**：对核心身份的改动走 `agent/proposals/*.md`（现状→拟改→理由→证据 `because of ...`）→ 飞书聊天里**用户明确「同意/批准」后**才落盘；员工不得自行 proposed→applied。
+
 ## 备份与换电脑
 
 ```bash
@@ -279,7 +296,7 @@ agentctl archive user-operations
 
 ## 当前限制与 Roadmap
 
-v1 不包含常驻 Web 服务、局域网/远程访问、账号系统、浏览器内终端、多 Agent 共享机器人 Router、Agent 自由互聊、云端多租户、Skill 市场、生产数据写入、知识图谱或 systemd 实现。核心模型是「单一 AI 员工 + 定时 Job + Web 单轮对话」；Chief 编排、Todo 状态机与 MCP 接入已于 TASK-030（D-027）移除。后续优先项是 systemd adapter、显式 runtime 迁移工作流、可选的加密 Secret provider、任务完成自动写状态、飞书入站。
+v1 不包含常驻 Web 服务、局域网/远程访问、账号系统、浏览器内终端、多 Agent 共享机器人 Router、Agent 自由互聊、云端多租户、Skill 市场、生产数据写入、知识图谱或 systemd 实现。核心模型是「单一 AI 员工 + 定时 Job + Web 单轮对话」；Chief 编排、Todo 状态机与 MCP 接入已于 TASK-030（D-027）移除。后续优先项是 systemd adapter、显式 runtime 迁移工作流、可选的加密 Secret provider、任务完成自动写状态、飞书入站。分层自进化协议后续阶段（D-041 M2-M5）：三个自进化开关默认开 + 经验两级化（原始记录始终落盘 + 重要性累积触发提炼）、提案对账账本 + Web 只读收敛 + 创建骨架化、遗忘归档 + 身份 git 回滚、doctor 检查项 + Web 进化历史 + 检索增强。
 
 ## 开发验证
 

@@ -1,5 +1,21 @@
 # Decisions
 
+## D-041：分层自进化协议 P0——身份守卫（identity-guard + identity-baseline + proposals 通道）
+
+- 状态：Accepted（已实施，TASK-040）
+- 日期：2026-08-06
+- 背景：用户要求「AI 员工的记忆/职业/行业/目标等所有进化，都在与飞书聊天/干活过程中由 AI 自己持续优化；人工不直接编辑（修正也通过聊天）；Web 只看信息；初始创建只给基础岗位模板」。规划确认三项决策：① Web 移除身份文档编辑入口（保留只读预览）；② 更轻的骨架模板；③ 提案审批制（员工改核心身份需用户在飞书聊天批准）。调研前沿方法论（Letta/Mem0/Generative Agents/Voyager/ExpeL/Reflexion/四层人格）得出核心约束：记忆分层+每层不同写入者、「记录→验证→提炼→写回」门控、一切写入 Git 版本化、身份受保护慢节奏修订、反模式=对话内内联自主改身份/记忆、自评改目标、只看表层。本批（M1/P0）先建「防漂移底线」——零 schema 变更、零迁移，让员工无法静默削弱身份、全部改动可 diff。
+- 决定：
+  - **P0-1 身份文档只读锚点硬门**（新增 `src/core/identity-guard.ts`）：声明式 `GUARDED_SECTION_MARKERS`——`ROLE.md` 的 `# 岗位定位`/`## 长期职责` 一级/二级标题不可删，`POLICIES.md` 红线词（`人工审批`/`生产写入`/`对外发布`/`删除数据`/`Git push`）不可被移除。`validateIdentityGuard(file, content)` → `{ok, issues}`；`stripGuardSections` 供提案工具剥离受保护行。**接入 `commitSelfEvolution`**：提交 ROLE/POLICIES 前校验，失败 → `console.warn` 留现场 + **跳过该文件提交**（保留工作区脏文件供 `git diff`/`git checkout` 人工决策，不悄悄回滚，不阻断其他文件提交）。
+  - **P0-3 身份基线 + 双真相消解**（新增 `src/core/identity-baseline.ts`）：`agent.yaml.description` 定为**岗位定位唯一权威**，ROLE.md 的 `# 岗位定位` 段由系统渲染（创建/回填时写），员工不直改。`ensureIdentityBaseline(workspace, description)` 幂等快照四份身份文档标题结构+内容到 `agent/IDENTITY_BASELINE.md`（含 sha256 标记），幂等判定忽略 `generated_at`（仅描述或文档内容变化才重写，避免 settle 反复提交）。`baselineDrift(workspace)` 按文件返回 `{added, removed, changed}` 差异摘要；`allowedIdentityDiff`：改动行占比 <30% + 未删受保护标题 + 红线词仍在 → 判「可进化」，整删/重写 → 疑似漂移。**接入**：新建 `renderAgentWorkspace` 播种 + `settleActive` 幂等回填（写盘即 `evolve: 更新 身份基线` 单文件提交）。
+  - **P0-4 「记录→提案→批准」通道**（目录约定）：`agent/proposals/*.md`（frontmatter `proposal_id/kind/status(proposed|approved|rejected|applied|expired)/target_file/proposed_at/user_anchor`，正文含「现状→拟改→理由→证据引用 `because of knowledge/lessons/xxx.md:行号`」）。应用协议写进 ENTRY 模板：用户明确「同意/批准/就按这个改」→ 员工改文件并标 `applied`；「不同意」→ `rejected` 归档；**员工不得自行 proposed→applied**。`commitSelfEvolution` relPaths 增补 `agent/proposals`。`renderAgentWorkspace` 播种 `agent/proposals/README.md`。
+  - **P0-2 系统提示升级**：`ENTRY.md.tmpl`（claude/codex）「自我进化」小节重写为「分层自进化协议」——宪法/岗位定位只提案不直改、可进化区自主但红线词不可删/显著改动先提案、永不修改 `agent.yaml`/`.claude/settings.json` 扩大权限。`templates/factory-skill/SKILL.md` 补「六、自进化协议」小节。**回填条件扩展**：`ensureRuntimePrompt` 从「缺宿主平台」扩为「缺宿主平台 **或** 缺 `## 分层自进化协议` 标记」——D-039 之后创建、已含宿主平台但仍是旧「自我进化」文案的存量员工也重渲为协议文案；已含新协议则不动（幂等、尊重员工编辑）。
+- 边界：**P0 零 schema 变更、零迁移**（`agent-schema.ts` 不动，`identity_protocol` 等新字段留到 M2/P1）。硬门是内容级校验**不是权限门**——不阻止员工在聊天中提案修改身份，只防静默削弱后不可追溯。硬门默认 `advisory` 语义（拒绝提交 + 留现场），不自动回滚脏文件。Web 编辑入口移除（决策①）与骨架模板（决策②）在 M3。
+- 原因：员工全自主进化必须先有「身份不可静默削弱」的地板，否则任何后续机制（记忆/技能/反思）都建立在可被一句话抹掉的身份上。选 `settleActive` 作存量回填点是它是飞书逐消息/runJob/周期 settle 的统一沉淀入口（同 D-039）。
+- 影响：新增 `identity-guard.ts`/`identity-baseline.ts` + 两测试文件；`factory-application.ts` `commitSelfEvolution` 加硬门 + 增补 proposals relPath、`settleActive` 加基线回填；`templates.ts` 播种基线 + proposals README + `ensureRuntimePrompt` 回填条件扩展；两个 ENTRY 模板 + factory-skill 升级文案；`self-evolution.test.ts`/`bridge-settle.test.ts` 增补；全量测试 372 通过（此前 332）。
+
+---
+
 ## D-039：存量员工系统提示词回填（与新建员工完全一致）
 
 - 状态：Accepted（已实施，TASK-039）

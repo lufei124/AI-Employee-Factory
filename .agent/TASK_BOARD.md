@@ -657,3 +657,18 @@ Acceptance criteria: bridge-settle 单测全绿（shim 内容/幂等、StartInte
 Started at: 2026-08-06 13:10 +0800
 Updated at: 2026-08-06 13:56 +0800
 ```
+
+```text
+Task ID: TASK-040
+Title: 分层自进化协议 P0（身份守卫）——identity-guard + identity-baseline + proposals 目录约定 + 系统提示文案（D-041 前置）
+Owner agent: claude-20260806-01
+Status: IN_PROGRESS
+Branch/worktree: main
+Allowed scope: src/core/identity-guard.ts（新）、src/core/identity-baseline.ts（新）、src/application/factory-application.ts、src/core/templates.ts、templates/claude-agent/ENTRY.md.tmpl、templates/codex-agent/ENTRY.md.tmpl、templates/factory-skill/SKILL.md、tests/identity-guard.test.ts（新）、tests/identity-baseline.test.ts（新）、tests/self-evolution.test.ts、docs/DECISIONS.md、docs/ARCHITECTURE.md、README.md、.agent 簿记
+Forbidden scope: 不做 schema 变更/迁移（P0 零 schema 变更）；不新增审批服务/DB/向量库；不改 Web 编辑入口（P1-3 Web 只读化在 M3）；不引入对外网络外发
+Dependencies: 用户批准的 D-041 方案（M1/P0）
+Expected output: 员工无法静默削弱身份：ROLE 岗位定位/长期职责标题与 POLICIES 红线词不可删（identity-guard 提交前校验，违规跳过提交留现场）；agent.yaml.description 唯一权威、ROLE 岗位定位由系统渲染（identity-baseline 基线快照 + drift 检测）；proposals 目录约定生效；系统提示含分层自进化协议
+Acceptance criteria: identity-guard/identity-baseline 单测全绿；self-evolution 增测（删红线词被拒提交、proposals 提交、基线回填）；npm test/build/lint 全绿；任务完成即 commit（不 push）
+Started at: 2026-08-06 15:20 +0800
+Updated at: 2026-08-06 15:20 +0800
+```

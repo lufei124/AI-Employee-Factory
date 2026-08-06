@@ -26,6 +26,8 @@ import { initializeFactory, readConfig } from '../core/config.js';
 import { CreateAgentService, type CreateAgentInput } from '../core/create-agent.js';
 import { generateEmployeeProfile } from '../core/employee-generator.js';
 import { DefaultExperienceExtractor } from '../core/experience.js';
+import { validateIdentityGuard } from '../core/identity-guard.js';
+import { ensureIdentityBaseline } from '../core/identity-baseline.js';
 import { DoctorService } from '../core/doctor.js';
 import { AgentCtlError } from '../core/errors.js';
 import { JobRunner } from '../core/job-runner.js';
@@ -445,7 +447,10 @@ export class FactoryApplication {
 
   /** 检测并单文件提交员工自维护文档/内容的变更（runJob 成功后调用）。
    *  D-029 拓宽：除四份身份文档外，员工写的内容目录（skills/workflows/knowledge）也自动
-   *  版本化——含未跟踪新文件，沿用单文件 git add，绝不用 add -A。 */
+   *  版本化——含未跟踪新文件，沿用单文件 git add，绝不用 add -A。
+   *  D-041 P0-1 硬门：ROLE.md / POLICIES.md 提交前过 identity-guard，锚点缺失（章节标题 /
+   *  红线词被删）→ 跳过该文件提交并 console.warn 留现场（保留脏文件供 git diff / checkout），
+   *  不悄悄回滚，不阻断其他文件的提交。 */
   private async commitSelfEvolution(agent: AgentConfig, workspace: string): Promise<void> {
     const relPaths = [
       agent.identity.role_file,
@@ -455,6 +460,10 @@ export class FactoryApplication {
       'skills',
       'workflows',
       'knowledge',
+      // D-041 P0-4：「记录→提案→批准」通道。员工写提案（agent/proposals/*.md），系统随
+      // 自进化链单文件提交（提案本身进 evolve: 历史可回溯）；批准/拒绝由用户在飞书聊天里
+      // 明确表态，员工按协议改文件并标 applied/rejected。
+      'agent/proposals',
       // 技能运行时投影目录：adopt/自建技能会新增软链（与创建期 renderSkills 的投影跟踪一致），
       // 一并提交，保持 git 干净（避免投影软链停留未跟踪）。
       '.claude/skills',
@@ -465,6 +474,23 @@ export class FactoryApplication {
       'AGENTS.md',
     ];
     for (const relPath of relPaths) {
+      // D-041 P0-1：身份文档提交前过内容级硬门——锚点缺失则拒绝提交（保留脏文件）。
+      if (relPath === agent.identity.role_file || relPath === agent.identity.policies_file) {
+        const file = path.join(workspace, relPath);
+        if (await fs.pathExists(file)) {
+          const content = await fs.readFile(file, 'utf8');
+          const { ok, issues } = validateIdentityGuard(relPath, content);
+          if (!ok) {
+            console.warn(
+              `[identity-guard] 拒绝提交 ${relPath}：${issues
+                .map((issue) => issue.message)
+                .join('；')} ` +
+                `（保留工作区脏文件供 git diff / git checkout 人工决策，不自动回滚。）`,
+            );
+            continue;
+          }
+        }
+      }
       const dirty = await gitStatusShort(workspace, relPath);
       for (const entry of dirty) {
         if (entry.path === '.') continue;
@@ -1067,6 +1093,20 @@ export class FactoryApplication {
       },
       memory: agent.memory,
     });
+    // D-041 P0-3：身份基线回填（存量员工幂等）。agent.yaml.description 为唯一权威，ROLE.md
+    // `# 岗位定位` 段由系统渲染；此处快照四份身份文档到 agent/IDENTITY_BASELINE.md。回填写入
+    // 由下方 commitSelfEvolution 单文件提交（evolve: 更新 IDENTITY_BASELINE.md，可回溯）。
+    const baseline = await ensureIdentityBaseline({
+      workspace: registry.workspace.path,
+      description: agent.description,
+    });
+    if (baseline.wrote) {
+      await this.commitAgentFile(
+        registry.workspace.path,
+        'agent/IDENTITY_BASELINE.md',
+        'evolve: 更新 身份基线',
+      );
+    }
     // D-034 员工自建 Skill：先自动 adopt/upsert 员工写盘的 skill 并投影，
     // 再按需检测重复模式自动生成。顺序在 commitSelfEvolution 之前，使新元数据被 evolve: 提交。
     await this.autoAdoptSelfSkills(id, agent);

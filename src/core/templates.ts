@@ -5,6 +5,7 @@ import YAML from 'yaml';
 import { digestSkillDirectory } from './skills.js';
 import { renderAuthorityStance } from './authority.js';
 import { renderNewSeed as renderCurrentStateSeed } from './current-state.js';
+import { ensureIdentityBaseline } from './identity-baseline.js';
 import type { AgentConfig, RuntimeProvider } from '../schemas/agent-schema.js';
 import type { Preset } from '../schemas/preset-schema.js';
 
@@ -33,6 +34,7 @@ export async function renderAgentWorkspace(input: {
   const { workspace, config, preset } = input;
   const directories = [
     'agent',
+    'agent/proposals',
     'skills',
     'knowledge/product',
     'knowledge/metrics',
@@ -77,6 +79,52 @@ export async function renderAgentWorkspace(input: {
   // OP6-B：CURRENT_STATE.md 采用「系统标记块 + 员工工作进展段」结构；系统侧生命周期事件
   // （登录/授权/启停/归档恢复）只更新标记块内的行，块外内容员工维护、系统不覆盖。
   await fs.writeFile(path.join(workspace, 'agent/CURRENT_STATE.md'), renderCurrentStateSeed());
+  // D-041 P0-3：身份基线播种。agent.yaml.description 为岗位定位唯一权威，ROLE.md 的
+  // `# 岗位定位` 段由系统渲染；基线快照四份身份文档标题+内容，供漂移检测/进化历史。
+  await ensureIdentityBaseline({ workspace, description: config.description });
+  // D-041 P0-4：「记录→提案→批准」通道目录约定。员工对身份（ROLE/POLICIES/CONSTITUTION）
+  // 的显著改动走提案，由用户在飞书聊天中批准后落盘；提案本身随自进化链提交，可回溯。
+  await fs.writeFile(
+    path.join(workspace, 'agent/proposals/README.md'),
+    [
+      '# 身份修订提案（agent/proposals）',
+      '',
+      '本目录存放你对**核心身份**（岗位定位 / 权限红线）的修订提案。**批准通道是飞书聊天**：',
+      '把提案内容发给用户，用户明确说「同意 / 批准 / 就按这个改」后，你才改对应文件并标记',
+      '`status: applied`；用户说「不同意」则标 `status: rejected` 归档。',
+      '',
+      '## 提案文件约定（frontmatter）',
+      '',
+      '```yaml',
+      '---',
+      'proposal_id: p-YYYYMMDD-序号',
+      'kind: identity | policy | goal',
+      'status: proposed | approved | rejected | applied | expired',
+      'target_file: agent/ROLE.md',
+      'proposed_at: 2026-08-06T00:00:00+08:00',
+      'user_anchor: 用户在飞书中的原话/截图（批准依据，批准后必填）',
+      '---',
+      '```',
+      '',
+      '## 正文结构',
+      '',
+      '- **现状**：当前文件里相关段落原文。',
+      '- **拟改**：你打算改成什么样。',
+      '- **理由**：为什么要改（依据经验/数据/用户反馈）。',
+      '- **证据引用**：`because of knowledge/lessons/xxx.md:行号`。',
+      '',
+      '## 协议',
+      '',
+      '- **只提案，不直改**：`agent/ROLE.md` 的岗位定位/长期职责、`agent/POLICIES.md` 的红线词',
+      '  由系统硬门保护，删除或削弱会触发 identity-guard 拒绝提交；要改就写提案。',
+      '- **员工不得自行 proposed→applied**：必须等到用户在飞书明确批准。',
+      '- 目标（GOALS）、工作系统（OPERATING_SYSTEM）等「可进化区」不必走提案，但显著改动',
+      '  仍建议先说明再改，改动都会进 `evolve:` 提交历史可回溯。',
+      '',
+      '> 这些文件由系统随自进化链单文件提交，不要手动 git 提交。',
+      '',
+    ].join('\n'),
+  );
   await fs.writeFile(path.join(workspace, 'tasks/BACKLOG.md'), '# Backlog\n');
   await fs.writeFile(path.join(workspace, 'tasks/ACTIVE.md'), '# Active\n');
   await fs.writeFile(path.join(workspace, 'config/env.example'), '# 不要在此文件写入真实 Secret\n');
@@ -231,6 +279,11 @@ export async function ensureFactorySkill(input: {
 // D-039：存量员工系统提示词回填。仅当 CLAUDE.md/AGENTS.md 缺「宿主平台」小节（D-037 之前创建的
 // 旧员工）时，按当前模板重渲一次，使存量员工与新建员工完全一致；已含该小节则不动（尊重员工
 // 对系统提示的既有编辑，不反复覆盖）。返回是否发生写入（供调用方决定是否走自进化提交）。
+//
+// D-041 P0-2/P1-5：回填条件扩为「缺宿主平台 **或** 缺分层自进化协议标记」。D-039 之后创建的
+// 员工（已含宿主平台但仍是旧「自我进化」文案）也重渲为新协议文案；已含「分层自进化协议」
+// 小节则不动（尊重员工对系统提示的既有编辑，幂等不反复覆盖）。
+const RUNTIME_PROMPT_PROTOCOL_MARKER = '## 分层自进化协议';
 export async function ensureRuntimePrompt(input: {
   workspace: string;
   provider: RuntimeProvider;
@@ -240,7 +293,12 @@ export async function ensureRuntimePrompt(input: {
   const { workspace, provider, values, memory } = input;
   const file = path.join(workspace, provider === 'claude' ? 'CLAUDE.md' : 'AGENTS.md');
   const existing = await fs.readFile(file, 'utf8').catch(() => '');
-  if (existing.includes('## 宿主平台（AI Employee Factory）')) return false;
+  if (
+    existing.includes('## 宿主平台（AI Employee Factory）') &&
+    existing.includes(RUNTIME_PROMPT_PROTOCOL_MARKER)
+  ) {
+    return false;
+  }
   const entry = await fs.readFile(
     path.join(packageRoot(), `templates/${provider}-agent/ENTRY.md.tmpl`),
     'utf8',

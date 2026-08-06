@@ -353,3 +353,148 @@ describe('员工自我进化（TASK-029）', () => {
     expect(log.some((line) => line.includes('evolve:'))).toBe(true);
   });
 });
+
+describe('身份守卫 P0（D-041）', () => {
+  it('员工删除 POLICIES 红线词 → identity-guard 拒绝提交该文件（保留脏文件），不阻断其他提交', async () => {
+    const { app, paths } = await setup();
+    const workspace = path.join(paths.workspaceRoot, 'worker-a');
+    const policiesFile = path.join(workspace, 'agent', 'POLICIES.md');
+    const goalsFile = path.join(workspace, 'agent', 'GOALS.md');
+
+    // 员工在任务中删掉红线词（削弱权限边界）。
+    const { ProcessRunner } = await import('../src/core/process-runner.js');
+    vi.spyOn(ProcessRunner.prototype, 'runLogged').mockImplementation(async () => {
+      await fs.writeFile(
+        policiesFile,
+        '# 权限与上报规则\n\n## 权限边界\n\n所有操作须谨慎。\n\n## 主动上报\n\n需要时上报。\n',
+      );
+      await fs.appendFile(goalsFile, '\n- 新增目标。\n');
+      return fakeResult('完成。');
+    });
+
+    // capture console.warn 验证 identity-guard 留痕。
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await runAdminJob(app, 'guard-redline', '更新规则');
+
+    // POLICIES.md 未被提交（脏文件保留供人工决策）。
+    const policiesLog = await gitLog(workspace, 'agent/POLICIES.md');
+    expect(policiesLog.some((line) => line.includes('evolve:'))).toBe(false);
+    const status = await execa('git', ['status', '--short'], {
+      cwd: workspace,
+      shell: false,
+      extendEnv: false,
+      reject: false,
+    });
+    expect(status.stdout).toContain('POLICIES.md');
+    // warn 留痕包含 identity-guard 拒绝提交。
+    expect(
+      warnSpy.mock.calls.some((call) => String(call[0]).includes('[identity-guard] 拒绝提交')),
+    ).toBe(true);
+    // 其他文件（GOALS）仍正常提交，不阻断主流程。
+    const goalsLog = await gitLog(workspace, 'agent/GOALS.md');
+    expect(goalsLog.some((line) => line.includes('evolve:'))).toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  it('员工删除 ROLE 岗位定位标题 → identity-guard 拒绝提交该文件', async () => {
+    const { app, paths } = await setup();
+    const workspace = path.join(paths.workspaceRoot, 'worker-a');
+    const roleFile = path.join(workspace, 'agent', 'ROLE.md');
+
+    const { ProcessRunner } = await import('../src/core/process-runner.js');
+    vi.spyOn(ProcessRunner.prototype, 'runLogged').mockImplementation(async () => {
+      await fs.writeFile(roleFile, '# 岗位说明\n\n负责用户反馈收集、分析与闭环跟进。\n');
+      return fakeResult('完成。');
+    });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await runAdminJob(app, 'guard-role', '更新岗位');
+
+    const roleLog = await gitLog(workspace, 'agent/ROLE.md');
+    expect(roleLog.some((line) => line.includes('evolve:'))).toBe(false);
+    const status = await execa('git', ['status', '--short'], {
+      cwd: workspace,
+      shell: false,
+      extendEnv: false,
+      reject: false,
+    });
+    expect(status.stdout).toContain('ROLE.md');
+    warnSpy.mockRestore();
+  });
+
+  it('员工保留红线词但扩展说明 → 仍提交（合法强化不被误伤）', async () => {
+    const { app, paths } = await setup();
+    const workspace = path.join(paths.workspaceRoot, 'worker-a');
+    const policiesFile = path.join(workspace, 'agent', 'POLICIES.md');
+
+    const { ProcessRunner } = await import('../src/core/process-runner.js');
+    vi.spyOn(ProcessRunner.prototype, 'runLogged').mockImplementation(async () => {
+      await fs.writeFile(
+        policiesFile,
+        '# 权限与上报规则\n\n## 权限边界\n\n生产写入、对外发布、Git push 和删除数据必须经人工审批。任何绕过审批的操作都属违规。\n\n## 主动上报\n\n需要时上报。\n',
+      );
+      return fakeResult('完成。');
+    });
+
+    await runAdminJob(app, 'guard-ok', '强化规则');
+
+    const policiesLog = await gitLog(workspace, 'agent/POLICIES.md');
+    expect(policiesLog.some((line) => line.includes('evolve:'))).toBe(true);
+  });
+
+  it('proposals 目录写入随自进化链提交；身份基线文件在 settleActive 后存在', async () => {
+    const { app, paths } = await setup();
+    const workspace = path.join(paths.workspaceRoot, 'worker-a');
+
+    // 创建即播种 proposals/README.md + IDENTITY_BASELINE.md。
+    expect(await fs.pathExists(path.join(workspace, 'agent/proposals/README.md'))).toBe(true);
+    expect(await fs.pathExists(path.join(workspace, 'agent/IDENTITY_BASELINE.md'))).toBe(true);
+
+    // 员工写一份提案（未跟踪文件）→ settleEmployee 后随自进化链提交。
+    const proposalFile = path.join(workspace, 'agent/proposals/p-20260806-01.md');
+    await fs.writeFile(
+      proposalFile,
+      [
+        '---',
+        'proposal_id: p-20260806-01',
+        'kind: policy',
+        'status: proposed',
+        'target_file: agent/POLICIES.md',
+        'proposed_at: 2026-08-06T00:00:00+08:00',
+        '---',
+        '',
+        '现状：...',
+        '拟改：...',
+        '理由：...',
+        'because of knowledge/lessons/xxx.md:3',
+        '',
+      ].join('\n'),
+    );
+    await app.settleEmployee('worker-a');
+
+    const log = await gitLog(workspace, 'agent/proposals/p-20260806-01.md');
+    expect(log.some((line) => line.includes('evolve:'))).toBe(true);
+    const status = await execa('git', ['status', '--short'], {
+      cwd: workspace,
+      shell: false,
+      extendEnv: false,
+      reject: false,
+    });
+    expect(status.stdout).not.toContain('proposals/p-20260806-01.md');
+  });
+
+  it('identity-baseline 回填幂等：settleActive 不重复提交未变化的基线', async () => {
+    const { app, paths } = await setup();
+    const workspace = path.join(paths.workspaceRoot, 'worker-a');
+    const baselineFile = path.join(workspace, 'agent', 'IDENTITY_BASELINE.md');
+    const before = await fs.readFile(baselineFile, 'utf8');
+
+    await app.settleEmployee('worker-a');
+    await app.settleEmployee('worker-a');
+
+    expect(await fs.readFile(baselineFile, 'utf8')).toBe(before);
+    const log = await gitLog(workspace, 'agent/IDENTITY_BASELINE.md');
+    // 创建时已提交一次（scaffold 基线）；settle 幂等不产生新的 evolve: 提交。
+    expect(log.filter((line) => line.includes('evolve: 更新 身份基线')).length).toBe(0);
+  });
+});

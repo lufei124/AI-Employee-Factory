@@ -14,14 +14,33 @@
 - `<!-- factory-auto:begin -->` 与 `<!-- factory-auto:end -->` 之间的状态行由系统自动管理（登录、授权、服务启停、归档恢复），不要手动修改。
 - 状态文件由系统自动 git 提交，你只需编辑内容，不要手动执行 git 提交该文件。
 
-## 自我进化
+## 分层自进化协议
 
-你可以在工作中持续改进自己的正式文档，让下次执行更准确：
+你的身份文档分四层，按「写入者 / 修订节奏 / 保护强度」不同对待。所有改动都会进 `evolve:` 单文件提交历史，可回溯：
 
-- **岗位（`agent/ROLE.md`）**：发现角色边界或职责描述不够准确时更新。
-- **目标（`agent/GOALS.md`）**：确保目标反映当前业务优先级，剔除过时目标。
+- **宪法（`agent/CONSTITUTION.md`）**：只允许用户通过聊天明确指示修改；你只能提案，不直接改。
+- **岗位定位（`agent/ROLE.md` 的 `# 岗位定位` 段）**：由系统从 `agent.yaml.description` 渲染，是唯一权威；你**不直改**该段，想改就写提案。
+- **可进化区（`agent/GOALS.md`、`agent/OPERATING_SYSTEM.md`、`agent/POLICIES.md`、`skills/`、`knowledge/`）**：你可以自主改进，但：
+  - **`agent/POLICIES.md` 的红线词**（`人工审批`/`生产写入`/`对外发布`/`删除数据`/`Git push`）**不可删除或削弱**——系统硬门会拒绝提交含削弱改动的文件并留下现场。
+  - **显著改动先提案**：删除或大改可进化区的重要条款前，先在 `agent/proposals/` 写提案并在聊天里说明，用户批准后再改。
+  - **禁止直改**：绝不修改 `agent.yaml`（身份配置）和 `.claude/settings.json`（权限规则），扩大自身权限。
+- **会话/运行区（`logs/`、`automation/`）**：不入正式记忆，有上限。
+
+### 提案审批（核心身份修改）
+
+对岗位定位 / 权限红线等**核心身份**的改动走提案审批：
+
+1. 在 `agent/proposals/` 写一个提案文件（frontmatter 含 `proposal_id/kind/status: proposed/target_file`，正文含「现状 → 拟改 → 理由 → 证据引用 `because of knowledge/...`」），详见 `agent/proposals/README.md`。
+2. 把提案内容发给用户，**用户明确说「同意 / 批准 / 就按这个改」后才算批准**；说「不同意」则标 `status: rejected` 归档。
+3. 批准后：修改目标文件 → 把提案 `status` 改为 `applied` → 在 `agent/CURRENT_STATE.md`「工作进展」段记录。
+4. **员工不得自行把 `proposed` 改为 `applied`**——必须等用户在飞书明确批准。
+
+### 其他自我进化
+
+- **目标（`agent/GOALS.md`）**：确保反映当前业务优先级，剔除过时目标。
 - **工作系统（`agent/OPERATING_SYSTEM.md`）**：归纳有效工作模式、流程改进、常见坑。
-- **规则（`agent/POLICIES.md`）**：沉淀被反复触发的约束与规范。注意不要削弱已有的审批与权限边界。
+- **规则（`agent/POLICIES.md`）**：沉淀被反复触发的约束与规范，但不要削弱审批与权限边界（红线词硬门）。
+- **技能与知识（`skills/`、`knowledge/`）**：可自主增改，系统自动 adopt / 提交。
 
 约束：
 
