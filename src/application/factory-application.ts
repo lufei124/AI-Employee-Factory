@@ -14,6 +14,7 @@ import { validateMemoryConfig } from '../core/authority.js';
 import { atomicWriteFile } from '../core/atomic.js';
 import { BackupService } from '../core/backup.js';
 import { BridgeAdapter } from '../core/bridge.js';
+import { installClaudeShim, resolveRealClaude } from '../core/claude-shim.js';
 import { KnowledgeIndexImpl } from '../core/knowledge-index.js';
 import type {
   KnowledgeConsistency,
@@ -68,9 +69,14 @@ import {
   type SyncCache,
 } from '../core/runtime.js';
 import type { AgentConfig, AgentRole, RuntimeProvider } from '../schemas/agent-schema.js';
+import type { ExecutionContext } from '../runtimes/runtime-adapter.js';
 import type { JobConfig } from '../schemas/job-schema.js';
 import type { RegistryAgent } from '../schemas/registry-schema.js';
-import { bridgeLaunchdService, jobLaunchdService } from '../services/factory-services.js';
+import {
+  bridgeLaunchdService,
+  jobLaunchdService,
+  settleLaunchdService,
+} from '../services/factory-services.js';
 
 export const agentDocumentKeys = [
   'role',
@@ -81,6 +87,9 @@ export const agentDocumentKeys = [
 ] as const;
 
 export type AgentDocumentKey = (typeof agentDocumentKeys)[number];
+
+// D-035：飞书主入口周期 settle 默认间隔（秒，5 分钟）。随 bridge 服务启停安装/卸载。
+export const FEISHU_SETTLE_INTERVAL_SECONDS = 300;
 
 export interface AgentSummary {
   id: string;
@@ -189,6 +198,12 @@ export class FactoryApplication {
         return this.toSummary({ ...agent, status }, provider);
       }),
     );
+  }
+
+  // D-035：返回已启用飞书 bridge 的员工 id 列表（供 bridge settle 批量扫描）。
+  async listBridgeEnabledIds(): Promise<string[]> {
+    const data = await this.registry.read();
+    return data.agents.filter((agent) => agent.bridge.enabled).map((agent) => agent.id);
   }
 
   async dashboard(): Promise<{
@@ -737,6 +752,31 @@ export class FactoryApplication {
     );
   }
 
+  // D-035：飞书 bridge 逐消息入口——由 claude shim 转发的每条 `claude -p -- <args>` + stdin prompt。
+  // 用真实 claude 跑 runLogged（真实 transcript），再跑完整沉淀链（skill/记忆/提交/reconcile）。
+  async runBridgeMessage(id: string, args: string[], stdin: string): Promise<number> {
+    const { registry, agent } = await this.getAgent(id);
+    const realClaude =
+      process.env.AIEMPLOYEES_REAL_CLAUDE || (await resolveRealClaude(process.env));
+    const ctx: ExecutionContext = {
+      operation: 'bridge-run',
+      command: realClaude,
+      args,
+      cwd: registry.workspace.path,
+      env: {
+        ...buildRuntimeEnvironment(registry, agent.runtime),
+        LARK_CHANNEL_HOME: registry.bridge.home,
+        LARK_CHANNEL_PROFILE: registry.bridge.profile ?? id,
+      },
+    };
+    const result = await new ProcessRunner(this.paths.logsDir).runLogged(id, ctx, {
+      transcript: agent.memory.transcript_persist === true,
+      stdin,
+    });
+    await this.settleActive(id, agent, registry, result.transcriptFile);
+    return result.exitCode;
+  }
+
   async runJobService(id: string, jobId: string): Promise<number> {
     return (await this.runJob(id, jobId)).exitCode;
   }
@@ -770,6 +810,21 @@ export class FactoryApplication {
     // D-032：停止＝暂停。改写 plist RunAtLoad 为 false，使「停机」跨重启保持（开机不再自动拉起）；
     // start/restart 由 bridge 默认 RunAtLoad true 重写，保持常驻。
     if (action === 'stop') await service.setRunAtLoad(false);
+    // D-035：飞书主入口——周期 settle 任务随 bridge 服务启停（best-effort，失败仅告警）。
+    if (action === 'start' || action === 'restart') {
+      await settleLaunchdService(
+        registry,
+        agent.runtime,
+        this.paths,
+        FEISHU_SETTLE_INTERVAL_SECONDS,
+      )
+        .start()
+        .catch((error) => console.warn(`[settle] 安装周期 settle 任务失败（跳过）：`, error));
+    } else if (action === 'stop') {
+      await settleLaunchdService(registry, agent.runtime, this.paths, 0)
+        .uninstall()
+        .catch((error) => console.warn(`[settle] 卸载周期 settle 任务失败（跳过）：`, error));
+    }
     const state = action === 'stop' ? 'stopped' : 'running';
     await this.registry.updateAgent(id, (current) => ({
       ...current,
@@ -786,6 +841,10 @@ export class FactoryApplication {
   async archiveAgent(id: string): Promise<void> {
     const { registry, agent } = await this.getAgent(id);
     await bridgeLaunchdService(registry, agent.runtime, this.paths)
+      .uninstall()
+      .catch(() => undefined);
+    // D-035：归档时一并卸载周期 settle 任务。
+    await settleLaunchdService(registry, agent.runtime, this.paths, 0)
       .uninstall()
       .catch(() => undefined);
     const now = new Date().toISOString();
@@ -916,6 +975,31 @@ export class FactoryApplication {
     return new PruneService(this.paths).run(options);
   }
 
+  // D-035：员工自进化沉淀链统一入口。抽取自 runJob 后处理，runJob 与飞书 bridge 逐消息共用。
+  // 顺序保持：经验提取 → skill adopt/生成 → 自我进化提交 → 任务 reconcile。
+  private async settleActive(
+    id: string,
+    agent: AgentConfig,
+    registry: RegistryAgent,
+    transcriptFile?: string,
+  ): Promise<void> {
+    await this.maybeExtractExperience(id, agent, transcriptFile);
+    // D-034 员工自建 Skill：先自动 adopt/upsert 员工写盘的 skill 并投影，
+    // 再按需检测重复模式自动生成。顺序在 commitSelfEvolution 之前，使新元数据被 evolve: 提交。
+    await this.autoAdoptSelfSkills(id, agent);
+    await this.maybeAutoCreateSkill(id, agent, transcriptFile);
+    // TASK-029 自我进化：检测并单文件提交员工自维护文档变更。
+    await this.commitSelfEvolution(agent, registry.workspace.path);
+    // TASK-031（D-028）：员工自我配置定时任务 reconcile。
+    await reconcileEmployeeJobs(registry, agent, this.paths);
+  }
+
+  // D-035：对飞书员工执行一次无 transcript 的沉淀（仅 adopt/提交/reconcile，供定时扫描与手动触发）。
+  async settleEmployee(id: string): Promise<void> {
+    const { registry, agent } = await this.getAgent(id);
+    await this.settleActive(id, agent, registry);
+  }
+
   async runJob(id: string, jobId: string, options: LoggedRunOptions = {}) {
     const { registry, agent } = await this.getAgent(id);
     const job = await new JobStore(registry.workspace.path).get(jobId);
@@ -927,15 +1011,8 @@ export class FactoryApplication {
     return new JobRunner(this.paths)
       .run(registry, agent.runtime, job, runOptions)
       .then(async (result) => {
-        await this.maybeExtractExperience(id, agent, result.transcriptFile);
-        // D-034 员工自建 Skill：任务结束后先自动 adopt/upsert 员工写盘的 skill 并投影，
-        // 再按需检测重复模式自动生成。顺序在 commitSelfEvolution 之前，使新元数据被 evolve: 提交。
-        await this.autoAdoptSelfSkills(id, agent);
-        await this.maybeAutoCreateSkill(id, agent, result.transcriptFile);
-        // TASK-029 自我进化：任务执行结束后检测并单文件提交员工自维护文档变更。
-        await this.commitSelfEvolution(agent, registry.workspace.path);
-        // TASK-031（D-028）：员工自我配置定时任务——任务结束后自动 reconcile 调度。
-        await reconcileEmployeeJobs(registry, agent, this.paths);
+        // D-035：员工自进化沉淀链统一入口（runJob 与飞书 bridge 共用）。
+        await this.settleActive(id, agent, registry, result.transcriptFile);
         return result;
       });
   }
@@ -975,6 +1052,11 @@ export class FactoryApplication {
     // D-034：员工自建 Skill——放行 skills/** 的 Edit/Write，使员工在任务中能直接写
     // skills/<name>/SKILL.md 而无需反复确认（与四份身份文档同款 glob 放行，幂等）。
     await ensureAgentDocsAllowed(registry.workspace.path, ['skills/**']);
+    // D-035：飞书主入口——幂等安装 claude shim，使 bridge 每条 claude -p 被 Factory 接管
+    // （runLogged + 完整沉淀链）。best-effort，失败仅告警不阻断既定流程。
+    await installClaudeShim(this.paths, registry.id, process.argv[1] ?? 'agentctl').catch((error) =>
+      console.warn(`[claude-shim] 安装 claude shim 失败（跳过）：`, error),
+    );
     const config = await readConfig(this.paths);
     // OP5-D：Registry 本机绑定的 Provider 名（不进便携文件），指定时按该 Provider 同步；缺省 live。
     const summary = await syncCcSwitchClaudeProvider(

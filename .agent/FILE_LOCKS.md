@@ -73,4 +73,4 @@ Verification performed:
 ```
 
 | `src/core/skills.ts`, `src/core/employee-generator.ts`, `src/core/skill-generator.ts`, `src/core/skill-opportunity.ts`, `src/application/factory-application.ts`, `src/schemas/agent-schema.ts`, `src/core/current-state.ts`, `src/cli-program.ts`, `tests/skills.test.ts`, `tests/self-evolution.test.ts` | TASK-034 | claude-20260806-01 | main | AI 员工自建 Skill（D-034） | 2026-08-06 11:20 +0800 | 2026-08-06 11:20 +0800 | RELEASED |
-
+| `src/application/factory-application.ts`, `src/core/claude-shim.ts`, `src/core/process-runner.ts`, `src/core/bridge.ts`, `src/services/factory-services.ts`, `src/services/launchd-service.ts`, `src/services/systemd-service.ts`, `src/runtimes/runtime-adapter.ts`, `src/cli-program.ts`, `tests/bridge-settle.test.ts`, `tests/process-runner.test.ts`, `tests/lifecycle-reconcile.test.ts`, `docs/DECISIONS.md`, `.agent/TASK_BOARD.md`, `.agent/TASK_HANDOFF.md` | TASK-035 | claude-20260806-01 | main | 飞书主入口员工自进化（D-035） | 2026-08-06 13:10 +0800 | 2026-08-06 13:56 +0800 | RELEASED |

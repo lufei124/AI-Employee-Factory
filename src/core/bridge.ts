@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import fs from 'fs-extra';
 import path from 'node:path';
 import { atomicWriteFile } from './atomic.js';
+import { withClaudeShim } from './claude-shim.js';
 import { AgentCtlError } from './errors.js';
 import { buildRuntimeEnvironment } from './runtime.js';
 import type { AgentConfig } from '../schemas/agent-schema.js';
@@ -171,11 +172,15 @@ export class BridgeAdapter {
       command: 'lark-channel-bridge',
       args,
       cwd: agent.workspace.path,
-      env: {
-        ...buildRuntimeEnvironment(agent, runtime),
-        LARK_CHANNEL_HOME: agent.bridge.home,
-        LARK_CHANNEL_PROFILE: agent.bridge.profile as string,
-      },
+      // D-035：PATH 前置 claude shim，使 bridge 每条 claude -p 被 Factory 接管（逐消息 settle）。
+      env: withClaudeShim(
+        {
+          ...buildRuntimeEnvironment(agent, runtime),
+          LARK_CHANNEL_HOME: agent.bridge.home,
+          LARK_CHANNEL_PROFILE: agent.bridge.profile as string,
+        },
+        agent.runtime_home.path,
+      ),
     };
   }
 

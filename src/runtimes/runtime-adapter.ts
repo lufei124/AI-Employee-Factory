@@ -1,7 +1,8 @@
 import type { AgentConfig } from '../schemas/agent-schema.js';
 import type { RegistryAgent } from '../schemas/registry-schema.js';
 
-export type RuntimeOperation = 'chat' | 'run' | 'login' | 'auth-status' | 'bridge' | 'job';
+export type RuntimeOperation =
+  'chat' | 'run' | 'login' | 'auth-status' | 'bridge' | 'job' | 'bridge-run';
 
 export interface ExecutionContext {
   operation: RuntimeOperation;

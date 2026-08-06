@@ -2,59 +2,58 @@
 
 ## 身份
 
-Task ID: TASK-034
+Task ID: TASK-035
 
-Task title: AI 员工自建 Skill（D-034）——完整闭环：触发 + 生成 + 校验 + 投影 + 回滚
+Task title: 飞书主入口员工自进化（D-035）——逐消息 shim + 周期 settle 扫描，完整沉淀闭环
 
 Outgoing/current agent: claude-20260806-01
 
-Intended next role/agent: 用户或后续维护者（TASK-034 已实施，待验证 commit；后续增强：skill-opportunity 自动检测的跨会话调优、Web「AI 生成 Skill」按钮等可立项）
+Intended next role/agent: 用户或后续维护者（TASK-035 已实施，待 commit；后续增强：真实飞书 bridge 端到端冒烟、settle 周期间隔按使用调优、Web 观察 settle 状态等可立项）
 
 Branch/worktree: main
 
-Status: 员工自建 Skill 完整闭环已实现并全量测试通过，待 commit（未 push）
+Status: 飞书逐消息 shim + 周期 settle 完整闭环已实现并全量测试通过，待 commit（未 push）
 
-更新时间：2026-08-06 12:55 +0800
+更新时间：2026-08-06 13:55 +0800
 
 ## 已完成
 
-- **`src/core/employee-generator.ts`**：`extractJson` 从私有改为 `export`（供 skill-generator 复用）。
-
-- **`src/core/skills.ts`**（核心）：
-  - 新增导出 `parseSkillFrontmatter(text)`（重构 install/fallback 内联重复的 frontmatter 解析；name 遵 agentIdSchema，非法抛 VALIDATION_ERROR）。
-  - 新增 `upsert(source, scope)`——同名版本化替换（不抛 CONFLICT）：target 不存在等同 install；digest 相同幂等 no-op；不同则旧版备份 `skills/.archive/<name>-<ver>-<ts>/` + stage 复制 + rename 覆盖 + 重投影；失败从 archive 回滚。
-  - 新增 `adopt(name, scope)`——给已写盘 manual skill 补写 `.agentctl.yaml`(source:'self') + 投影软链，零 LLM；frontmatter name 与目录名不一致抛 VALIDATION_ERROR。
-  - 新增 `rollback(name, scope, archiveRef?)`——从 `.archive` 恢复历史版本。
-  - `project()` 幂等化（软链已存在且指向正确则跳过）；新增 `.archive` 备份/恢复/prune（保留最近 5 版）/readStoreMetadata/nextVersion 辅助。
-
-- **`src/core/skill-generator.ts`（新）**：`generatedSkillSchema`（name/version/short_description/description/instructions/triggers）、`generateSkill(brief, opts)`（复用 employee-generator 的 `claude -p --output-format json` + `parseStructuredResult` + `extractJson` + Zod 范式，安全 prompt 锁定 workspace 沙箱）、`renderSkillFile(gen)` 渲染 SKILL.md。
-
-- **`src/core/skill-opportunity.ts`（新）**：`pickCandidateTopic`（从含重复信号词的 lessons 相关 topic 提取候选）、`detectRepeatedSkillOpportunity`（阈值 ≥2 + 排除既有 skill）、`readSkillSignals`/`appendSkillSignal`（`knowledge/.skill-signals.jsonl`，0600，窗口过滤）。
-
-- **`src/schemas/agent-schema.ts`**：`portableMemorySchema` 增 `skill_self_creation: z.boolean().optional()`（对齐 experience_extraction，仅当 transcript_persist=true 生效）。
-
 - **`src/application/factory-application.ts`**：
-  - `runJob` `.then` 链在 `commitSelfEvolution` **之前**插入 `autoAdoptSelfSkills` + `maybeAutoCreateSkill`（使新 `.agentctl.yaml`/SKILL.md 被 evolve: 提交）。
-  - `autoAdoptSelfSkills`（纯修复、始终开启）：扫描 `skills/*/`，含 SKILL.md 但无元数据 → adopt；digest 变化 → upsert。best-effort。
-  - `maybeAutoCreateSkill`（opt-in）：`skill_self_creation && transcript_persist && provider=claude` 时读 transcript → 更新信号 → 命中阈值 → `generateSkill` → 渲染 staging → `upsert` → 清理。best-effort。
-  - 公开方法 `createSkillForAgent`/`adoptSkill`/`rollbackSkill`。
-  - `prepareRuntime` 为 `skills/**` 幂等补 Edit/Write 放行。
+  - 抽取私有 `settleActive(id, agent, registry, transcriptFile?)` 复用沉淀链：`maybeExtractExperience` → `autoAdoptSelfSkills` → `maybeAutoCreateSkill` → `commitSelfEvolution` → `reconcileEmployeeJobs`。`runJob` 后处理 `.then` 改调它（行为不变，顺序保持）。
+  - 新增公开 `settleEmployee(id)`（无 transcript，仅 adopt/提交/reconcile，供周期扫描与手动触发）。
+  - 新增公开 `runBridgeMessage(id, args, stdin)`（逐消息）：`resolveRealClaude`（env `AIEMPLOYEES_REAL_CLAUDE` 优先）→ 构造 `ExecutionContext`（真实 claude + workspace cwd + `buildRuntimeEnvironment` + LARK env）→ `new ProcessRunner(logsDir).runLogged(id, ctx, { transcript: transcript_persist, stdin })` → `settleActive(id, agent, registry, result.transcriptFile)` → 返回 exitCode。
+  - 新增 `listBridgeEnabledIds()`。
+  - `prepareRuntime` 幂等 `installClaudeShim`；`lifecycleAction` start/restart 装周期 settle 任务、stop 卸载（best-effort）；`archiveAgent` 卸载。
+  - 常量 `FEISHU_SETTLE_INTERVAL_SECONDS = 300`。
 
-- **`src/cli-program.ts`**：`skill` 组新增 `create-self <id> <brief>`（`--model/--scope/--dry-run`）、`adopt <id> <name>`、`rollback <id> <name>`（`--archive-ref/--yes`）。
+- **`src/core/claude-shim.ts`（新）**：`claudeShimDir(paths, agentId)` / `claudeShimDirForRuntime(runtimeHome)` / `withClaudeShim(env, runtimeHome)`（把 shim 目录前置到 PATH）/ `resolveRealClaude(source)`（`bash -lc 'command -v claude'`）/ `renderShim`（烘焙 AI_EMPLOYEES_HOME、AI_EMPLOYEES_WORKSPACE_ROOT、AIEMPLOYEES_REAL_CLAUDE，`exec <cliFile> _service bridge-run <id> -- "$@"`）/ `installClaudeShim`（幂等：内容不变则跳过重写，mode 0o700）。
 
-- **测试**：`tests/skills.test.ts` 增 upsert 新装/版本化替换/幂等 no-op + adopt 补元数据/目录名不一致/缺 SKILL.md + rollback 恢复（7 用例）；`tests/skill-generator.test.ts`（新，8 用例）；`tests/skill-opportunity.test.ts`（新，6 用例）；`tests/self-evolution.test.ts` 增端到端 adopt（写盘→补元数据+投影+evolve 提交）+ 自动生成（skill_self_creation 命中阈值→mock generateSkill→注册+投影+提交）。
+- **`src/core/process-runner.ts`**：`LoggedRunOptions` 增 `stdin?: string`；`runLogged` 提供则写子进程 stdin 后关闭（缺省不连父 stdin，保持现状）。
 
-- **文档**：`docs/DECISIONS.md` 新增 **D-034** ADR；`.agent/TASK_BOARD.md` / `.agent/FILE_LOCKS.md` 登记并标记 TASK-034。
+- **`src/services/launchd-service.ts`**：`LaunchdPlistInput` 增 `startInterval?: number`；`renderLaunchdPlist` 渲染 `<key>StartInterval</key>`，与 `StartCalendarInterval` 互斥（设了则忽略 calendar，launchd 同时指定为配置错误）。
+
+- **`src/services/factory-services.ts`**：`ServiceAdapterFactory` 增 `settle`；`LaunchdServiceAdapterFactory.settle` 生成 `com.aiemployees.<id>.settle`（`_service settle <id>` + StartInterval）；`bridge` env 经 `withClaudeShim` 前置 shim；模块级 `settleLaunchdService` 兼容。`systemd-service.ts` 增 settle 桩（DEPENDENCY_MISSING）。
+
+- **`src/core/bridge.ts`**：`BridgeAdapter.context` 交互 env 经 `withClaudeShim` 前置 shim PATH。
+
+- **`src/runtimes/runtime-adapter.ts`**：`RuntimeOperation` 增 `'bridge-run'`。
+
+- **`src/cli-program.ts`**：`_service settle <id>` → `settleEmployee`；`_service bridge-run <id> <args...>`（`allowUnknownOption`/`allowExcessArguments`，读 stdin 调 `runBridgeMessage`；commander14 的 `-- <args...>` variadic 有坑，故用 `<args...>` 透传）→ help 说明；`bridge settle [<id>]`（`--install/--uninstall/--interval` 管理周期任务）。
+
+- **测试**：`tests/bridge-settle.test.ts`（新，7 用例）：renderShim 内容、installClaudeShim 幂等、withClaudeShim 前置 PATH、renderLaunchdPlist StartInterval 互斥、settleLaunchdService 参数烘焙、runBridgeMessage 端到端（mock runLogged 写真实 transcript + 触发 settle 链 adopt 员工 skill + 返回 exitCode）、settleEmployee adopt+evolve 提交。`tests/process-runner.test.ts` 增 stdin 转发。`tests/lifecycle-reconcile.test.ts` mock 补 `settleLaunchdService`。
+
+- **文档**：`docs/DECISIONS.md` 新增 **D-035** ADR；`.agent/TASK_BOARD.md` / `.agent/FILE_LOCKS.md` 登记并标记 TASK-035。
 
 ## 验证
 
-- `npm test`：全量 324 通过（串行 `--no-file-parallelism` 全绿；并行偶发 `application.test.ts` dashboard `running` 的既有 launchd 竞争 flaky，与本次改动无关，单独跑全绿）。
+- `npm test`：全量 332 通过（串行 `--no-file-parallelism` 全绿）。
 - `npm run build`：通过。
 - `npm run lint`：eslint + prettier 全绿。
-- CLI 冒烟：`node dist/cli.js skill --help` 显示 create-self/adopt/rollback。
+- CLI 冒烟：`node dist/cli.js _service --help` 显示 settle/bridge-run；`agentctl bridge settle --help` 显示 --install/--uninstall/--interval；`_service bridge-run smoke-worker -- -p --query` 用假 claude（AIEMPLOYEES_REAL_CLAUDE）验证 stdin prompt 转发 + settle 链 adopt 员工 skill（`.claude/skills/smoke-skill` 投影软链生成）；`_service settle smoke-worker` 与 `agentctl bridge settle smoke-worker` exit 0。
 
 ## 待确认 / 后续
 
 - 未 commit（用户批准的方案 + AGENTS.md 常驻规则「任务完成即 commit」，等待授权后提交 main，不 push）。
-- skill-opportunity 的跨会话重复阈值（默认 2 / 窗口 7 天）为初值，可按使用反馈调优。
-- Web `POST /api/v1/agents/:id/skills/generate` + `:name/adopt` 端点首期未做（计划标为可后置），仅 CLI。
+- shim 是「不改上游 bridge」的唯一 seam：真实飞书 `lark-coding-agent-bridge` 端到端冒烟（真实 claude + 真实飞书消息）需用户在有飞书凭据的环境验证。
+- 周期 settle 间隔默认 300s（`FEISHU_SETTLE_INTERVAL_SECONDS`）为初值，可按使用反馈调优。
+- Web 侧暂未暴露 settle 状态/手动触发（CLI 已覆盖），可后置立项。

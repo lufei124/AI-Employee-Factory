@@ -28,6 +28,12 @@ vi.mock('../src/services/factory-services.js', () => ({
     enableScheduled: async () => undefined,
     uninstall: async () => undefined,
   }),
+  // D-035：周期 settle 服务由 lifecycleAction start/stop 安装/卸载（best-effort）。
+  settleLaunchdService: () => ({
+    start: async () => undefined,
+    stop: async () => undefined,
+    uninstall: async () => undefined,
+  }),
 }));
 vi.mock('execa', () => ({
   execa: async () => ({ exitCode: 0, stdout: '', stderr: '' }),

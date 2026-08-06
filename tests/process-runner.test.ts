@@ -88,4 +88,23 @@ describe('ProcessRunner (OP4-B trace enrichment)', () => {
     const meta = await fs.readJson(result.metadataFile);
     expect(meta).not.toHaveProperty('usage');
   });
+
+  // D-035：runLogged 支持显式 stdin——飞书 bridge 逐消息把 prompt 喂给真实 claude。
+  it('forwards stdin to the child when provided (D-035)', async () => {
+    const { runner } = await setup();
+    const echoCtx: ExecutionContext = {
+      operation: 'run',
+      command: process.execPath,
+      args: ['-e', "process.stdin.on('data', d => process.stdout.write('echo:' + d))"],
+      cwd: process.cwd(),
+      env: { PATH: process.env.PATH ?? '' },
+    };
+    const result = await runner.runLogged('agent-1', echoCtx, {
+      mirror: false,
+      stdin: 'hello-stdin',
+    });
+    expect(result.exitCode).toBe(0);
+    const stdout = await fs.readFile(result.stdoutFile, 'utf8');
+    expect(stdout).toContain('echo:hello-stdin');
+  });
 });

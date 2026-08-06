@@ -35,6 +35,8 @@ export interface LoggedRunOptions {
   structured?: boolean;
   /** OP1 Stage C：true 时把会话摘要写入 transcript.jsonl（0600，best-effort）。 */
   transcript?: boolean;
+  /** D-035：提供的字符串写入子进程 stdin 后关闭（飞书 bridge 逐消息把 prompt 喂给真实 claude）。缺省不连父 stdin。 */
+  stdin?: string;
   /** 摘要收集器覆盖（默认内部收集全部 stdout 行；测试可注入）。 */
   transcriptSummary?: (input: {
     agentId: string;
@@ -89,6 +91,11 @@ export class ProcessRunner {
       ...(options.signal ? { cancelSignal: options.signal } : {}),
       ...(context.timeoutMs !== undefined ? { timeout: context.timeoutMs } : {}),
     });
+    // D-035：显式提供 stdin 时写入并关闭（否则 execa 默认子进程 stdin 是空管道，父进程不连）。
+    if (options.stdin !== undefined) {
+      child.stdin?.write(options.stdin);
+      child.stdin?.end();
+    }
     child.stdout?.on('data', (chunk: Buffer) => {
       stdoutStream.write(chunk);
       options.onStdout?.(chunk.toString('utf8'));

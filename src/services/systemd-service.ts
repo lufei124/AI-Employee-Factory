@@ -78,4 +78,15 @@ export class SystemdServiceAdapterFactory implements ServiceAdapterFactory {
       `${paths.schedulesDir}/${agent.id}/${job.id}.unit`,
     );
   }
+
+  settle(
+    agent: RegistryAgent,
+    _runtime: AgentConfig['runtime'],
+    paths: FactoryPaths,
+  ): ServiceAdapter {
+    return new SystemdServiceAdapter(
+      `com.aiemployees.${agent.id}.settle.service`,
+      `${paths.servicesDir}/${agent.id}/settle.unit`,
+    );
+  }
 }

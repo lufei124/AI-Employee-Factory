@@ -13,6 +13,7 @@ import { resolveFactoryPaths, displayPath } from './core/paths.js';
 import { RegistryStore } from './core/registry.js';
 import type { RuntimeProvider } from './schemas/agent-schema.js';
 import { FactoryApplication } from './application/factory-application.js';
+import { settleLaunchdService } from './services/factory-services.js';
 import { startWebConsole } from './web/start.js';
 
 function context() {
@@ -286,6 +287,41 @@ export function createProgram(): Command {
       process.exitCode = 5;
     }
   });
+  // D-035：飞书主入口——立即沉淀员工 skill/记忆，或管理周期 settle 任务（StartInterval）。
+  bridge
+    .command('settle [agent-id]')
+    .description('沉淀员工 skill/记忆（adopt/提交/reconcile），或管理周期任务')
+    .option('--install', '为该员工安装周期 settle 任务')
+    .option('--uninstall', '卸载周期 settle 任务')
+    .option('--interval <seconds>', '周期间隔（秒），默认 300', '300')
+    .action(
+      async (
+        id: string | undefined,
+        options: { install?: boolean; uninstall?: boolean; interval: string },
+      ) => {
+        const { application, paths } = context();
+        const ids = id ? [id] : await application.listBridgeEnabledIds();
+        if (!ids.length) return console.log('没有已启用飞书 Bridge 的员工。');
+        for (const agentId of ids) {
+          const { registry, agent } = await application.getAgent(agentId);
+          if (options.install) {
+            await settleLaunchdService(
+              registry,
+              agent.runtime,
+              paths,
+              Number(options.interval),
+            ).start();
+            console.log(chalk.green(`✓ ${agentId} 周期 settle 已安装（每 ${options.interval}s）`));
+          } else if (options.uninstall) {
+            await settleLaunchdService(registry, agent.runtime, paths, 0).uninstall();
+            console.log(chalk.green(`✓ ${agentId} 周期 settle 已卸载`));
+          } else {
+            await application.settleEmployee(agentId);
+            console.log(chalk.green(`✓ ${agentId} settle 完成`));
+          }
+        }
+      },
+    );
 
   registerJobCommands(program);
   registerSkillCommands(program);
@@ -436,6 +472,28 @@ export function createProgram(): Command {
     const { application } = context();
     process.exitCode = await application.runJobService(id, jobId);
   });
+  // D-035：周期/手动触发的员工沉淀（adopt/提交/reconcile，无 transcript）。
+  internal.command('settle <agent-id>').action(async (id: string) => {
+    const { application } = context();
+    await application.settleEmployee(id);
+  });
+  // D-035：飞书 bridge 逐消息拦截——把每条 `claude -p` 送回 runLogged + 完整沉淀链。
+  // 用 `--` 分隔时 commander14 的 variadic 解析有坑（`-- <args...>` 收不到 `-p`），
+  // 故用 `<args...>` + allowUnknownOption/allowExcessArguments，把 `--` 及后续当普通参数透传。
+  internal
+    .command('bridge-run <agent-id> <args...>')
+    .allowUnknownOption(true)
+    .allowExcessArguments(true)
+    .action(async (id: string, args: string[]) => {
+      const { application } = context();
+      const chunks: Buffer[] = [];
+      for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+      process.exitCode = await application.runBridgeMessage(
+        id,
+        args,
+        Buffer.concat(chunks).toString('utf8'),
+      );
+    });
   program.hook('preAction', async (_root, actionCommand) => {
     const ancestry: string[] = [];
     for (let current: Command | null = actionCommand; current; current = current.parent) {

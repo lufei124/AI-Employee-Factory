@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { FactoryPaths } from '../core/paths.js';
 import { buildRuntimeEnvironment } from '../core/runtime.js';
+import { withClaudeShim } from '../core/claude-shim.js';
 import type { AgentConfig } from '../schemas/agent-schema.js';
 import type { RegistryAgent } from '../schemas/registry-schema.js';
 import type { JobConfig } from '../schemas/job-schema.js';
@@ -27,6 +28,15 @@ export interface ServiceAdapterFactory {
     runtime: AgentConfig['runtime'],
     job: JobConfig,
     paths: FactoryPaths,
+    cliFile?: string,
+    home?: string,
+  ): ServiceAdapter;
+  /** D-035：周期 settle 扫描服务（StartInterval 秒级重复运行 _service settle）。 */
+  settle(
+    agent: RegistryAgent,
+    runtime: AgentConfig['runtime'],
+    paths: FactoryPaths,
+    intervalSeconds: number,
     cliFile?: string,
     home?: string,
   ): ServiceAdapter;
@@ -62,13 +72,17 @@ export class LaunchdServiceAdapterFactory implements ServiceAdapterFactory {
   ): LaunchdServiceAdapter {
     const exec = executable(path.resolve(cliFile));
     const logDir = path.join(paths.logsDir, agent.id);
-    const env = {
-      ...buildRuntimeEnvironment(agent, runtime),
-      LARK_CHANNEL_HOME: agent.bridge.home,
-      LARK_CHANNEL_PROFILE: agent.bridge.profile ?? agent.id,
-      AI_EMPLOYEES_HOME: paths.home,
-      AI_EMPLOYEES_WORKSPACE_ROOT: paths.workspaceRoot,
-    };
+    // D-035：PATH 前置 claude shim，使 bridge 每条 claude -p 被 Factory 接管（逐消息 settle）。
+    const env = withClaudeShim(
+      {
+        ...buildRuntimeEnvironment(agent, runtime),
+        LARK_CHANNEL_HOME: agent.bridge.home,
+        LARK_CHANNEL_PROFILE: agent.bridge.profile ?? agent.id,
+        AI_EMPLOYEES_HOME: paths.home,
+        AI_EMPLOYEES_WORKSPACE_ROOT: paths.workspaceRoot,
+      },
+      agent.runtime_home.path,
+    );
     const input: LaunchdPlistInput = {
       label: `com.aiemployees.${agent.id}`,
       program: exec.program,
@@ -115,6 +129,35 @@ export class LaunchdServiceAdapterFactory implements ServiceAdapterFactory {
       home,
     );
   }
+
+  settle(
+    agent: RegistryAgent,
+    runtime: AgentConfig['runtime'],
+    paths: FactoryPaths,
+    intervalSeconds: number,
+    cliFile = process.argv[1] ?? 'agentctl',
+    home = process.env.HOME ?? '',
+  ): LaunchdServiceAdapter {
+    const exec = executable(path.resolve(cliFile));
+    const input: LaunchdPlistInput = {
+      label: `com.aiemployees.${agent.id}.settle`,
+      program: exec.program,
+      args: [...exec.prefix, '_service', 'settle', agent.id],
+      env: {
+        ...buildRuntimeEnvironment(agent, runtime),
+        AI_EMPLOYEES_HOME: paths.home,
+        AI_EMPLOYEES_WORKSPACE_ROOT: paths.workspaceRoot,
+      },
+      stdoutPath: path.join(paths.logsDir, agent.id, 'settle.stdout.log'),
+      stderrPath: path.join(paths.logsDir, agent.id, 'settle.stderr.log'),
+      startInterval: intervalSeconds,
+    };
+    return new LaunchdServiceAdapter(
+      input,
+      path.join(paths.servicesDir, agent.id, 'settle.plist'),
+      home,
+    );
+  }
 }
 
 // 兼容旧调用方：模块级函数仍可用（委托到 launchd 工厂）。
@@ -137,4 +180,23 @@ export function jobLaunchdService(
   home?: string,
 ): LaunchdServiceAdapter {
   return new LaunchdServiceAdapterFactory().job(agent, runtime, job, paths, cliFile, home);
+}
+
+// D-035：兼容旧调用方——周期 settle 服务（StartInterval 秒级重复）。
+export function settleLaunchdService(
+  agent: RegistryAgent,
+  runtime: AgentConfig['runtime'],
+  paths: FactoryPaths,
+  intervalSeconds: number,
+  cliFile?: string,
+  home?: string,
+): LaunchdServiceAdapter {
+  return new LaunchdServiceAdapterFactory().settle(
+    agent,
+    runtime,
+    paths,
+    intervalSeconds,
+    cliFile,
+    home,
+  );
 }

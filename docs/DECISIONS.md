@@ -1,5 +1,20 @@
 # Decisions
 
+## D-035：飞书主入口员工自进化（逐消息 shim + 周期 settle 扫描）
+
+- 状态：Accepted（已实施，TASK-035）
+- 日期：2026-08-06
+- 背景：用户以**飞书对话为员工主入口**（"我会通过飞书对话让他干活"）。但调研确认整套"员工自进化"沉淀链（skill adopt/生成、经验提取、自进化 git 提交、任务 reconcile）**只挂在 `runJob` 后处理 `.then` 上**；飞书 bridge 走 `runBridgeService` → `runInteractive`（裸 `execa`，`stdio: inherit`）→ 外部 `lark-coding-agent-bridge` 长驻进程，**一个收口钩子都不跑**。`prepareRuntime` 对飞书会跑，所以放行规则/skills/** 员工在飞书里写得动，但写完没人收口。
+- 关键可行性事实（已核实上游源码）：外部 `lark-coding-agent-bridge` 的 Claude adapter 对每条飞书消息 `spawn('claude', …)` 从 PATH 解析、prompt 走 stdin、完全继承父进程 PATH（binary 仅代码层可覆盖）。→ Factory 给 bridge 的 env 把 PATH 前置一个 `claude` shim 目录，每条 `claude -p` 即被 shim 接住，逐消息送回 `runLogged`（真实 transcript）→ 跑完整沉淀链。
+- 决定：
+  - **方案 A（安全网，覆盖 adopt/提交/reconcile）**：抽取 `settleActive(id, agent, registry, transcriptFile?)` 复用沉淀链（`maybeExtractExperience` → `autoAdoptSelfSkills` → `maybeAutoCreateSkill` → `commitSelfEvolution` → `reconcileEmployeeJobs`），`runJob` 改调它；新增公开 `settleEmployee(id)`（无 transcript，仅 adopt/提交/reconcile）。launchd 支持 `StartInterval`（秒级重复，与 `StartCalendarInterval` 互斥，设了则优先）；`settleLaunchdService` 生成 `com.aiemployees.<id>.settle` 周期任务，默认 300s（`FEISHU_SETTLE_INTERVAL_SECONDS`），随 bridge `start/restart` 安装、`stop` 卸载（best-effort）。CLI 增 `_service settle` + `agentctl bridge settle [<id>]`（`--install/--uninstall/--interval`）。
+  - **方案 B（主路径，完整覆盖①②③④⑤）**：`runLogged` 支持 `stdin`；新 `_service bridge-run <id> <args...>` 读 stdin 调公开 `runBridgeMessage(id, args, stdin)`（`resolveRealClaude` → 构造 `ExecutionContext`（真实 claude + workspace cwd + `buildRuntimeEnvironment` + LARK env）→ `new ProcessRunner(logsDir).runLogged(id, ctx, { transcript, stdin })` → `settleActive(id, agent, registry, transcriptFile)` → 返回 exitCode）。新 `src/core/claude-shim.ts`：`installClaudeShim` 在 `runtimes/<id>/claude-shim/claude` 幂等写可执行 shim，烘焙 home/workspace/真实 claude 路径，`exec <cliFile> _service bridge-run <id> -- "$@"`（stdin 经 exec 继承转发）；`withClaudeShim` 把 shim 目录前置到 PATH，注入 `LaunchdServiceAdapterFactory.bridge` env（launchd 路径）与 `BridgeAdapter.context`（交互路径）。`prepareRuntime` 幂等安装 shim。
+- 边界：不改外部 `lark-coding-agent-bridge`（shim 是唯一 seam）；shim 只影响 bridge 进程（runJob/chat env 不含 shim 目录）；A 兜底"绕开 shim 或非消息的 workspace 编辑"，B 逐消息已覆盖全部；④⑤ 仅 B（依赖 transcript），A 无 transcript 只跑①②③；飞书链路权限仍受 `secureProfile`（workspace/workspace）约束，shim 不扩大权限。
+- 原因：飞书是主入口，员工沉淀（skill/记忆/提交）必须在此闭环；shim 是唯一不改上游即可逐消息拿到真实 transcript 的 seam。
+- 影响：`factory-application.ts` 增 `settleActive`/`settleEmployee`/`runBridgeMessage`/`listBridgeEnabledIds`；新增 `core/claude-shim.ts`；`process-runner.ts` `runLogged` 支持 stdin；`bridge.ts`/`factory-services.ts` 注入 shim PATH；`launchd-service.ts` 支持 `StartInterval`；`factory-services.ts` 增 `settle`；`runtime-adapter.ts` 增 `'bridge-run'` 操作；CLI 增 `_service settle`/`_service bridge-run`/`bridge settle`；测试 `tests/bridge-settle.test.ts`（新，7 用例）+ `process-runner` stdin。
+
+---
+
 ## D-001：单包分层架构
 
 v1 使用单 npm 包，通过 core/runtime/service/schema 边界保留扩展性，不引入 workspaces 发布成本。

@@ -642,3 +642,18 @@ Acceptance criteria: tests/skills.test.ts 新增 upsert/adopt/rollback 用例全
 Started at: 2026-08-06 11:20 +0800
 Updated at: 2026-08-06 11:20 +0800
 ```
+
+```text
+Task ID: TASK-035
+Title: 飞书主入口员工自进化（D-035）——逐消息 claude shim + 周期 settle 扫描，完整沉淀闭环
+Owner agent: claude-20260806-01
+Status: COMPLETED
+Branch/worktree: main
+Allowed scope: src/application/factory-application.ts、src/core/claude-shim.ts、src/core/process-runner.ts、src/core/bridge.ts、src/services/factory-services.ts、src/services/launchd-service.ts、src/services/systemd-service.ts、src/runtimes/runtime-adapter.ts、src/cli-program.ts、tests/bridge-settle.test.ts、tests/process-runner.test.ts、tests/lifecycle-reconcile.test.ts、docs/DECISIONS.md、.agent 簿记
+Forbidden scope: 不改外部 lark-coding-agent-bridge（shim 是唯一 seam）；不引入对外网络外发；不扩大任务范围
+Dependencies: 用户批准的 A+B 完整闭环 + 定时任务触发（AskUserQuestion）、D-034 自建 Skill 基础设施、D-028 员工自我配置定时任务 reconcile
+Expected output: 飞书每条消息经 claude 路径 shim 送回 runLogged（真实 transcript）+ 完整沉淀链（adopt/经验提取/自建 skill/commit/reconcile）；周期 settle 扫描兜底（adopt/commit/reconcile）；bridge start 装周期任务、stop 卸载
+Acceptance criteria: bridge-settle 单测全绿（shim 内容/幂等、StartInterval 互斥、runBridgeMessage 端到端 adopt、settleEmployee）；process-runner stdin 转发；npm test/build/lint 全绿；CLI 冒烟（bridge settle --help、_service bridge-run 假 claude 转发 prompt+settle 触发）；任务完成即 commit（不 push）
+Started at: 2026-08-06 13:10 +0800
+Updated at: 2026-08-06 13:56 +0800
+```

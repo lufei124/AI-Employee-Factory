@@ -12,6 +12,8 @@ export interface LaunchdPlistInput {
   stdoutPath: string;
   stderrPath: string;
   calendar?: { hour: number; minute: number };
+  /** D-035：秒级重复周期（StartInterval）。与 calendar 互斥；设了则优先渲染 StartInterval。 */
+  startInterval?: number;
   /** D-032：true 时 plist 写 RunAtLoad<true/>，员工随开机常驻；默认 false（定时任务等）。 */
   runAtLoad?: boolean;
 }
@@ -37,11 +39,18 @@ function dictionary(values: Record<string, string>): string {
 }
 
 export function renderLaunchdPlist(input: LaunchdPlistInput): string {
-  const calendar = input.calendar
-    ? `<key>StartCalendarInterval</key><dict><key>Hour</key><integer>${input.calendar.hour}</integer><key>Minute</key><integer>${input.calendar.minute}</integer></dict>`
-    : '';
+  // D-035：StartInterval 与 StartCalendarInterval 互斥（launchd 同时指定为配置错误）。
+  // 秒级周期优先，设了则忽略 calendar。
+  const startInterval =
+    input.startInterval !== undefined
+      ? `<key>StartInterval</key><integer>${input.startInterval}</integer>`
+      : '';
+  const calendar =
+    input.startInterval === undefined && input.calendar
+      ? `<key>StartCalendarInterval</key><dict><key>Hour</key><integer>${input.calendar.hour}</integer><key>Minute</key><integer>${input.calendar.minute}</integer></dict>`
+      : '';
   const runAtLoad = input.runAtLoad === true ? '<true/>' : '<false/>';
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>${xml(input.label)}</string><key>ProgramArguments</key>${array([input.program, ...input.args])}<key>EnvironmentVariables</key>${dictionary(input.env)}<key>WorkingDirectory</key><string>${xml(path.dirname(input.stdoutPath))}</string><key>StandardOutPath</key><string>${xml(input.stdoutPath)}</string><key>StandardErrorPath</key><string>${xml(input.stderrPath)}</string><key>RunAtLoad</key>${runAtLoad}${calendar}</dict></plist>\n`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>${xml(input.label)}</string><key>ProgramArguments</key>${array([input.program, ...input.args])}<key>EnvironmentVariables</key>${dictionary(input.env)}<key>WorkingDirectory</key><string>${xml(path.dirname(input.stdoutPath))}</string><key>StandardOutPath</key><string>${xml(input.stdoutPath)}</string><key>StandardErrorPath</key><string>${xml(input.stderrPath)}</string><key>RunAtLoad</key>${runAtLoad}${calendar}${startInterval}</dict></plist>\n`;
 }
 
 export class LaunchdServiceAdapter implements ServiceAdapter {
