@@ -13,7 +13,7 @@
     "README.md"
   ],
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22"
   },
   "scripts": {
     "build": "vite build --config web/vite.config.ts && tsc -p tsconfig.json && tsc -p tsconfig.web.json && chmod +x dist/cli.js",
@@ -42,6 +42,7 @@
     "@radix-ui/react-tabs": "^1.1.21",
     "@radix-ui/react-tooltip": "^1.2.16",
     "@tailwindcss/vite": "^4.3.3",
+    "better-sqlite3": "^13.0.3",
     "chalk": "^5.4.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -68,6 +69,7 @@
     "@testing-library/jest-dom": "^6.10.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/fs-extra": "^11.0.4",
     "@types/node": "^24.1.0",
     "@types/react": "^19.2.18",

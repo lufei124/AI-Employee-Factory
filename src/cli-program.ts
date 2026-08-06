@@ -328,6 +328,7 @@ export function createProgram(): Command {
   registerTrashCommands(program);
   registerKnowledgeCommands(program);
   registerPruneCommands(program);
+  registerUsageCommands(program);
 
   program
     .command('archive <agent-id>')
@@ -887,6 +888,43 @@ function registerPruneCommands(program: Command): void {
         console.log(chalk.green(`✓ 共释放 ${total} 字节`));
       },
     );
+}
+
+// D-036：飞书实际使用日志查询（本地 SQLite usage.db）。
+function registerUsageCommands(program: Command): void {
+  const group = program.command('usage').description('飞书实际使用日志查询');
+  group
+    .command('query')
+    .description('查询每条飞书消息的使用记录（logs/usage.db）')
+    .option('--agent <agent-id>')
+    .option('--since <iso>')
+    .option('--until <iso>')
+    .option('--limit <number>', '返回最近 N 条', '100')
+    .action(async (options: { agent?: string; since?: string; until?: string; limit?: string }) => {
+      const { application } = context();
+      const messages = await application.queryUsage({
+        ...(options.agent ? { agentId: options.agent } : {}),
+        ...(options.since ? { since: options.since } : {}),
+        ...(options.until ? { until: options.until } : {}),
+        limit: options.limit ? Number(options.limit) : 100,
+      });
+      console.log(YAML.stringify(messages));
+    });
+  group
+    .command('summary')
+    .description('聚合统计：按天 + 员工的消息数/平均耗时/总成本/错误数')
+    .option('--agent <agent-id>')
+    .option('--since <iso>')
+    .option('--until <iso>')
+    .action(async (options: { agent?: string; since?: string; until?: string }) => {
+      const { application } = context();
+      const rows = await application.usageSummary({
+        ...(options.agent ? { agentId: options.agent } : {}),
+        ...(options.since ? { since: options.since } : {}),
+        ...(options.until ? { until: options.until } : {}),
+      });
+      console.log(YAML.stringify(rows));
+    });
 }
 
 // OP1 Stage B：knowledge/ 轻量索引 + recall 命令组。

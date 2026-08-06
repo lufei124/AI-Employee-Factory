@@ -1,5 +1,21 @@
 # Decisions
 
+## D-036：飞书实际使用日志（本地 SQLite usage.db）
+
+- 状态：Accepted（已实施）
+- 日期：2026-08-06
+- 背景：用户以飞书对话为员工主入口，但**没有任何"飞书实际使用"的结构化日志**——无法回答"飞书都在干些什么活、每条消息花多久/多少钱、哪些功能被用到、哪些是冗余"。现状只有 append-only `operations.jsonl`（操作审计摘要，非 DB、无消息维度/token/耗时），且飞书 `bridge-run` 路径**不写 operations.jsonl**、也**不采集 token/成本**（`runBridgeMessage` 未传 provider/structured）。`observability.ts` 是 no-op 默认。
+- 决定：
+  - **存储**：新增 `better-sqlite3@^13`（本地 Node≥22；`engines.node` 从 `>=20.19.0` 提到 `>=22`）。DB 文件 `~/.ai-employees/logs/usage.db`（WAL）。
+  - **新模块** `src/core/usage-log.ts`：`UsageDb` 单表 `messages`（agent_id/provider/started_at/finished_at/duration_ms/exit_code/prompt/prompt_chars/args_json/model/四个 token 列/total_cost_usd/topics_json/transcript_file，索引 `(agent_id, started_at)`）。`record` **best-effort**（写失败仅 `console.warn`，绝不阻断消息/settle 链）；`query`/`summary`（按天+员工聚合：消息数/平均耗时/总成本/错误数）。
+  - **埋点**：`runBridgeMessage`（唯一逐消息入口）在 `runLogged` 补 `provider`+`structured`（best-effort 解析 token/成本，bridge 非 JSON 输出则空），运行后 record 一条（prompt 经 `redactSecrets` 脱敏，守 D-006）；transcript 启用时从 transcript.jsonl 提取 topics 一并记录。
+  - **CLI**：`agentctl usage query`（按 agent/时间/limit 列消息）+ `agentctl usage summary`（聚合）。`FactoryApplication` 暴露 `queryUsage`/`usageSummary`。
+- 边界：**不加 Web 分析页**（本批范围=埋点+CLI+分析报告）；`usage.db` 是本地分析数据，不纳入备份/迁移（重建即重新累积）；prompt 只存脱敏文本，不存全量原文（D-006 transcript 边界不变）；不记录飞书用户/群/消息 id（该元数据在外部 `lark-channel-bridge` 内，本层不可达，留作 bridge 暴露后增强）。
+- 原因：用户要求"记录飞书实际使用到本地 DB，用于后续产品优化"。true DB（SQLite）支持聚合查询，比 JSONL 更适合分析。注入点选 `runBridgeMessage` 是因为它是唯一能拿到 agent_id/时间/exit_code/prompt/usage 的逐消息入口。
+- 影响：新增 `core/usage-log.ts`；`factory-application.ts` `runBridgeMessage` 埋点 + `queryUsage`/`usageSummary`；`cli-program.ts` 增 `agentctl usage` 命令组；`package.json` 增依赖 + engine 提升；测试 `tests/usage-log.test.ts`。配套分析报告 `docs/USAGE_ANALYSIS.md`（功能面冗余观察 + 待测指标）。
+
+---
+
 ## D-035：飞书主入口员工自进化（逐消息 shim + 周期 settle 扫描）
 
 - 状态：Accepted（已实施，TASK-035）

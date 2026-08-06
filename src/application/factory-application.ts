@@ -49,6 +49,7 @@ import {
 } from '../core/skill-opportunity.js';
 import { OperationStore, type OperationSummary } from '../core/operation-store.js';
 import { OperationManager } from '../core/operation-manager.js';
+import { UsageDb, type UsageFilter, type UsageSummaryRow } from '../core/usage-log.js';
 import { PruneService, type PruneOptions, type PruneResult } from '../core/prune.js';
 import { TrashService, type TrashEntryDto, type TrashPreview } from '../core/trash.js';
 import { ProcessRunner, type LoggedRunOptions } from '../core/process-runner.js';
@@ -139,6 +140,15 @@ export class FactoryApplication {
   private readonly ccSwitchSyncCache: SyncCache = createSyncCache();
 
   private injectedOperationManager: OperationManager | undefined;
+
+  // D-036：飞书使用日志（本地 SQLite）。天然无状态，懒加载单例。
+  private injectedUsageDb: UsageDb | undefined;
+  private getUsageDb(): UsageDb {
+    if (!this.injectedUsageDb) {
+      this.injectedUsageDb = new UsageDb(path.join(this.paths.logsDir, 'usage.db'));
+    }
+    return this.injectedUsageDb;
+  }
 
   // Operation 可观测：run/chat/job 等后台操作注册 Operation 供查询进度/取消，并返回 OperationDto。
   // CLI/web 可注入同一实例，使操作在 agentctl operations query 与 web 控制台 operations 列表中都
@@ -774,8 +784,24 @@ export class FactoryApplication {
     const result = await new ProcessRunner(this.paths.logsDir).runLogged(id, ctx, {
       transcript: agent.memory.transcript_persist === true,
       stdin,
+      // D-036：启用 structured 解析，best-effort 抽取 token/成本（bridge 非 JSON 输出则返回空）。
+      provider: agent.runtime.provider,
+      structured: true,
     });
     await this.settleActive(id, agent, registry, result.transcriptFile);
+    // D-036：记录本条飞书消息的使用（耗时/退出码/token/成本/主题）。best-effort，失败不阻断。
+    this.getUsageDb().record({
+      agentId: id,
+      provider: agent.runtime.provider,
+      startedAt: result.startedAt,
+      finishedAt: result.finishedAt,
+      exitCode: result.exitCode,
+      prompt: stdin,
+      args,
+      ...(result.usage ? { usage: result.usage } : {}),
+      ...(result.transcriptFile ? { topics: readTranscriptTopics(result.transcriptFile) } : {}),
+      ...(result.transcriptFile ? { transcriptFile: result.transcriptFile } : {}),
+    });
     return result.exitCode;
   }
 
@@ -970,6 +996,16 @@ export class FactoryApplication {
     } = {},
   ): Promise<OperationSummary[]> {
     return new OperationStore(this.paths.logsDir).query(filter);
+  }
+
+  // D-036：飞书实际使用日志查询（usage.db）。
+  async queryUsage(filter: UsageFilter = {}): Promise<ReturnType<UsageDb['query']>> {
+    return this.getUsageDb().query(filter);
+  }
+
+  // D-036：飞书使用聚合统计（按天 + 员工）。
+  async usageSummary(filter: UsageFilter = {}): Promise<UsageSummaryRow[]> {
+    return this.getUsageDb().summary(filter);
   }
 
   // OP4-D：按分类清理 run 日志/registry 备份/员工备份归档/operations 审计日志。
@@ -1469,4 +1505,21 @@ export class FactoryApplication {
       return '未安装';
     }
   }
+}
+
+// D-036：best-effort 从 transcript.jsonl 提取主题关键词（供 usage 记录）。transcript 文件内容为
+// 一行 JSON（TranscriptSummary，含 topics 数组）。读取失败/无 topics 返回空数组（不阻断）。
+function readTranscriptTopics(transcriptFile: string): string[] {
+  try {
+    const content = fs.readFileSync(transcriptFile, 'utf8');
+    const line = content.split('\n').find((l) => l.trim());
+    if (!line) return [];
+    const parsed = JSON.parse(line) as { topics?: unknown };
+    if (Array.isArray(parsed.topics)) {
+      return parsed.topics.filter((t): t is string => typeof t === 'string');
+    }
+  } catch {
+    /* best-effort */
+  }
+  return [];
 }
