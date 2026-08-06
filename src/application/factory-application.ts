@@ -248,18 +248,23 @@ export class FactoryApplication {
         const service = bridgeLaunchdService(agent, config.runtime, this.paths);
         const [autoStart, real] = await Promise.all([service.isAutoStart(), service.status()]);
         let nextStatus: RegistryAgent['status'];
+        // 自检决策留痕：autoStart/真实状态/授权→动作，便于事后还原「谁在何时把服务停/起」。
+        const decision = `[reconcile] ${agent.id} autoStart=${autoStart} real=${real.state} auth=${agent.bridge.authorization} status=${agent.status}`;
         if (autoStart && real.state !== 'running' && agent.bridge.authorization === 'ready') {
           await this.prepareRuntime(agent, config);
           await this.secureBridgeProfile(agent, config.runtime);
           await service.start();
           activated.push(agent.id);
           nextStatus = 'running';
+          console.warn(`${decision} → 拉起`);
         } else if (!autoStart && real.state === 'running') {
           await service.stop();
           await service.setRunAtLoad(false);
           nextStatus = 'stopped';
+          console.warn(`${decision} → 关停（autoStart=false 且仍在运行）`);
         } else {
           nextStatus = real.state === 'running' ? 'running' : 'stopped';
+          console.warn(`${decision} → 维持 ${nextStatus}`);
         }
         if (nextStatus !== agent.status) {
           await this.registry.updateAgent(agent.id, (current) => ({
@@ -268,8 +273,12 @@ export class FactoryApplication {
             updated_at: new Date().toISOString(),
           }));
         }
-      } catch {
-        // best-effort：单个员工故障/未就绪不阻断整体
+      } catch (error) {
+        // best-effort：单个员工故障/未就绪不阻断整体；但留下可查的现场，
+        // 否则服务被意外停/无法拉起时无任何日志（本次 17:56 SIGTERM 排查即因此盲区）。
+        console.warn(
+          `[reconcile] ${agent.id} 自检失败（跳过）：${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     }
     return { activated };
