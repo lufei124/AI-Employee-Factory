@@ -12,6 +12,7 @@ import { OperationStore } from './core/operation-store.js';
 import { resolveFactoryPaths, displayPath } from './core/paths.js';
 import { RegistryStore } from './core/registry.js';
 import type { RuntimeProvider } from './schemas/agent-schema.js';
+import { parseRuntimeProvider } from './core/runtime-migrate.js';
 import { FactoryApplication } from './application/factory-application.js';
 import { settleLaunchdService } from './services/factory-services.js';
 import { startWebConsole } from './web/start.js';
@@ -267,6 +268,58 @@ export function createProgram(): Command {
     });
   runtime.command('login <agent-id>').action(async (id: string) => runRuntimeAuth(id, 'login'));
   runtime.command('status <agent-id>').action(async (id: string) => runRuntimeAuth(id, 'status'));
+  // TASK-048（D-044）：显式 runtime 迁移（claude ↔ codex）。旧目录默认保留（回滚逃生口），
+  // --discard 在 commit 成功后删除；凭据不自动跨 provider 复制，迁移后引导重新授权/sync。
+  runtime
+    .command('migrate <agent-id>')
+    .description('迁移员工 runtime provider（claude ↔ codex），内部一致事务')
+    .requiredOption('--to <provider>', '目标 provider（claude / codex）')
+    .option('--dry-run', '仅预览迁移计划，零写入')
+    .option('--discard', 'commit 成功后删除旧 provider 目录')
+    .option('--yes', '跳过确认')
+    .action(
+      async (
+        id: string,
+        options: { to: string; dryRun?: boolean; discard?: boolean; yes?: boolean },
+      ) => {
+        const { application } = context();
+        const to = parseRuntimeProvider(options.to);
+        if (options.dryRun) {
+          const plan = await application.runtimeMigratePlan(id, to);
+          console.log(
+            chalk.cyan(
+              `[dry-run] ${plan.id}：${plan.from} → ${plan.to}（${plan.fromRuntimeHome} → ${plan.toRuntimeHome}）`,
+            ),
+          );
+          console.log(`  将重启服务：${plan.services.join('、') || '无'}`);
+          console.log(`  将切换 skills 投影：${plan.projectedSkills ? '是' : '否'}`);
+          console.log('  零写入。');
+          return;
+        }
+        // --discard 为破坏性操作（删旧目录），--yes 跳过确认（对齐 confirmDanger 约定）。
+        if (options.discard) {
+          await confirmDanger(
+            `确认迁移 ${id} 至 ${to} runtime？--discard 将删除旧 provider 目录`,
+            options.yes === true,
+          );
+        }
+        const result = await application.runtimeMigrate(id, to, {
+          ...(options.discard !== undefined ? { discardOld: options.discard } : {}),
+        });
+        console.log(
+          chalk.green(
+            `✓ ${result.id} 已迁移：${result.from} → ${result.to}（runtime_home: ${result.toRuntimeHome}）`,
+          ),
+        );
+        if (result.oldDiscarded) console.log(`  旧目录已删除：${result.oldRuntimeHome}`);
+        else console.log(`  旧目录保留（回滚逃生口）：${result.oldRuntimeHome}`);
+        console.log(
+          result.to === 'claude'
+            ? `  下一步：agentctl runtime sync ${result.id}（同步 CC Switch 凭据）`
+            : `  下一步：agentctl runtime login ${result.id}（Codex 登录）`,
+        );
+      },
+    );
 
   const bridge = program.command('bridge').description('飞书 Bridge 授权与状态');
   bridge

@@ -66,6 +66,43 @@ export async function digestSkillDirectory(root: string): Promise<string> {
  * - user（用户级）：原位存于 `runtimeHome/skills/<name>/`（= CLAUDE_CONFIG_DIR/CODEX_HOME 的 skills，
  *   即运行器原生用户级发现目录）。属于员工运行时身份，默认不进备份（仅 includeRuntime 时打包）。
  */
+/**
+ * 项目级技能投影助手（TASK-048 抽取，D-034 幂等语义的单一实现）：
+ * 把 `workspace/skills/<name>` 的每个目录软链到目标 provider 的项目发现目录
+ * `workspace/.claude/skills/<name>` / `workspace/.codex/skills/<name>`。
+ * 目标相对 `../../skills/<name>`（与 SkillService.project/ensureFactorySkill 一致）。
+ * 调用方负责先移除旧 provider 的投影目录（迁移切换时），本函数只做增量投影。
+ */
+export async function projectSkillsToProvider(
+  workspace: string,
+  provider: RuntimeProvider,
+): Promise<void> {
+  const projectionRoot = path.join(
+    workspace,
+    provider === 'claude' ? '.claude' : '.codex',
+    'skills',
+  );
+  const storeRoot = path.join(workspace, 'skills');
+  if (!(await fs.pathExists(storeRoot))) return;
+  const entries = await fs.readdir(storeRoot, { withFileTypes: true });
+  if (entries.length === 0) return;
+  await fs.ensureDir(projectionRoot);
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    // 幂等：软链已存在且指向正确则跳过，否则移除后重建（防重复/悬空软链）。
+    const link = path.join(projectionRoot, entry.name);
+    const target = path.join('../../skills', entry.name);
+    try {
+      const stat = await fs.lstat(link);
+      if (stat.isSymbolicLink() && (await fs.readlink(link)) === target) continue;
+      await fs.remove(link);
+    } catch {
+      // link 不存在（ENOENT）：直接创建。
+    }
+    await fs.symlink(target, link);
+  }
+}
+
 export class SkillService {
   constructor(
     readonly workspace: string,

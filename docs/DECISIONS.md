@@ -1,5 +1,23 @@
 # Decisions
 
+## D-044：显式 runtime 迁移工作流——claude ↔ codex 双向迁移，内部一致事务
+
+- 状态：Accepted（已实施，TASK-048）
+- 日期：2026-08-07
+- 背景：`agent.yaml` 的 runtime 块（provider/locked/model）由 config_hash 指纹守护（`computeConfigHash`/`loadPortableConfig`），任何手改都会触发 HARD CONFLICT。此前唯一逃生口是 `agentctl repair`（重建指纹），但它不迁移 `runtime_home` 目录、不换凭据、不建 codex `config.toml`——「把员工从 Claude 切到 Codex」没有正规路径，只能手动摆弄目录再 repair。用户在做 roadmap 清点时把「显式 runtime 迁移工作流」列为待办（第 2 项）并拍板做掉。
+- 决定：
+  - **命令形态**：`agentctl runtime migrate <id> --to <provider> [--dry-run] [--discard] [--yes]`——`--to` 必填（claude/codex，非法值 VALIDATION_ERROR）；`--dry-run` 只打印计划零写入（from/to runtime_home、将停服务、将切换 skills 投影）；`--yes` 跳过确认（对齐 confirmDanger 模式）。
+  - **内部一致事务**（`src/core/runtime-migrate.ts` 纯事务 + FactoryApplication 编排）：① FileLock（`runtime-migrate-<id>.lock`）防并发 → ② `getAgent(id)`（config_hash 漂移即 CONFLICT，零写入）→ ③ to ≠ 当前 provider 校验 + 目标目录非空 CONFLICT（空目录允许幂等重试）→ ④ 停 launchd 服务（bridge/settle/Job，`.uninstall().catch()`，对齐 archiveAgent 模式）→ ⑤ 建 toRuntimeHome（0700）+ 目标 codex 预写 `config.toml`（复用 create-agent 模式）；目标 claude 只建空目录 → ⑥ 改 `agent.yaml` runtime.provider（保留 locked:true 与 model 原值）→ ⑦ **commit 点**：单次 `registry.updateAgent` 原子写（`runtime_home.path` + `config_hash = computeConfigHash(新 runtime)` + 目标 codex 时 `credential_provider: undefined` + `updated_at`）；失败回滚（agent.yaml 回写 + `refreshConfigHash` 旧 hash + 清理 toRuntimeHome，回滚失败 remediation 指 `agentctl repair`）→ ⑧ skills 投影切换（best-effort）→ ⑨ 迁移后 doctor 验证（config-drift/runtime-home/runtime-lock，非硬门，已 commit 失败仅告警）→ ⑩ 重启服务（**必须重启**：plist 烘焙 env CLAUDE_CONFIG_DIR/CODEX_HOME/shim PATH；bridge authorization 不重置，profile 与 provider 无关）→ ⑪ `--discard` 删旧目录（best-effort）。
+  - **原子性论证**：目录（⑤）+ agent.yaml（⑥）先于 registry（⑦），registry 单次原子写即「半迁移态不可能出现」；步 ⑦ 后全部 best-effort。
+  - **凭据不自动跨 provider 复制**（守 D-015）：目标 claude 只建空目录（不复制 settings.json/.cc-switch.env），迁移后引导 `agentctl runtime sync <id>`；目标 codex 预写 config.toml（approval_policy/sandbox_mode 种子），迁移后引导 `agentctl runtime login <id>`。
+  - **旧目录默认保留**作回滚逃生口；`--discard` 成功 commit 后删除（claude-shim 目录保留不动）。
+  - **共享投影助手抽取**：`skills.ts` 新增 `projectSkillsToProvider(workspace, provider)`（相对软链 `../../skills/<name>` + 幂等：已存在且指向正确则跳过，否则移除重建），`create-agent.ts` 的 `projectCodexSkills` 删除复用（投影语义单一实现），runtime 迁移的 `switchSkillsProjection`（删旧投影 + 调共享助手）复用。
+- 边界：不改 registry-schema/agent-schema/doctor.ts（检查项已覆盖迁移后验证）；不做自动 push 批量；不改 bridge 授权状态。
+- 原因：config_hash 指纹把「手改 runtime」变成了事故现场（HARD CONFLICT），但「换 runtime」是合法的运维意图——指纹不能成为唯一逃生口。做成显式事务工作流后：迁移有审计路径（CLI 命令 + CURRENT_STATE last_event）、有回滚逃生口（旧目录 + repair）、有验证（doctor 非硬门），且不引入新的凭据复制面（D-015 边界不变）。
+- 影响：`runtime-migrate.ts`（新建：buildRuntimeMigrationPlan/applyRuntimeMigration/parseRuntimeProvider/targetRuntimeHome/writeCodexConfigToml/switchSkillsProjection）、`skills.ts`（projectSkillsToProvider）、`create-agent.ts`（复用共享助手）、`factory-application.ts`（runtimeMigrate/runtimeMigratePlan + 服务启停编排）、`cli-program.ts`（runtime migrate 子命令）、`cli-structure.test.ts`（migrate 断言）；增测 15 条（双向迁移/config_hash 重算无漂移/凭据不复制/dry-run 零写入/非空 CONFLICT/同 provider VALIDATION_ERROR/漂移拒绝/discard 与默认保留/失败回滚/skills 投影切换/迁移后 doctor 全 pass/e2e 路径一致）；全量 473 测试 + build/lint/tsc 全绿。
+
+---
+
 ## D-043：identity_edits 生效——`direct` 聊天直改 / `proposal_required` 提案门（D-041 遗留接线）
 
 - 状态：Accepted（已实施，TASK-047）

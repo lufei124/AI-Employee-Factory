@@ -10,6 +10,7 @@ import { assertInside, type FactoryPaths } from './paths.js';
 import { type RegistryStore } from './registry.js';
 import { renderAgentWorkspace } from './templates.js';
 import { computeConfigHash } from './agents.js';
+import { projectSkillsToProvider } from './skills.js';
 import {
   agentConfigSchema,
   agentIdSchema,
@@ -133,8 +134,7 @@ export class CreateAgentService {
         await fs.rename(stage, target);
         finals.push(target);
       }
-      if (input.runtime === 'codex')
-        await this.projectCodexSkills(workspace, runtimeHome, preset.skills);
+      if (input.runtime === 'codex') await projectSkillsToProvider(workspace, 'codex');
       await this.registry.add(
         this.buildRegistryAgent(input, workspace, runtimeHome, bridgeHome, now, model),
       );
@@ -269,17 +269,5 @@ export class CreateAgentService {
       // OP3-A 长期：Registry 不再持有 runtime 块，仅存 config_hash（agent.yaml runtime 块指纹）。
       config_hash: computeConfigHash(runtime),
     };
-  }
-
-  private async projectCodexSkills(
-    workspace: string,
-    _runtimeHome: string,
-    skills: string[],
-  ): Promise<void> {
-    // 项目级：preset 声明的 Skill 随项目模板，投影到 workspace/.codex/skills（项目发现目录）。
-    const projection = path.join(workspace, '.codex', 'skills');
-    await fs.ensureDir(projection);
-    for (const skill of skills)
-      await fs.symlink(path.join(workspace, 'skills', skill), path.join(projection, skill));
   }
 }

@@ -782,3 +782,19 @@ Started at: 2026-08-07 12:15 +0800
 Updated at: 2026-08-07 12:40 +0800
 Result: proposal-ledger.ts 增 IdentityEdits 类型 + readIdentityEdits + appliedWithoutAnchor 第三参（direct → []）+ maybeEnforceIdentityProtocol 透传；factory-application.enforceIdentityProtocol 条件展开传 agent.memory.identity_edits；doctor proposal-ledger 检查项读 portableConfig.memory.identity_edits（doctor 侧 agent 是 RegistryAgent 无 memory，memory 在便携配置）→ direct 分支 pass + detail「direct 模式（聊天直改，跳过提案门；锚点硬门仍生效）」；schema 注释同步（不再「仅声明」）；增测 proposal-ledger 5 条 + self-evolution 3 条（direct 合规改动放行提交 / proposal_required 同改动拦截 / direct 下整删红线词仍被 identity-guard 拦截）+ doctor 1 条；全量测试 + build/lint/tsc 全绿。
 ```
+
+```text
+Task ID: TASK-048
+Title: 显式 runtime 迁移工作流（D-044）——claude ↔ codex 双向迁移 + 内部一致事务
+Owner agent: claude-20260807-01
+Status: DONE
+Branch/worktree: main
+Allowed scope: src/core/runtime-migrate.ts（新）、src/core/skills.ts（projectSkillsToProvider 抽取）、src/core/create-agent.ts（复用共享投影助手）、src/application/factory-application.ts（runtimeMigrate/runtimeMigratePlan + 服务启停编排）、src/cli-program.ts（runtime migrate 子命令）、tests/runtime-migrate.test.ts（新）、tests/cli-structure.test.ts、docs/DECISIONS.md、README.md、.agent 簿记
+Forbidden scope: 不改 registry-schema/agent-schema/doctor.ts（检查项已覆盖迁移后验证）；凭据不跨 provider 自动复制（守 D-015）；无 --push 批量
+Dependencies: 用户拍板「2、5可以做掉」、已批准计划（TASK-048 + TASK-049）
+Expected output: `agentctl runtime migrate <id> --to <provider> [--dry-run] [--discard] [--yes]`——内部一致事务：目录+agent.yaml 先于 registry 单次原子写（commit 点），任一步失败不留半迁移态；--dry-run 零写入打印计划；旧目录默认保留（回滚逃生口）--discard 删；目标 codex 预写 config.toml、目标 claude 只建空目录（凭据不复制）；迁移后重启 launchd 服务（plist 烘焙 env）+ doctor 验证（非硬门）
+Acceptance criteria: 新增 15 条测试全绿（双向迁移/config_hash 重算无漂移/凭据不复制/dry-run 零写入/非空 CONFLICT/同 provider VALIDATION_ERROR/漂移拒绝/discard 与默认保留/失败回滚/skills 投影切换/迁移后 doctor 全 pass/e2e 路径一致）；npm test/build/lint/tsc 全绿；任务完成即 commit（不 push）
+Started at: 2026-08-07 13:00 +0800
+Updated at: 2026-08-07 13:50 +0800
+Result: runtime-migrate.ts（buildRuntimeMigrationPlan/applyRuntimeMigration/parseRuntimeProvider/targetRuntimeHome/writeCodexConfigToml/switchSkillsProjection）；skills.ts 抽 projectSkillsToProvider（幂等相对软链语义单一实现），create-agent.projectCodexSkills 删除复用；factory-application.runtimeMigrate（FileLock + 停/重启 bridge/settle/job 服务 best-effort + 迁移后 doctor 非硬门验证 + syncCurrentState）+ runtimeMigratePlan；cli-program runtime migrate（--to/--dry-run/--discard/--yes，confirmDanger）；增测 15 条；全量 473 测试 + build/lint/tsc 全绿。
+```

@@ -106,6 +106,8 @@ agentctl runtime sync user-operations --provider live     # 清除绑定，回�
 
 Codex 员工仍通过 `agentctl runtime login <id>` 登录专属 `CODEX_HOME`。
 
+**Runtime 迁移**（D-044）：员工可在 claude ↔ codex 之间显式切换，`agentctl runtime migrate <id> --to <provider> [--dry-run] [--discard]`——内部一致事务（目录 + agent.yaml 先于 Registry 单次原子写，任一步失败不留半迁移态，回滚失败指向 `agentctl repair`）；`--dry-run` 零写入打印计划；迁移会自动重启该员工的 launchd 服务（bridge/settle/Job，plist 烘焙环境变量）并把 skills 投影切换到目标 provider 的发现目录。**凭据不跨 provider 自动复制**（守 D-015）：目标 codex 只预写 `config.toml`（迁移后 `agentctl runtime login <id>` 登录专属 CODEX_HOME）、目标 claude 只建空目录（迁移后 `agentctl runtime sync <id>` 同步 CC Switch Provider）；旧 provider 目录默认保留作回滚逃生口，`--discard` 在成功迁移后删除。
+
 ## 飞书绑定与生命周期
 
 ```bash
@@ -306,7 +308,7 @@ agentctl archive user-operations
 
 ## 当前限制与 Roadmap
 
-v1 不包含常驻 Web 服务、局域网/远程访问、账号系统、浏览器内终端、多 Agent 共享机器人 Router、Agent 自由互聊、云端多租户、Skill 市场、生产数据写入、知识图谱或 systemd 实现。核心模型是「单一 AI 员工 + 定时 Job + Web 单轮对话」；Chief 编排、Todo 状态机与 MCP 接入已于 TASK-030（D-027）移除。后续优先项是 systemd adapter、显式 runtime 迁移工作流、可选的加密 Secret provider、任务完成自动写状态、飞书入站。分层自进化协议（D-041）已完成全部五阶段：三开关默认开 + 经验两级化（M2）、提案对账账本 + Web 只读收敛 + 创建骨架化（M3）、遗忘归档 + 身份 git 回滚（M4）、doctor 检查项 + Web 进化历史 + 检索增强（M5）；检索增强由 D-042 进一步升级为 BM25 召回引擎 + 运行时 RAG 注入（`knowledge/.retrieved.md`）。
+v1 不包含常驻 Web 服务、局域网/远程访问、账号系统、浏览器内终端、多 Agent 共享机器人 Router、Agent 自由互聊、云端多租户、Skill 市场、生产数据写入、知识图谱或 systemd 实现。核心模型是「单一 AI 员工 + 定时 Job + Web 单轮对话」；Chief 编排、Todo 状态机与 MCP 接入已于 TASK-030（D-027）移除。后续优先项是 systemd adapter、可选的加密 Secret provider、任务完成自动写状态、飞书入站。分层自进化协议（D-041）已完成全部五阶段：三开关默认开 + 经验两级化（M2）、提案对账账本 + Web 只读收敛 + 创建骨架化（M3）、遗忘归档 + 身份 git 回滚（M4）、doctor 检查项 + Web 进化历史 + 检索增强（M5）；检索增强由 D-042 进一步升级为 BM25 召回引擎 + 运行时 RAG 注入（`knowledge/.retrieved.md`）；显式 runtime 迁移工作流已由 D-044（TASK-048）落地（claude ↔ codex 双向）。
 
 ## 开发验证
 

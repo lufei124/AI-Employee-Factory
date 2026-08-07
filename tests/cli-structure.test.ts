@@ -50,12 +50,21 @@ describe('agentctl command surface', () => {
       program.commands
         .find((command) => command.name() === group)
         ?.commands.map((command) => command.name());
-    expect(names('runtime')).toEqual(expect.arrayContaining(['sync', 'login', 'status']));
+    expect(names('runtime')).toEqual(
+      expect.arrayContaining(['sync', 'login', 'status', 'migrate']),
+    );
     // OP5-D：runtime sync 支持 --provider <name>（绑定 CC Switch 具体 Provider，live 清除绑定）。
     const syncCmd = program.commands
       .find((command) => command.name() === 'runtime')
       ?.commands.find((command) => command.name() === 'sync');
     expect(syncCmd?.options.map((option) => option.flags).join(' ')).toContain('--provider');
+    // TASK-048：runtime migrate 支持 --to <provider>（必填）与 --dry-run/--discard/--yes。
+    const migrateCmd = program.commands
+      .find((command) => command.name() === 'runtime')
+      ?.commands.find((command) => command.name() === 'migrate');
+    expect(migrateCmd?.options.map((option) => option.flags).join(' ')).toContain('--to');
+    expect(migrateCmd?.options.map((option) => option.flags).join(' ')).toContain('--dry-run');
+    expect(migrateCmd?.options.map((option) => option.flags).join(' ')).toContain('--discard');
     expect(names('bridge')).toEqual(expect.arrayContaining(['authorize', 'status']));
     expect(names('job')).toEqual(expect.arrayContaining(['list', 'validate', 'run']));
     expect(names('skill')).toEqual(expect.arrayContaining(['list', 'install', 'remove']));

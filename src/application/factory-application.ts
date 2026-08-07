@@ -29,6 +29,12 @@ import {
 } from '../core/knowledge-retention.js';
 import { RETRIEVED_BRIEF_FILE, renderRetrievalBrief } from '../core/retrieval-brief.js';
 import { FileLock } from '../core/locks.js';
+import {
+  applyRuntimeMigration,
+  buildRuntimeMigrationPlan,
+  type RuntimeMigrationPlan,
+  type RuntimeMigrationResult,
+} from '../core/runtime-migrate.js';
 import { initializeFactory, readConfig } from '../core/config.js';
 import { CreateAgentService, type CreateAgentInput } from '../core/create-agent.js';
 import { generateEmployeeProfile, generateEmployeeSkeleton } from '../core/employee-generator.js';
@@ -1021,6 +1027,110 @@ export class FactoryApplication {
       return this.prepareRuntime(updated.registry, updated.agent);
     }
     return this.prepareRuntime(registry, agent);
+  }
+
+  /** TASK-048（D-044）：显式 runtime 迁移计划（--dry-run，零写入）。 */
+  async runtimeMigratePlan(id: string, to: 'claude' | 'codex'): Promise<RuntimeMigrationPlan> {
+    const { registry, agent } = await this.getAgent(id);
+    return buildRuntimeMigrationPlan({ registry, agent, runtimesDir: this.paths.runtimesDir, to });
+  }
+
+  /** TASK-048（D-044）：显式 runtime 迁移（claude ↔ codex）。内部一致事务 + 服务重启编排。
+   *  旧目录默认保留（回滚逃生口）；options.discardOld 在 commit 成功后删除。 */
+  async runtimeMigrate(
+    id: string,
+    to: 'claude' | 'codex',
+    options: { discardOld?: boolean } = {},
+  ): Promise<RuntimeMigrationResult> {
+    const lock = new FileLock(path.join(this.paths.locksDir, `runtime-migrate-${id}.lock`));
+    return lock.withLock({ purpose: `迁移 ${id} 的 runtime` }, async () => {
+      const { registry, agent } = await this.getAgent(id);
+      const workspace = registry.workspace.path;
+      const jobs = await new JobStore(workspace).list();
+
+      // 停服务（best-effort，失败告警继续——对齐 archiveAgent 模式）。
+      if (registry.bridge.enabled) {
+        await bridgeLaunchdService(registry, agent.runtime, this.paths)
+          .uninstall()
+          .catch(() => undefined);
+      }
+      await settleLaunchdService(registry, agent.runtime, this.paths, 0)
+        .uninstall()
+        .catch(() => undefined);
+      for (const job of jobs) {
+        await jobLaunchdService(registry, agent.runtime, job, this.paths)
+          .uninstall()
+          .catch(() => undefined);
+      }
+
+      // 纯事务迁移（commit 点 = registry 单次原子写）。
+      const result = await applyRuntimeMigration({
+        registry,
+        agent,
+        workspace,
+        runtimesDir: this.paths.runtimesDir,
+        to,
+        updateAgent: (agentId, update) => this.registry.updateAgent(agentId, update),
+        refreshConfigHash: (agentId, configHash) =>
+          this.registry.refreshConfigHash(agentId, configHash),
+        ...(options.discardOld !== undefined ? { discardOld: options.discardOld } : {}),
+      });
+
+      // 迁移后验证（非硬门，已 commit——失败仅告警）。
+      try {
+        const { DoctorService } = await import('../core/doctor.js');
+        const report = await new DoctorService(this.paths, this.registry).run(id);
+        for (const checkId of ['config-drift', 'runtime-home', 'runtime-lock'] as const) {
+          const check = report.checks.find((c) => c.id === checkId);
+          if (check && check.status === 'fail') {
+            console.warn(`[runtime-migrate] 迁移后 doctor 检查 ${checkId} 未通过：${check.detail}`);
+          }
+        }
+      } catch (error) {
+        console.warn(
+          `[runtime-migrate] 迁移后 doctor 验证失败（跳过）：${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+
+      // 恢复服务（必须重启：plist 烘焙 env CLAUDE_CONFIG_DIR/CODEX_HOME/shim PATH）。
+      const migrated = await this.getAgent(id);
+      if (registry.bridge.enabled) {
+        await bridgeLaunchdService(migrated.registry, migrated.agent.runtime, this.paths)
+          .install()
+          .catch((error) =>
+            console.warn(`[runtime-migrate] 重启 bridge 服务失败（跳过）：`, error),
+          );
+        await settleLaunchdService(
+          migrated.registry,
+          migrated.agent.runtime,
+          this.paths,
+          FEISHU_SETTLE_INTERVAL_SECONDS,
+        )
+          .install()
+          .catch((error) =>
+            console.warn(`[runtime-migrate] 重启 settle 服务失败（跳过）：`, error),
+          );
+      }
+      for (const job of jobs) {
+        await jobLaunchdService(
+          migrated.registry,
+          migrated.agent.runtime,
+          job,
+          this.paths,
+          process.argv[1] ?? 'agentctl',
+          this.paths.userHome,
+        )
+          .install()
+          .catch((error) => console.warn(`[runtime-migrate] 重启任务服务失败（跳过）：`, error));
+      }
+      await this.syncCurrentState(registry.id, workspace, {
+        state: '运行中',
+        last_event: `迁移 runtime 至 ${to}`,
+      });
+      return result;
+    });
   }
 
   async bridgeAuthorize(
