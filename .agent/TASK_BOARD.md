@@ -862,3 +862,18 @@ Started at: 2026-08-07 16:35 +0800
 Updated at: 2026-08-07 16:52 +0800
 Result: 代码——launchd-service.ts 加 keepAlive?: boolean，renderLaunchdPlist 仅显式 true 渲染 `<key>KeepAlive</key><true/>`（周期服务缺省不写，避免崩溃立即重启）；factory-services.ts bridge() 设 keepAlive: true；factory-application.ts 把 reconcileServices 每员工决策抽成 reconcileAgentService（archive/未启用 bridge 跳过；autoStart && real≠running && auth=ready → prepareRuntime+secureBridgeProfile+start；!autoStart && real=running → stop+setRunAtLoad(false)；否则维持真实状态），reconcileServices 与 settleEmployee（每 5 分钟周期）共用；状态变化回写 registry + 同步 CURRENT_STATE（运行中/已停止 + last_event「系统检测到桥接服务中断，已自动拉起」等，经 syncCurrentState 单文件 git 提交）。测试——bridge-service.test.ts 加 KeepAlive 渲染 + bridge factory plist 断言，lifecycle-reconcile.test.ts 加 settle 周期自愈 3 条（拉起+registry+CURRENT_STATE/关停/维持）；全量 506 测试 + build/lint 全绿。运行时验证——agentctl restart user-operations 落地 canonical plist 含 `<key>KeepAlive</key><true/>`、服务 running（pid 1977）；kill 模拟崩溃 → launchd 自动重启（新 pid 2123）、bridge 重连 bot 喵小弟；settle 周期服务已安装（StartInterval 300s，到点触发 reconcile）。D-052 ADR + README（常驻 KeepAlive + settle 自愈说明 + roadmap 补 D-052）。
 ```
+
+```text
+Task ID: TASK-053
+Title: 员工 user-operations 身份文档解锁 + 伴生问题修复（纯运维）
+Owner agent: claude-20260807-01
+Status: ACTIVE
+Branch/worktree: main
+Allowed scope: 员工工作区 ~/AI-Employees/agents/user-operations/（agent/ 身份文档、.claude/settings.json、automation/jobs/ 孤儿 plist、.gitignore、skills/ 下 .env.example、knowledge/ 索引、CURRENT_STATE）；.agent 簿记；无 Factory 代码改动
+Forbidden scope: 不改 Factory 源码/测试/Web（纯运维）；不建通用身份解锁机制（用户拍板一次性手工修）；不自动恢复外部 launchd 任务（引导用 Factory Job）；不改 agent.yaml 内容
+Dependencies: TASK-052 收尾发现 user-operations（2026-08-03 创建，早于 D-041）身份文档旧模板缺守卫锚点；用户拍板「一次性手工修」「卸载+引导用 Factory Job」「回滚危险放行」
+Expected output: ROLE.md 插「# 岗位定位」+ description；POLICIES.md 追加权限边界红线段（覆盖 5 个红线词）；CONSTITUTION.md 播种模板；agentctl settle 后 guard 通过 + 基线刷新 + evolve 提交；settings.json 回滚 defaultMode + 撤危险 Bash 放行（保留 Factory 放行）；launchctl bootout 外部任务 com.uv.lifereboots.feedback-daily + 删孤儿 plist；knowledge rebuild 生成 .index.json；.gitignore 去 .env.example 例外 + git rm --cached；CURRENT_STATE 状态行修正；doctor 全绿
+Acceptance criteria: `agentctl doctor user-operations` 身份锚点硬门/Secrets/知识库索引 pass、身份基线一致、无新增 FAIL；员工 git log 出现 ROLE/POLICIES/CONSTITUTION 的 evolve: 提交；`launchctl list | grep feedback-daily` 无输出；settings.json 无 chmod/cp/plutil/launchctl/agentctl 放行且 defaultMode=default；全量 npm test 无回归 + build/lint 全绿；任务完成即 commit（不 push）
+Started at: 2026-08-07 18:08 +0800
+Updated at: 2026-08-07 18:08 +0800
+```
