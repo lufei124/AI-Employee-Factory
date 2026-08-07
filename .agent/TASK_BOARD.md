@@ -733,3 +733,18 @@ Started at: 2026-08-07 10:40 +0800
 Updated at: 2026-08-07 10:52 +0800
 Result: gitLog + evolutionLog + GET /api/v1/agents/:id/evolution + AgentDetailPage「进化历史」tab；doctor 6 检查项；knowledge recall 证据 + identity proposals CLI；增测 git/doctor/knowledge/web-management-api/cli-structure + e2e；全量 442 测试通过，build/lint/tsc 全绿。D-041 M1-M5 全部完成。
 ```
+
+```text
+Task ID: TASK-045
+Title: 分层自进化协议 M5 增强——进化历史「点开看」（提交 → 变更文件 → 文件全文）
+Owner agent: claude-20260807-01
+Status: DONE
+Branch/worktree: main
+Allowed scope: src/core/git.ts（gitShowCommitFiles + gitLog ref）、src/application/factory-application.ts（evolutionCommitFiles / evolutionFileContent）、src/web/server.ts（GET evolution/files + evolution/content）、web/src/api.ts + web/src/pages/AgentDetailPage.tsx（EvolutionTab 钻取）、tests/git.test.ts、tests/web-management-api.test.ts、e2e/web-console.spec.ts、docs/DECISIONS.md、README.md、.agent 簿记
+Forbidden scope: 不改 Web 只读化（仍无编辑/回滚入口）；不引入向量库/新 DB/对外网络外发；不做飞书侧改动
+Dependencies: TASK-044（D-041 P3，M5）
+Expected output: gitShowCommitFiles（git show --name-status）+ FactoryApplication.evolutionCommitFiles/evolutionFileContent（git show <ref>:<path>，禁越界/.git 内部）+ 两个只读 GET 端点 + EvolutionTab 点提交看文件清单、点文件看全文
+Acceptance criteria: 新增测试（gitShowCommitFiles + files/content 端点含路径穿越拒绝）全绿；npm test/build/lint/tsc 全绿；e2e 覆盖点开看全绿；任务完成即 commit（不 push）
+Started at: 2026-08-07 10:58 +0800
+Updated at: 2026-08-07 11:15 +0800
+Result: gitShowCommitFiles + evolutionCommitFiles/evolutionFileContent（双向路径防护）+ GET evolution/files + evolution/content + EvolutionTab 钻取（提交高亮 → 文件清单带 A/M/D/R 徽章 → pre 全文）；增测 git/web-management-api（含 .. 与 .git 穿越拒绝、缺参 400、无文件 404）；顺手修复 M3 骨架化后 e2e 三条过期断言（Skills 预置 skill / 身份文档只读预览 / feedback skill 路径）；全量 444 测试 + build/lint/tsc/e2e 全绿。

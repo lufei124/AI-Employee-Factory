@@ -84,7 +84,14 @@ import { UsageDb, type UsageFilter, type UsageSummaryRow } from '../core/usage-l
 import { PruneService, type PruneOptions, type PruneResult } from '../core/prune.js';
 import { TrashService, type TrashEntryDto, type TrashPreview } from '../core/trash.js';
 import { ProcessRunner, type LoggedRunOptions } from '../core/process-runner.js';
-import { gitCommitFile, gitLog, gitShowFile, gitStatusShort } from '../core/git.js';
+import {
+  gitCommitFile,
+  gitLog,
+  gitShowCommitFiles,
+  gitShowFile,
+  gitStatusShort,
+  type GitCommitFile,
+} from '../core/git.js';
 import {
   updateCurrentState,
   ensureAgentDocsAllowed,
@@ -1338,6 +1345,38 @@ export class FactoryApplication {
     const currentState = await fs.readFile(stateFile, 'utf8').catch(() => '');
     const usage = await this.getUsageDb().summary({ agentId: id });
     return { commits, currentState, usage };
+  }
+
+  // D-041 P3-1 增强：进化历史「点提交看内容」——某提交下变更的文件清单（只读）。
+  // ref 无效（非仓库/不存在）→ 空数组；文件内容由前端经 /evolution/content 按需读取。
+  async evolutionCommitFiles(id: string, ref: string): Promise<GitCommitFile[]> {
+    const { registry } = await this.getAgent(id);
+    return gitShowCommitFiles(registry.workspace.path, ref);
+  }
+
+  // D-041 P3-1 增强：进化历史「点文件看内容」——读取某提交下文件的全文（git show <ref>:<path>）。
+  // 仅允许读工作区内的常规文件（禁 .git 内部对象）；文件在该提交不存在 → NOT_FOUND。
+  async evolutionFileContent(id: string, ref: string, relPath: string): Promise<string> {
+    const { registry } = await this.getAgent(id);
+    const workspace = registry.workspace.path;
+    // 越界防护：仅允许工作区内的相对路径，禁绝对路径/.. 逃逸/git 对象。
+    const resolved = path.resolve(workspace, relPath);
+    const inside =
+      path.resolve(workspace) === resolved ||
+      resolved.startsWith(`${path.resolve(workspace)}${path.sep}`);
+    if (!inside || relPath.split('/').some((seg) => seg === '..' || seg === '')) {
+      throw new AgentCtlError('VALIDATION_ERROR', `禁止读取工作区外路径：${relPath}`);
+    }
+    if (relPath === '.git' || relPath.startsWith('.git/') || relPath.split('/').includes('.git')) {
+      throw new AgentCtlError('VALIDATION_ERROR', `禁止读取 git 内部路径：${relPath}`);
+    }
+    const content = await gitShowFile(workspace, relPath, ref);
+    if (content === undefined) {
+      throw new AgentCtlError('NOT_FOUND', `提交 ${ref.slice(0, 7)} 中不存在文件：${relPath}`, {
+        remediation: '该文件可能在该提交中未变更或已被删除。',
+      });
+    }
+    return content;
   }
 
   // OP4-D：按分类清理 run 日志/registry 备份/员工备份归档/operations 审计日志。

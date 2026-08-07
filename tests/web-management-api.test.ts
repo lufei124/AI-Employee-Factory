@@ -410,4 +410,85 @@ describe('Web management API', () => {
     expect(commits.some((commit) => commit.subject.includes('evolve:'))).toBe(true);
     await server.close();
   });
+
+  it('exposes evolution commit files + content endpoints read-only, rejects path traversal (D-041 P3-1 点开看)', async () => {
+    const { app, paths, server, readHeaders } = await setup();
+    // 制造一条 evolve: 提交并拿到 hash。
+    const workspace = path.join(paths.workspaceRoot, 'user-operations');
+    await fs.writeFile(
+      path.join(workspace, 'agent', 'GOALS.md'),
+      `# 核心目标\n\n## 演进记录\n\n- 2026-08-07 evolve: 新增目标「复盘用户反馈闭环」\n`,
+    );
+    await app.settleEmployee('user-operations');
+    const logResponse = await server.inject({
+      method: 'GET',
+      url: '/api/v1/agents/user-operations/evolution',
+      headers: readHeaders,
+    });
+    const commits = logResponse.json<{ data: { commits: Array<{ hash: string }> } }>().data.commits;
+    // settle 会落多条 evolve 提交（GOALS/CURRENT_STATE/基线等），逐条找改动 GOALS.md 的那条。
+    let ref = '';
+    for (const commit of commits) {
+      const probe = await server.inject({
+        method: 'GET',
+        url: `/api/v1/agents/user-operations/evolution/files?ref=${encodeURIComponent(commit.hash)}`,
+        headers: readHeaders,
+      });
+      const probeFiles = probe.json<{ data: Array<{ path: string }> }>().data;
+      if (probeFiles.some((f) => f.path === 'agent/GOALS.md')) {
+        ref = commit.hash;
+        break;
+      }
+    }
+    expect(ref).not.toBe('');
+
+    // 文件清单：能读到该提交变更的文件（含目录层级），ref 缺失报 400。
+    const filesResponse = await server.inject({
+      method: 'GET',
+      url: `/api/v1/agents/user-operations/evolution/files?ref=${encodeURIComponent(ref)}`,
+      headers: readHeaders,
+    });
+    expect(filesResponse.statusCode).toBe(200);
+    const files = filesResponse.json<{ data: Array<{ status: string; path: string }> }>().data;
+    expect(files.some((f) => f.path === 'agent/GOALS.md')).toBe(true);
+    const missingRefResponse = await server.inject({
+      method: 'GET',
+      url: '/api/v1/agents/user-operations/evolution/files',
+      headers: readHeaders,
+    });
+    expect(missingRefResponse.statusCode).toBe(400);
+
+    // 文件内容：读提交下的全文（只读）。
+    const contentResponse = await server.inject({
+      method: 'GET',
+      url: `/api/v1/agents/user-operations/evolution/content?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent('agent/GOALS.md')}`,
+      headers: readHeaders,
+    });
+    expect(contentResponse.statusCode).toBe(200);
+    const content = contentResponse.json<{ data: { content: string } }>().data.content;
+    expect(content).toContain('# 核心目标');
+
+    // 路径穿越拒绝：.. 越界 / .git 内部路径 → 4xx。
+    const traversal = await server.inject({
+      method: 'GET',
+      url: `/api/v1/agents/user-operations/evolution/content?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent('../.git/config')}`,
+      headers: readHeaders,
+    });
+    expect(traversal.statusCode).toBeGreaterThanOrEqual(400);
+    const gitInternals = await server.inject({
+      method: 'GET',
+      url: `/api/v1/agents/user-operations/evolution/content?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent('.git/config')}`,
+      headers: readHeaders,
+    });
+    expect(gitInternals.statusCode).toBeGreaterThanOrEqual(400);
+
+    // 提交中不存在的文件 → 404。
+    const missingFile = await server.inject({
+      method: 'GET',
+      url: `/api/v1/agents/user-operations/evolution/content?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent('agent/NOPE.md')}`,
+      headers: readHeaders,
+    });
+    expect(missingFile.statusCode).toBe(404);
+    await server.close();
+  });
 });

@@ -7,6 +7,7 @@ import {
   gitAddCommit,
   gitCommitFile,
   gitLog,
+  gitShowCommitFiles,
   gitShowFile,
   gitStatusShort,
 } from '../src/core/git.js';
@@ -141,5 +142,23 @@ describe('git.ts (OP6-A)', () => {
     const plain = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-git-plain-'));
     roots.push(plain);
     expect(await gitLog(plain)).toEqual([]);
+  });
+
+  it('gitShowCommitFiles lists files changed by a commit (D-041 P3-1 点开看)', async () => {
+    const root = await setupWorkspace();
+    await gitAddCommit(root, 'chore: initial scaffold');
+    await fs.writeFile(path.join(root, 'goals.md'), '目标\n');
+    await gitCommitFile(root, 'goals.md', 'evolve: 更新目标');
+    await fs.outputFile(path.join(root, 'skills', 'x.skill.md'), '技能\n');
+    await gitCommitFile(root, 'skills/x.skill.md', 'evolve: 新增技能');
+
+    const first = (await gitLog(root))[0];
+    expect(first).toBeDefined();
+    const files = await gitShowCommitFiles(root, first.hash);
+    // 只列出该提交变更的文件（含目录层级）。
+    expect(files.some((f) => f.status === 'A' && f.path === 'skills/x.skill.md')).toBe(true);
+    expect(files.some((f) => f.path === 'goals.md')).toBe(false);
+    // 无效 ref → 空数组（不抛错）。
+    expect(await gitShowCommitFiles(root, 'deadbeef')).toEqual([]);
   });
 });

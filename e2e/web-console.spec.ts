@@ -1,8 +1,12 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { execFile as execFileCb } from 'node:child_process';
+import { promisify } from 'node:util';
 import fs from 'fs-extra';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
+
+const execFile = promisify(execFileCb);
 
 let root = '';
 let server: ChildProcessWithoutNullStreams;
@@ -103,8 +107,8 @@ test('initializes, creates, manages, backs up, and restores an isolated employee
   await expect(page.getByText('运行器已锁定')).toBeVisible();
   await expect(page.getByText('agentctl runtime sync user-operations')).toBeVisible();
   await page.getByRole('button', { name: 'Skills' }).click();
-  await expect(page.getByText('feedback-analyze')).toBeVisible();
-  await expect(page.getByText('feedback-collect')).toBeVisible();
+  // D-041 M3 骨架化后：新建员工预置宿主平台 skill（ai-employee-factory），不再播种示例技能。
+  await expect(page.getByText('ai-employee-factory')).toBeVisible();
   await page.getByRole('link', { name: 'Skill 商店' }).click();
   await expect(page.getByText('浏览远端 GitHub 仓库源并安装技能')).toBeVisible();
   await expect(page.getByText('superpowers', { exact: true })).toBeVisible();
@@ -112,7 +116,9 @@ test('initializes, creates, manages, backs up, and restores an isolated employee
   await page.goto(`${new URL(consoleUrl).origin}/#/agents/user-operations`);
   await expect(page.getByText('用户运营专员')).toBeVisible();
   await page.getByRole('button', { name: '身份文档' }).click();
-  await expect(page.getByLabel('Markdown 内容')).toContainText('用户运营');
+  // D-041 M3：身份文档已只读化——ReactMarkdown 全文预览，无编辑框。
+  await expect(page.getByRole('heading', { name: '岗位定位' })).toBeVisible();
+  await expect(page.getByText('只能通过飞书聊天修改')).toBeVisible();
 
   await page.getByRole('button', { name: '诊断' }).click();
   await page.getByRole('button', { name: '运行 Doctor' }).click();
@@ -120,6 +126,31 @@ test('initializes, creates, manages, backs up, and restores an isolated employee
   await page.getByRole('button', { name: '进化历史' }).click();
   await expect(page.getByText('自进化提交')).toBeVisible();
   await expect(page.getByText('当前状态（CURRENT_STATE.md）')).toBeVisible();
+  // 点开看：先跑一次 settle 产生 evolve: 提交，再点提交看变更文件、点文件看全文。
+  await execFile(
+    process.execPath,
+    [path.resolve('dist/cli.js'), 'bridge', 'settle', 'user-operations'],
+    {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HOME: root,
+        AI_EMPLOYEES_HOME: path.join(root, 'private'),
+        AI_EMPLOYEES_WORKSPACE_ROOT: path.join(root, 'agents'),
+      },
+    },
+  );
+  await page.getByRole('button', { name: '刷新' }).click();
+  const commitButton = page.getByRole('button', { name: /evolve:/ }).first();
+  await expect(commitButton).toBeVisible();
+  await commitButton.click();
+  await expect(page.getByText(/提交变更/)).toBeVisible();
+  const fileButton = page
+    .getByRole('button', { name: /skills\/ai-employee-factory\/SKILL\.md|agent\/GOALS\.md/ })
+    .first();
+  await expect(fileButton).toBeVisible();
+  await fileButton.click();
+  await expect(page.locator('pre').first()).toBeVisible();
   await page.getByRole('button', { name: '日志' }).click();
   await page.getByRole('button', { name: '实时跟随' }).click();
   await expect(page.getByRole('button', { name: '停止跟随' })).toBeVisible();
@@ -153,8 +184,11 @@ test('initializes, creates, manages, backs up, and restores an isolated employee
     .toContain('user-operations-copy');
 
   expect(await fs.pathExists(path.join(root, 'agents/user-operations/.git'))).toBe(true);
+  // D-041 M3 骨架化后：预置宿主平台 skill（ai-employee-factory），不再播种示例技能。
   expect(
-    await fs.pathExists(path.join(root, 'agents/user-operations/skills/feedback-collect/SKILL.md')),
+    await fs.pathExists(
+      path.join(root, 'agents/user-operations/skills/ai-employee-factory/SKILL.md'),
+    ),
   ).toBe(true);
   expect(await fs.pathExists(path.join(root, 'private/runtimes/user-operations/claude'))).toBe(
     true,

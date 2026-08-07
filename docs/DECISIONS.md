@@ -1,5 +1,21 @@
 # Decisions
 
+## D-041：分层自进化协议 M5 增强——进化历史「点开看」（提交 → 变更文件 → 文件全文）
+
+- 状态：Accepted（已实施，TASK-045）
+- 日期：2026-08-07
+- 背景：D-041 M5（TASK-044）已交付 Web「进化历史」只读 tab（evolve 提交流 + CURRENT_STATE + 使用统计），但提交只是「列表」，无法点进去看某次进化到底改了什么文件、改了哪些内容——「一切写入 git 版本化、可回溯」的承诺对人工仍是一层黑盒。本批补上钻取能力，且全程保持只读。
+- 决定：
+  - **`git.ts` 增 `gitShowCommitFiles(workspace, ref)`**：`git show --name-status --format= <ref>` 解析为 `{status, path}` 数组（状态 A/M/D/R，重命名行取新路径），ref 无效/非仓库 → 空数组不抛错；`gitLog` 增 `ref` 选项（`git log <ref> -n1`）以便按需定位单提交。
+  - **`FactoryApplication.evolutionCommitFiles(id, ref)` / `evolutionFileContent(id, ref, relPath)`**：前者返回某提交变更文件清单；后者 `git show <ref>:<path>` 读文件全文（`stripFinalNewline:false` 保字节）。内容端点做**双向防护**：`path.resolve` 归一化 + 前缀判定的工作区内检查（禁绝对路径/`..` 逃逸），并禁止 `.git` 内部路径；文件在该提交不存在 → `NOT_FOUND` 404。
+  - **`web/server.ts` 增两个只读 GET 端点**：`/api/v1/agents/:id/evolution/files?ref=` 与 `/api/v1/agents/:id/evolution/content?ref=&path=`（复用 agent-detail 认证，缺参 → VALIDATION_ERROR 400）。
+  - **前端 `EvolutionTab` 钻取**：点提交 → 高亮并加载该提交变更文件清单（状态徽章 新增/修改/删除/重命名 + 路径）；点文件 → 该提交下文件全文只读展示（`pre` 等宽 + 滚动），带错误/加载态；返回 CURRENT_STATE 视图不丢失。
+- 边界：仍是**只读**——两个新端点只做 git 历史读取，无任何写入/编辑/回滚入口；路径越界与 git 内部路径一律拒绝（400/404）；重命名文件只展示新路径下的内容（该提交存在）。
+- 原因：人工审计自进化行为时需要知道「这次进化改了什么」而不只是「发生了什么」；git 本就是唯一事实源，直接 `git show` 零成本且天然不可变，比另建 diff 存储更简单可靠。
+- 影响：`git.ts`（gitShowCommitFiles + gitLog ref）、`factory-application.ts`（evolutionCommitFiles / evolutionFileContent）、`web/server.ts`（files/content 端点）、`web/api.ts` + `web/src/pages/AgentDetailPage.tsx`（EvolutionTab 钻取）；增测 git（gitShowCommitFiles）、web-management-api（files/content 端点 + 路径穿越拒绝 + 404）；顺手修复 M3 骨架化后 e2e 三条过期断言（Skills 预置 skill / 身份文档只读预览 / feedback skill 路径）；全量 444 通过 + build/lint/tsc/e2e 全绿。
+
+---
+
 ## D-041：分层自进化协议 M5——doctor 6 检查项 + Web 进化历史 + 检索增强
 
 - 状态：Accepted（已实施，TASK-044，D-041 收尾）

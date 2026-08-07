@@ -140,9 +140,11 @@ export interface GitLogEntry {
  *  path 限定文件。非仓库/无记录 → 空数组。供 Web「进化历史」只读视图与审计。 */
 export async function gitLog(
   workspace: string,
-  options: { grep?: string; limit?: number; path?: string } = {},
+  options: { grep?: string; limit?: number; path?: string; ref?: string } = {},
 ): Promise<GitLogEntry[]> {
   const args = ['log', '--format=%H%x00%s%x00%cI'];
+  // D-041 P3-1 增强：ref 指定单个提交（git log <ref> -n1），供进化历史「点提交看文件清单」。
+  if (options.ref) args.push(options.ref, '-n', '1');
   if (options.grep) args.push('--grep', options.grep);
   if (options.limit !== undefined) args.push('-n', String(options.limit));
   if (options.path) args.push('--', options.path);
@@ -160,4 +162,33 @@ export async function gitLog(
       const [hash, subject, date] = line.split('\0');
       return { hash: hash ?? '', subject: subject ?? '', date: date ?? '' };
     });
+}
+
+/** 单次提交变更的文件条目（git show --name-status）。供 Web「进化历史」点提交看改动文件。 */
+export interface GitCommitFile {
+  /** 变更状态：A/M/D/R（新增/修改/删除/重命名）。 */
+  status: string;
+  /** 相对工作区的路径（重命名取新路径）。 */
+  path: string;
+}
+
+/** 读取单次提交变更的文件清单。ref 无效/非仓库 → 空数组（调用方判 NOT_FOUND）。 */
+export async function gitShowCommitFiles(workspace: string, ref: string): Promise<GitCommitFile[]> {
+  const result = await execa('git', ['show', '--name-status', '--format=', ref], {
+    cwd: workspace,
+    shell: false,
+    extendEnv: false,
+    reject: false,
+  });
+  if (result.exitCode !== 0) return [];
+  return result.stdout
+    .split('\n')
+    .filter((line) => /\S/.test(line))
+    .map((line) => {
+      const [status, ...rest] = line.split('\t');
+      // 重命名行 `R100\told\tnew` → 取新路径（该提交下存在）。
+      const path = (status ?? '').startsWith('R') && rest.length >= 2 ? rest[1] : rest[0];
+      return { status: (status ?? '').charAt(0), path: path ?? '' };
+    })
+    .filter((entry) => entry.path.length > 0);
 }

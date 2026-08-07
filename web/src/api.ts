@@ -136,6 +136,10 @@ export interface EvolutionCommit {
   subject: string;
   date: string;
 }
+export interface EvolutionCommitFile {
+  status: string;
+  path: string;
+}
 export interface EvolutionUsageRow {
   day: string;
   agentId: string;
@@ -235,6 +239,14 @@ export const api = {
   getAgent: (id: string) => request<AgentDetail>(`/agents/${encodeURIComponent(id)}`),
   evolutionLog: (id: string) =>
     request<EvolutionLog>(`/agents/${encodeURIComponent(id)}/evolution`),
+  evolutionCommitFiles: (id: string, ref: string) =>
+    request<EvolutionCommitFile[]>(
+      `/agents/${encodeURIComponent(id)}/evolution/files?ref=${encodeURIComponent(ref)}`,
+    ),
+  evolutionFileContent: (id: string, ref: string, relPath: string) =>
+    request<{ content: string }>(
+      `/agents/${encodeURIComponent(id)}/evolution/content?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(relPath)}`,
+    ),
   terminalGuidance: (id: string) =>
     request<{ runtimeLogin: string; bridgeAuthorize: string; chat: string }>(
       `/agents/${encodeURIComponent(id)}/terminal-guidance`,

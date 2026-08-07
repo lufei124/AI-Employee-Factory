@@ -244,6 +244,34 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
     data: await options.application.evolutionLog(request.params.id),
   }));
 
+  // D-041 P3-1 增强：进化历史「点提交看内容」——某提交下变更的文件清单（只读）。
+  server.get<{ Params: { id: string }; Querystring: { ref: string } }>(
+    '/api/v1/agents/:id/evolution/files',
+    async (request) => {
+      const { ref } = request.query;
+      if (!ref || typeof ref !== 'string') {
+        throw new AgentCtlError('VALIDATION_ERROR', '缺少 ref 查询参数（提交 hash）。');
+      }
+      return { data: await options.application.evolutionCommitFiles(request.params.id, ref) };
+    },
+  );
+
+  // D-041 P3-1 增强：进化历史「点文件看内容」——读取某提交下文件的全文（只读）。
+  server.get<{ Params: { id: string }; Querystring: { ref: string; path: string } }>(
+    '/api/v1/agents/:id/evolution/content',
+    async (request) => {
+      const { ref, path: relPath } = request.query;
+      if (!ref || typeof ref !== 'string' || !relPath || typeof relPath !== 'string') {
+        throw new AgentCtlError('VALIDATION_ERROR', '缺少 ref / path 查询参数。');
+      }
+      return {
+        data: {
+          content: await options.application.evolutionFileContent(request.params.id, ref, relPath),
+        },
+      };
+    },
+  );
+
   server.post<{ Params: { id: string; action: string } }>(
     '/api/v1/agents/:id/actions/:action',
     async (request) => {

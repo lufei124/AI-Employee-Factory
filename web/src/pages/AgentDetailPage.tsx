@@ -20,6 +20,7 @@ import {
   api,
   type AgentDetail,
   type AgentDocument,
+  type EvolutionCommitFile,
   type EvolutionLog,
   type JobConfig,
   type OperationDto,
@@ -673,9 +674,24 @@ function DoctorTab({ agentId }: { agentId: string }) {
 
 // D-041 P3-1：员工「进化历史」只读 tab——evolve: 提交流（可回溯）+ CURRENT_STATE 全文 + 使用统计。
 // 纯展示：不提供任何编辑/回滚入口，人工修正走飞书聊天或 CLI（agentctl identity rollback）。
+// P3-1 增强（点开看）：点提交 → 看该提交变更的文件清单；点文件 → 看该提交下文件全文（git show，只读）。
+const STATUS_LABEL: Record<string, string> = {
+  A: '新增',
+  M: '修改',
+  D: '删除',
+  R: '重命名',
+};
+
 function EvolutionTab({ agentId }: { agentId: string }) {
   const [data, setData] = useState<EvolutionLog>();
   const [error, setError] = useState('');
+  // 钻取状态：selectedCommit → 该提交文件清单；selectedFile → 该文件全文。
+  const [selectedCommit, setSelectedCommit] = useState<string>();
+  const [commitFiles, setCommitFiles] = useState<EvolutionCommitFile[]>();
+  const [filesError, setFilesError] = useState('');
+  const [selectedFile, setSelectedFile] = useState<string>();
+  const [fileContent, setFileContent] = useState<string>();
+  const [contentError, setContentError] = useState('');
   const load = async () => {
     try {
       setData(await api.evolutionLog(agentId));
@@ -687,6 +703,30 @@ function EvolutionTab({ agentId }: { agentId: string }) {
   useEffect(() => {
     void load();
   }, [agentId]);
+  const openCommit = async (hash: string) => {
+    setSelectedCommit(hash);
+    setSelectedFile(undefined);
+    setFileContent(undefined);
+    setContentError('');
+    setFilesError('');
+    try {
+      setCommitFiles(await api.evolutionCommitFiles(agentId, hash));
+    } catch (cause) {
+      setCommitFiles(undefined);
+      setFilesError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+  const openFile = async (relPath: string) => {
+    if (!selectedCommit) return;
+    setSelectedFile(relPath);
+    setContentError('');
+    try {
+      setFileContent((await api.evolutionFileContent(agentId, selectedCommit, relPath)).content);
+    } catch (cause) {
+      setFileContent(undefined);
+      setContentError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
   const commits = data?.commits ?? [];
   const usage = data?.usage ?? [];
   const totalMessages = usage.reduce((sum, row) => sum + row.count, 0);
@@ -724,19 +764,27 @@ function EvolutionTab({ agentId }: { agentId: string }) {
             ) : (
               <ul className="max-h-[420px] space-y-2 overflow-auto pr-1">
                 {commits.map((commit) => (
-                  <li
-                    key={commit.hash}
-                    className="rounded-md border border-border bg-card px-3 py-2 text-sm"
-                  >
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="truncate font-mono text-xs">{commit.subject}</span>
-                      <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
-                        {commit.hash.slice(0, 7)}
-                      </span>
-                    </div>
-                    <div className="mt-0.5 text-[11px] text-muted-foreground">
-                      {new Date(commit.date).toLocaleString()}
-                    </div>
+                  <li key={commit.hash}>
+                    <button
+                      type="button"
+                      onClick={() => void openCommit(commit.hash)}
+                      className={cn(
+                        'w-full rounded-md border px-3 py-2 text-left text-sm transition-colors',
+                        selectedCommit === commit.hash
+                          ? 'border-primary bg-primary/5'
+                          : 'border-border bg-card hover:border-primary/40',
+                      )}
+                    >
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="truncate font-mono text-xs">{commit.subject}</span>
+                        <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                          {commit.hash.slice(0, 7)}
+                        </span>
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-muted-foreground">
+                        {new Date(commit.date).toLocaleString()}
+                      </div>
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -774,15 +822,74 @@ function EvolutionTab({ agentId }: { agentId: string }) {
           </div>
           <div>
             <h3 className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
-              当前状态（CURRENT_STATE.md）
+              {selectedCommit
+                ? `提交变更（${commitFiles?.length ?? 0}）`
+                : '当前状态（CURRENT_STATE.md）'}
             </h3>
-            <div className="max-h-[560px] overflow-auto rounded-md border border-border bg-muted/40 p-4 text-sm leading-relaxed">
-              {data.currentState.trim() ? (
-                <ReactMarkdown>{data.currentState}</ReactMarkdown>
-              ) : (
-                <p className="text-muted-foreground">尚无当前状态记录。</p>
-              )}
-            </div>
+            {selectedCommit ? (
+              <div>
+                {filesError ? (
+                  <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                    {filesError}
+                  </p>
+                ) : !commitFiles ? (
+                  <p className="text-sm text-muted-foreground">加载文件清单…</p>
+                ) : commitFiles.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">该提交无文件变更。</p>
+                ) : (
+                  <ul className="max-h-[200px] space-y-1 overflow-auto pr-1">
+                    {commitFiles.map((file) => (
+                      <li key={`${file.status}-${file.path}`}>
+                        <button
+                          type="button"
+                          onClick={() => void openFile(file.path)}
+                          className={cn(
+                            'flex w-full items-center gap-2 rounded-md border border-border px-3 py-1.5 text-left text-xs transition-colors',
+                            selectedFile === file.path
+                              ? 'border-primary bg-primary/5'
+                              : 'bg-card hover:border-primary/40',
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              'shrink-0 rounded px-1 font-mono text-[10px]',
+                              file.status === 'A'
+                                ? 'bg-emerald-500/15 text-emerald-700'
+                                : file.status === 'D'
+                                  ? 'bg-red-500/15 text-red-700'
+                                  : 'bg-muted text-muted-foreground',
+                            )}
+                          >
+                            {STATUS_LABEL[file.status] ?? file.status}
+                          </span>
+                          <span className="truncate font-mono">{file.path}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {selectedFile &&
+                  (contentError ? (
+                    <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                      {contentError}
+                    </div>
+                  ) : fileContent === undefined ? (
+                    <p className="mt-3 text-sm text-muted-foreground">加载文件内容…</p>
+                  ) : (
+                    <pre className="mt-3 max-h-[320px] overflow-auto rounded-md border border-border bg-muted/40 p-4 font-mono text-[11px] leading-relaxed">
+                      {fileContent}
+                    </pre>
+                  ))}
+              </div>
+            ) : (
+              <div className="max-h-[560px] overflow-auto rounded-md border border-border bg-muted/40 p-4 text-sm leading-relaxed">
+                {data.currentState.trim() ? (
+                  <ReactMarkdown>{data.currentState}</ReactMarkdown>
+                ) : (
+                  <p className="text-muted-foreground">尚无当前状态记录。</p>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
