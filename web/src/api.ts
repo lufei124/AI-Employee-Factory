@@ -130,6 +130,26 @@ export interface AgentDetail {
 
 export type SkillScope = 'project' | 'user';
 
+// D-041 P3-1：员工进化历史（只读视图）——evolve: 提交 + CURRENT_STATE + 使用统计。
+export interface EvolutionCommit {
+  hash: string;
+  subject: string;
+  date: string;
+}
+export interface EvolutionUsageRow {
+  day: string;
+  agentId: string;
+  count: number;
+  avgDurationMs: number;
+  totalCostUsd: number;
+  errorCount: number;
+}
+export interface EvolutionLog {
+  commits: EvolutionCommit[];
+  currentState: string;
+  usage: EvolutionUsageRow[];
+}
+
 export interface SkillMetadata {
   name: string;
   version: string;
@@ -213,6 +233,8 @@ export const api = {
       body: JSON.stringify({ brief }),
     }),
   getAgent: (id: string) => request<AgentDetail>(`/agents/${encodeURIComponent(id)}`),
+  evolutionLog: (id: string) =>
+    request<EvolutionLog>(`/agents/${encodeURIComponent(id)}/evolution`),
   terminalGuidance: (id: string) =>
     request<{ runtimeLogin: string; bridgeAuthorize: string; chat: string }>(
       `/agents/${encodeURIComponent(id)}/terminal-guidance`,

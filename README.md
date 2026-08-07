@@ -250,6 +250,9 @@ AI 员工的进化（记忆/岗位/目标/规则/技能）**只在聊天/干活�
 - **提案账本对账**（P1-3）：员工写提案/批准决策登记到轻量 JSONL 账本 `~/.ai-employees/logs/proposals/<id>.jsonl`（0600，上限 5000 行）。每次 settle 对账——ROLE/POLICIES/CONSTITUTION 相对基线**超出可进化范围**（整删/重写/锚点缺失）的改动，若无带 `user_anchor` 的 `applied` 提案依据，即判「未授权身份改动」。`identity_protocol` 默认 `advisory`（仅告警）；显式设为 `enforced` 后违规文件**拒绝提交** + CURRENT_STATE 留痕（保留脏文件供人工决策，不自动回滚）。
 - **知识遗忘归档**（P2-1）：`knowledge/lessons/raw|refined/` 超 90 天的陈旧条目自动**移入 `knowledge/.archive/<日期>/<层>/`**（移走非删除、可恢复），从索引与 git 中隐退；`agentctl knowledge archive-list / restore / purge` 可管理，`agentctl knowledge retention` 手动触发。
 - **身份回滚**（P2-2）：`agentctl identity rollback <id> <file> [--ref <commit>]` 把身份文档恢复到历史提交内容（git show 写回 + `evolve:` 提交 + 刷新基线），可回退改错的身份；只限身份文档，知识/技能由员工 git 自主管理。
+- **进化历史**（P3-1）：Web 员工详情「进化历史」tab 只读展示 `evolve:` 自进化提交流（可回溯）+ CURRENT_STATE + 使用统计；`agentctl identity proposals <id>` 列出提案账本状态机（含批准依据 `user_anchor`），审计哪些身份改动有批准依据。
+- **检索证据链**（P3-3）：`agentctl knowledge recall` 命中二级提炼经验（`lessons/refined/`）时展示 `because of:` 证据链接，可回溯到一级原始记录（`lessons/raw/`）。
+- **doctor 检查项**（P3-2）：`agentctl doctor <id>` 增 6 项自进化健康监控——`identity-baseline`（基线缺失/漂移 warn）、`identity-guard`（锚点缺失 fail）、`proposal-ledger`（未授权身份改动 fail）、`memory-flags`（三开关缺失 warn）、`knowledge-retention`（超期未归档 warn）、`reflection`（refined 缺证据 warn）。
 
 ## 备份与换电脑
 
@@ -301,7 +304,7 @@ agentctl archive user-operations
 
 ## 当前限制与 Roadmap
 
-v1 不包含常驻 Web 服务、局域网/远程访问、账号系统、浏览器内终端、多 Agent 共享机器人 Router、Agent 自由互聊、云端多租户、Skill 市场、生产数据写入、知识图谱或 systemd 实现。核心模型是「单一 AI 员工 + 定时 Job + Web 单轮对话」；Chief 编排、Todo 状态机与 MCP 接入已于 TASK-030（D-027）移除。后续优先项是 systemd adapter、显式 runtime 迁移工作流、可选的加密 Secret provider、任务完成自动写状态、飞书入站。分层自进化协议后续阶段（D-041 M2-M5）：三个自进化开关默认开 + 经验两级化（M2 已完成）、提案对账账本 + Web 只读收敛 + 创建骨架化（M3 已完成）、遗忘归档 + 身份 git 回滚（M4 已完成）、doctor 检查项 + Web 进化历史 + 检索增强（M5）。
+v1 不包含常驻 Web 服务、局域网/远程访问、账号系统、浏览器内终端、多 Agent 共享机器人 Router、Agent 自由互聊、云端多租户、Skill 市场、生产数据写入、知识图谱或 systemd 实现。核心模型是「单一 AI 员工 + 定时 Job + Web 单轮对话」；Chief 编排、Todo 状态机与 MCP 接入已于 TASK-030（D-027）移除。后续优先项是 systemd adapter、显式 runtime 迁移工作流、可选的加密 Secret provider、任务完成自动写状态、飞书入站。分层自进化协议（D-041）已完成全部五阶段：三开关默认开 + 经验两级化（M2）、提案对账账本 + Web 只读收敛 + 创建骨架化（M3）、遗忘归档 + 身份 git 回滚（M4）、doctor 检查项 + Web 进化历史 + 检索增强（M5）。
 
 ## 开发验证
 

@@ -20,6 +20,7 @@ import {
   api,
   type AgentDetail,
   type AgentDocument,
+  type EvolutionLog,
   type JobConfig,
   type OperationDto,
   type SkillMetadata,
@@ -670,6 +671,125 @@ function DoctorTab({ agentId }: { agentId: string }) {
   );
 }
 
+// D-041 P3-1：员工「进化历史」只读 tab——evolve: 提交流（可回溯）+ CURRENT_STATE 全文 + 使用统计。
+// 纯展示：不提供任何编辑/回滚入口，人工修正走飞书聊天或 CLI（agentctl identity rollback）。
+function EvolutionTab({ agentId }: { agentId: string }) {
+  const [data, setData] = useState<EvolutionLog>();
+  const [error, setError] = useState('');
+  const load = async () => {
+    try {
+      setData(await api.evolutionLog(agentId));
+      setError('');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+  useEffect(() => {
+    void load();
+  }, [agentId]);
+  const commits = data?.commits ?? [];
+  const usage = data?.usage ?? [];
+  const totalMessages = usage.reduce((sum, row) => sum + row.count, 0);
+  const totalCost = usage.reduce((sum, row) => sum + row.totalCostUsd, 0);
+  return (
+    <section className="rounded-xl border border-border bg-card">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+        <div>
+          <h2 className="text-sm font-semibold">进化历史</h2>
+          <span className="text-xs text-muted-foreground">
+            只读——evolve: 自进化提交与工作区状态
+          </span>
+        </div>
+        <Button variant="ghost" size="sm" onClick={() => void load()}>
+          <RefreshCw className="size-4" />
+          刷新
+        </Button>
+      </div>
+      {error ? (
+        <div className="p-5">
+          <EmptyState icon={<Activity className="size-5" />} title={error} />
+        </div>
+      ) : !data ? (
+        <div className="p-5">
+          <EmptyState icon={<Activity className="size-5" />} title="加载中…" />
+        </div>
+      ) : (
+        <div className="grid gap-5 p-5 md:grid-cols-2">
+          <div>
+            <h3 className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
+              自进化提交（{commits.length}）
+            </h3>
+            {commits.length === 0 ? (
+              <p className="text-sm text-muted-foreground">尚无 evolve: 提交。</p>
+            ) : (
+              <ul className="max-h-[420px] space-y-2 overflow-auto pr-1">
+                {commits.map((commit) => (
+                  <li
+                    key={commit.hash}
+                    className="rounded-md border border-border bg-card px-3 py-2 text-sm"
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="truncate font-mono text-xs">{commit.subject}</span>
+                      <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                        {commit.hash.slice(0, 7)}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-muted-foreground">
+                      {new Date(commit.date).toLocaleString()}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <h3 className="mb-2 mt-5 text-xs font-semibold uppercase text-muted-foreground">
+              使用统计（{totalMessages} 条消息）
+            </h3>
+            {usage.length === 0 ? (
+              <p className="text-sm text-muted-foreground">暂无使用记录。</p>
+            ) : (
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="text-muted-foreground">
+                    <th className="py-1 pr-2 font-medium">日期</th>
+                    <th className="py-1 pr-2 font-medium">消息</th>
+                    <th className="py-1 pr-2 font-medium">平均耗时</th>
+                    <th className="py-1 font-medium">费用</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {usage.slice(0, 14).map((row) => (
+                    <tr key={row.day} className="border-t border-border">
+                      <td className="py-1 pr-2 font-mono">{row.day}</td>
+                      <td className="py-1 pr-2">{row.count}</td>
+                      <td className="py-1 pr-2">{(row.avgDurationMs / 1000).toFixed(1)}s</td>
+                      <td className="py-1">${row.totalCostUsd.toFixed(4)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              合计费用：${totalCost.toFixed(4)}
+            </p>
+          </div>
+          <div>
+            <h3 className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
+              当前状态（CURRENT_STATE.md）
+            </h3>
+            <div className="max-h-[560px] overflow-auto rounded-md border border-border bg-muted/40 p-4 text-sm leading-relaxed">
+              {data.currentState.trim() ? (
+                <ReactMarkdown>{data.currentState}</ReactMarkdown>
+              ) : (
+                <p className="text-muted-foreground">尚无当前状态记录。</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   const [detail, setDetail] = useState<AgentDetail>();
   const [guidance, setGuidance] = useState<{
@@ -726,7 +846,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
         aria-label="员工详情"
         className="-mb-px flex gap-1 overflow-x-auto border-b border-border"
       >
-        {['概览', '身份文档', '任务', 'Skills', '日志', '备份', '诊断'].map((item) => (
+        {['概览', '身份文档', '任务', 'Skills', '日志', '备份', '诊断', '进化历史'].map((item) => (
           <button
             key={item}
             type="button"
@@ -752,6 +872,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
         {tab === '日志' && <LogsTab agentId={agentId} />}
         {tab === '备份' && <BackupTab agentId={agentId} />}
         {tab === '诊断' && <DoctorTab agentId={agentId} />}
+        {tab === '进化历史' && <EvolutionTab agentId={agentId} />}
       </div>
     </div>
   );

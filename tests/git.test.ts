@@ -3,7 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
-import { gitAddCommit, gitCommitFile, gitShowFile, gitStatusShort } from '../src/core/git.js';
+import {
+  gitAddCommit,
+  gitCommitFile,
+  gitLog,
+  gitShowFile,
+  gitStatusShort,
+} from '../src/core/git.js';
 
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => fs.remove(root))));
@@ -107,5 +113,33 @@ describe('git.ts (OP6-A)', () => {
     const plain = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-git-plain-'));
     roots.push(plain);
     expect(await gitShowFile(plain, 'a.txt')).toBeUndefined();
+  });
+
+  it('gitLog filters by grep and caps at limit, newest first (D-041 P3-1)', async () => {
+    const root = await setupWorkspace();
+    await gitAddCommit(root, 'chore: initial scaffold');
+    await fs.writeFile(path.join(root, 'goals.md'), '目标 A\n');
+    await gitCommitFile(root, 'goals.md', 'evolve: 更新目标 A');
+    await fs.writeFile(path.join(root, 'goals.md'), '目标 B\n');
+    await gitCommitFile(root, 'goals.md', 'evolve: 更新目标 B');
+    await fs.writeFile(path.join(root, 'state.md'), '非进化提交\n');
+    await gitCommitFile(root, 'state.md', 'chore: 普通提交');
+
+    const all = await gitLog(root);
+    expect(all.length).toBe(4);
+    // 按 --grep evolve: 过滤：只返回自进化提交，最新在前。
+    const evolved = await gitLog(root, { grep: 'evolve:' });
+    expect(evolved.length).toBe(2);
+    expect(evolved[0]!.subject).toBe('evolve: 更新目标 B');
+    expect(evolved[1]!.subject).toBe('evolve: 更新目标 A');
+    expect(evolved[0]!.hash).toMatch(/^[0-9a-f]{40}$/);
+    expect(evolved[0]!.date).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    // limit 生效。
+    const capped = await gitLog(root, { grep: 'evolve:', limit: 1 });
+    expect(capped.length).toBe(1);
+    // 非仓库返回空数组（不抛错）。
+    const plain = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-git-plain-'));
+    roots.push(plain);
+    expect(await gitLog(plain)).toEqual([]);
   });
 });

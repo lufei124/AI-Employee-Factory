@@ -239,6 +239,11 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
     data: await options.application.getAgent(request.params.id),
   }));
 
+  // D-041 P3-1：员工进化历史只读视图——evolve: 提交 + CURRENT_STATE + 使用统计。
+  server.get<{ Params: { id: string } }>('/api/v1/agents/:id/evolution', async (request) => ({
+    data: await options.application.evolutionLog(request.params.id),
+  }));
+
   server.post<{ Params: { id: string; action: string } }>(
     '/api/v1/agents/:id/actions/:action',
     async (request) => {

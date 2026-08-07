@@ -84,7 +84,7 @@ import { UsageDb, type UsageFilter, type UsageSummaryRow } from '../core/usage-l
 import { PruneService, type PruneOptions, type PruneResult } from '../core/prune.js';
 import { TrashService, type TrashEntryDto, type TrashPreview } from '../core/trash.js';
 import { ProcessRunner, type LoggedRunOptions } from '../core/process-runner.js';
-import { gitCommitFile, gitShowFile, gitStatusShort } from '../core/git.js';
+import { gitCommitFile, gitLog, gitShowFile, gitStatusShort } from '../core/git.js';
 import {
   updateCurrentState,
   ensureAgentDocsAllowed,
@@ -1321,6 +1321,23 @@ export class FactoryApplication {
   // D-036：飞书使用聚合统计（按天 + 员工）。
   async usageSummary(filter: UsageFilter = {}): Promise<UsageSummaryRow[]> {
     return this.getUsageDb().summary(filter);
+  }
+
+  // D-041 P3-1：员工进化历史只读视图——`git log --grep evolve:`（自进化提交，可回溯）+
+  // CURRENT_STATE.md 全文 + usageSummary（飞书使用统计）。供 Web「进化历史」tab 与审计。
+  // git 记录缺失（非仓库/无 evolve 提交）→ 空数组，不抛错。
+  async evolutionLog(id: string): Promise<{
+    commits: Awaited<ReturnType<typeof gitLog>>;
+    currentState: string;
+    usage: UsageSummaryRow[];
+  }> {
+    const { registry } = await this.getAgent(id);
+    const workspace = registry.workspace.path;
+    const commits = await gitLog(workspace, { grep: 'evolve:', limit: 100 });
+    const stateFile = path.join(workspace, 'agent', 'CURRENT_STATE.md');
+    const currentState = await fs.readFile(stateFile, 'utf8').catch(() => '');
+    const usage = await this.getUsageDb().summary({ agentId: id });
+    return { commits, currentState, usage };
   }
 
   // OP4-D：按分类清理 run 日志/registry 备份/员工备份归档/operations 审计日志。

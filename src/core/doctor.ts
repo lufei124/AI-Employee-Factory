@@ -7,6 +7,15 @@ import { computeConfigHash, getRegisteredAgent, readAgentConfigFile } from './ag
 import { validateMemoryConfig } from './authority.js';
 import { BridgeAdapter } from './bridge.js';
 import { KnowledgeIndexImpl } from './knowledge-index.js';
+import { IDENTITY_BASELINE_FILE, baselineDrift } from './identity-baseline.js';
+import { validateIdentityGuard } from './identity-guard.js';
+import { appliedWithoutAnchor, readIdentityProtocol, readLedger } from './proposal-ledger.js';
+import { readReflectionSignals, reflectionSignalsPath } from './reflection.js';
+import {
+  RETENTION_DAYS,
+  RETENTION_SOURCE_DIRS,
+  archiveDateFromFilename,
+} from './knowledge-retention.js';
 import type { FactoryPaths } from './paths.js';
 import type { RegistryStore } from './registry.js';
 import { buildSafeBaseEnvironment } from './runtime.js';
@@ -357,6 +366,174 @@ export class DoctorService {
         );
       }
     }
+    // D-041 P3-2：身份基线漂移监控。IDENTITY_BASELINE.md 缺失/不可解析 → 无法对账（warn）；
+    // 存在但相对基线有漂移 → warn（remediation 指向 identity rollback 恢复单文件）。
+    const identityDrift = await baselineDrift(agent.workspace.path);
+    add(
+      identityDrift === null
+        ? {
+            id: 'identity-baseline',
+            label: '身份基线',
+            status: 'warn',
+            detail: `基线缺失或不可解析（${IDENTITY_BASELINE_FILE}）。新建员工 settleActive 幂等回填；存量员工首次 settle 自动生成。`,
+            remediation: `运行 agentctl identity rollback ${agent.id} agent/IDENTITY_BASELINE.md 重新生成基线。`,
+          }
+        : identityDrift.drift
+          ? {
+              id: 'identity-baseline',
+              label: '身份基线',
+              status: 'warn',
+              detail: `身份文档相对基线漂移：${Object.entries(identityDrift.docs)
+                .map(
+                  ([relPath, drift]) =>
+                    `${relPath}（+${drift?.added.length ?? 0}/-${drift?.removed.length ?? 0} 行）`,
+                )
+                .join('、')}。`,
+              remediation: `运行 agentctl identity rollback ${agent.id} <file> 回滚单文件，或走飞书聊天提案。`,
+            }
+          : { id: 'identity-baseline', label: '身份基线', status: 'pass', detail: '与基线一致' },
+    );
+    // D-041 P3-2：身份文档锚点硬门。ROLE 岗位定位/长期职责标题、POLICIES 红线词、CONSTITUTION
+    // 使命/变更流程标题缺失 → 疑似被删除/重写（fail，硬门语义，与 commitSelfEvolution 一致）。
+    const guardIssues: Array<{ relPath: string; message: string }> = [];
+    for (const relPath of ['agent/ROLE.md', 'agent/POLICIES.md', 'agent/CONSTITUTION.md']) {
+      const content = await fs
+        .readFile(path.join(agent.workspace.path, relPath), 'utf8')
+        .catch(() => '');
+      const result = validateIdentityGuard(relPath, content);
+      if (!result.ok) {
+        for (const issue of result.issues) guardIssues.push({ relPath, message: issue.message });
+      }
+    }
+    add(
+      guardIssues.length > 0
+        ? {
+            id: 'identity-guard',
+            label: '身份锚点硬门',
+            status: 'fail',
+            detail: guardIssues
+              .slice(0, 3)
+              .map((issue) => issue.message)
+              .join('；'),
+            remediation: '受保护锚点不可被删除/重写，恢复缺失锚点后走聊天提案修改。',
+          }
+        : { id: 'identity-guard', label: '身份锚点硬门', status: 'pass', detail: '锚点完整' },
+    );
+    // D-041 P3-2：提案账本对账。身份文档相对基线改动超出可进化范围且无 user_anchor 批准依据
+    // → 未授权身份改动（fail）。基线缺失时 baselineDrift 返回 null → 无基线无从对账（交由
+    // identity-baseline 检查项告警，此处不误伤）。
+    const ledger = await readLedger(this.paths.logsDir, agentId);
+    const unauthorized = await appliedWithoutAnchor(agent.workspace.path, ledger);
+    const protocol = await readIdentityProtocol(agent.workspace.path);
+    add(
+      unauthorized.length === 0
+        ? {
+            id: 'proposal-ledger',
+            label: '提案账本',
+            status: 'pass',
+            detail: `无未授权身份改动（协议 ${protocol}）`,
+          }
+        : {
+            id: 'proposal-ledger',
+            label: '提案账本',
+            status: 'fail',
+            detail: `未授权身份改动：${unauthorized
+              .slice(0, 3)
+              .map((item) => `${item.relPath}（${item.reason}）`)
+              .join('、')}（协议 ${protocol}）。`,
+            remediation:
+              protocol === 'enforced'
+                ? 'enforced 模式已拒提交违规文件，保留工作区脏文件供 git diff/checkout 决策。'
+                : '身份改动须先在飞书聊天中经用户批准（user_anchor 落账本），或回滚单文件。',
+          },
+    );
+    // D-041 P3-2：三个自进化开关（transcript_persist/experience_extraction/skill_self_creation）
+    // 缺失（undefined）→ 按默认开处理（warn 引导补齐）；显式 false 尊重用户关闭意图（不误伤）。
+    const memory = portableConfig?.memory;
+    const missingFlags =
+      memory === undefined
+        ? ['transcript_persist', 'experience_extraction', 'skill_self_creation']
+        : [
+            ['transcript_persist', memory.transcript_persist],
+            ['experience_extraction', memory.experience_extraction],
+            ['skill_self_creation', memory.skill_self_creation],
+          ]
+            .filter(([, value]) => value === undefined)
+            .map(([name]) => name as string);
+    add(
+      missingFlags.length === 0
+        ? { id: 'memory-flags', label: '自进化开关', status: 'pass', detail: '三开关均已启用' }
+        : {
+            id: 'memory-flags',
+            label: '自进化开关',
+            status: 'warn',
+            detail: `缺失开关：${missingFlags.join('、')}（缺失按默认开处理，显式 false 尊重关闭意图）。`,
+            remediation: '在飞书聊天中请用户开启对应开关，或 agentctl 编辑 agent.yaml 补齐。',
+          },
+    );
+    // D-041 P3-2：knowledge 遗忘监控。lessons/raw 与 lessons/refined 中有超过保留期（默认 90 天）
+    // 仍未被归档的陈旧条目 → warn（引导运行 retention）；无陈旧 → pass。
+    let staleCount = 0;
+    for (const dir of RETENTION_SOURCE_DIRS) {
+      const sourceDir = path.join(agent.workspace.path, 'knowledge', 'lessons', dir);
+      const entries = await fs.readdir(sourceDir).catch(() => []);
+      const now = new Date();
+      for (const filename of entries) {
+        if (!filename.endsWith('.md')) continue;
+        const date = archiveDateFromFilename(filename);
+        if (!date) continue;
+        const ageDays = (now.getTime() - new Date(`${date}T00:00:00Z`).getTime()) / 86_400_000;
+        if (!Number.isNaN(ageDays) && ageDays >= RETENTION_DAYS) staleCount += 1;
+      }
+    }
+    add(
+      staleCount === 0
+        ? {
+            id: 'knowledge-retention',
+            label: '知识遗忘',
+            status: 'pass',
+            detail: '无超期未归档的经验条目',
+          }
+        : {
+            id: 'knowledge-retention',
+            label: '知识遗忘',
+            status: 'warn',
+            detail: `${staleCount} 条经验超过保留期（${RETENTION_DAYS} 天）尚未归档。`,
+            remediation: '运行 agentctl knowledge retention <agent-id> 归档超期经验。',
+          },
+    );
+    // D-041 P3-2：二级反思证据监控。refined/ 经验条目不附 `because of:` 证据引用
+    // → 无法回溯到 raw/ 原始记录（数据血缘受损，warn）。无 refined 或均有证据 → pass。
+    const signalsFile = reflectionSignalsPath(agent.workspace.path);
+    const signals = await readReflectionSignals(signalsFile);
+    const refinedDir = path.join(agent.workspace.path, 'knowledge', 'lessons', 'refined');
+    const refinedFiles = (await fs.readdir(refinedDir).catch(() => [])).filter((file) =>
+      file.endsWith('.md'),
+    );
+    let missingEvidenceCount = 0;
+    for (const file of refinedFiles) {
+      const content = await fs.readFile(path.join(refinedDir, file), 'utf8').catch(() => '');
+      if (!content.includes('because of:')) missingEvidenceCount += 1;
+    }
+    add(
+      missingEvidenceCount === 0
+        ? {
+            id: 'reflection',
+            label: '二级反思',
+            status: 'pass',
+            detail:
+              signals.length > 0
+                ? `已积累 ${signals.length} 条反思信号，refined 经验均带证据引用`
+                : 'refined 经验均带证据引用（尚无反思信号属正常）',
+          }
+        : {
+            id: 'reflection',
+            label: '二级反思',
+            status: 'warn',
+            detail: `${missingEvidenceCount} 条 refined 经验缺 evidence 证据引用（无 'because of:' 行，无法回溯到 raw/ 原始记录）。`,
+            remediation: '重新提炼该条经验，或在聊天中修正证据引用。',
+          },
+    );
     add({
       id: 'runtime-lock',
       label: '运行器锁定',

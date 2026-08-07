@@ -2,34 +2,41 @@
 
 ## 身份
 
-Task ID: TASK-043
+Task ID: TASK-044
 
-Task title: 分层自进化协议 M4（D-041 P2）——knowledge 遗忘归档 + 身份 git 回滚 + 账本上限
+Task title: 分层自进化协议 M5（D-041 P3）——Web 进化历史只读视图 + doctor 6 检查项 + 检索增强
 
 Outgoing/current agent: claude-20260807-01
 
-Intended next role/agent: 用户或后续维护者（TASK-043 已实施并 commit；D-041 剩余 M5：doctor 检查项 + Web 进化历史 + 检索增强）
+Intended next role/agent: 用户或后续维护者（TASK-044 已实施并 commit；D-041 五阶段 M1-M5 全部完成）
 
 Branch/worktree: main
 
-Status: 分层自进化协议 M4 已实现，全量测试/构建/lint/tsc 通过，已 commit（未 push）
+Status: 分层自进化协议 M5 已实现，全量测试/构建/lint/tsc 通过，已 commit（未 push）
 
-更新时间：2026-08-07 10:35 +0800
+更新时间：2026-08-07 10:52 +0800
 
 ## 已完成
 
-- **`src/core/knowledge-retention.ts`（新，D-041 P2-1 knowledge 遗忘归档）**：`archiveStaleKnowledge` 把 `lessons/raw/` 与 `lessons/refined/` 超 `retentionDays`（默认 90）的条目 `fs.move` 到 `knowledge/.archive/<归档日期>/<层>/`（移走非删除、可恢复），按「日期 + 层」两级分桶——raw/refined 同名文件（`<date>-<agent>.md`）不互相覆盖，恢复时无歧义回 `lessons/<层>/`。软链接条目拒移（防逃逸，记 skipped）。归档即隐退：`.archive/` 是点目录，`KnowledgeIndexImpl.scan` 递归时跳过 → 不参与 recall；工作区 `.gitignore` 排除 `knowledge/.archive/` → 不进员工 git。`restoreKnowledge` / `purgeKnowledgeArchive` 复用 TrashService 语义（restore 移回原位、目标已存在拒绝覆盖；purge 彻底删除），路径经 `assertArchiveEntry` 校验必须落在 `.archive` 树内（防 `..` 逃逸）。
-- **`src/application/factory-application.ts`（接线）**：`settleActive` 末尾新增 `maybeArchiveStaleKnowledge`（归档 >0 时重建索引 + warn；best-effort 失败仅告警，不阻断自进化链）；公开入口 `knowledgeArchiveStale` / `knowledgeListArchive` / `knowledgeRestore` / `knowledgePurgeArchive`（各在归档/恢复/删除后重建索引）。新增 `identityRollback(id, relPath, {ref})`——**受限清单**（五份身份文档 + IDENTITY_BASELINE + CURRENT_STATE，知识/技能/workflows 属可进化区不提供逃生口），`assertInside` + `assertInsideReal` 双重越界校验，`gitShowFile` 读历史快照（undefined → NOT_FOUND + remediation），`atomicWriteFile` 写回 → `ensureIdentityBaseline` 刷新基线（写了则 `evolve: 更新 身份基线`）→ `evolve: 回滚 <file> 到 <ref>` 单文件提交。
-- **`src/core/git.ts`（P2-2）**：新增 `gitShowFile(workspace, relPath, ref='HEAD')`——`git show <ref>:<path>`，`stripFinalNewline:false` 保留末行换行（回滚写回字节级一致），文件不存在/非仓库返回 undefined。
-- **`src/core/knowledge-index.ts`（P2-1）**：`scan` 递归遍历时跳过点目录（`.archive`），归档条目不进 `.index.json`、不参与 recall。
-- **`src/core/templates.ts`（P2-1）**：工作区 `.gitignore` 种子增 `knowledge/.archive/`（归档不进员工 git）。
-- **`src/cli-program.ts`**：`knowledge` 子命令增 `retention`（手动归档，`--days` 透传保留期）/ `archive-list` / `restore` / `purge`；新增 `registerIdentityCommands` → `agentctl identity rollback <agent-id> <file> [--ref <commit>]`（`--yes` 跳过确认）。
-- **`src/core/reflection.ts` / `src/core/proposal-ledger.ts`（P2-3 账本压缩为摘要）**：`truncateReflectionSignals` / `truncateLedger` 超上限（5000 行）时由「纯丢弃最早行」改为「压缩最早批为 1 行统计摘要 + 保留最近 maxLines-1 行原始」——摘要行记 `{event:'summary', proposals, decisions, approved, byProposalId}` / `{date, summary:true, importance, count, span, topics}`，**不带 `user_anchor`**（不会被误读为批准依据）；统计痕迹保留而非纯数据丢失，对账/触发语义不受影响。
-- **文档**：`docs/DECISIONS.md` 新增 D-041 M4 ADR；README 更新（D-041 节增知识遗忘归档/身份回滚 bullet + 路线图 M4 已完成）；`.agent/TASK_BOARD.md` / `.agent/FILE_LOCKS.md` 登记 TASK-043 为 DONE/RELEASED。
+- **`src/core/git.ts`（P3-1）**：新增 `gitLog(workspace, {grep, limit, path})`——`git log --format=%H%x00%s%x00%cI` 解析为 `{hash, subject, date}` 数组，按时间倒序；非仓库/无提交返回空数组不抛错。
+- **`src/application/factory-application.ts`（P3-1）**：新增 `evolutionLog(id)` = `gitLog(workspace, {grep:'evolve:', limit:100})` + `agent/CURRENT_STATE.md` 全文 + `usageDb.summary()` 使用统计，供 Web「进化历史」只读视图与审计。
+- **`src/web/server.ts`（P3-1）**：新增只读端点 `GET /api/v1/agents/:id/evolution`（复用 agent-detail 认证模式，无写端点）。
+- **`web/src/api.ts` + `web/src/pages/AgentDetailPage.tsx`（P3-1）**：前端增 `EvolutionLog` 类型 + `api.evolutionLog(id)`；AgentDetailPage 增「进化历史」tab——evolve 提交流（hash 短码 + subject + 本地时间）、使用统计表（消息/平均耗时/费用）、CURRENT_STATE markdown 渲染，**纯展示无任何编辑/回滚入口**。
+- **`src/core/doctor.ts`（P3-2，6 检查项）**：
+  - `identity-baseline`：基线缺失/不可解析 → warn（无从对账）；相对基线漂移 → warn（remediation 指向 identity rollback）。
+  - `identity-guard`：ROLE 岗位定位/长期职责标题、POLICIES 红线词、CONSTITUTION 使命/变更流程标题缺失 → **fail**（与 commitSelfEvolution 提交前硬门一致）。
+  - `proposal-ledger`：`appliedWithoutAnchor` 检出超出可进化范围且无 `user_anchor` 依据的身份改动 → **fail**（detail 带违规文件 + 当前协议，remediation 区分 advisory/enforced）。
+  - `memory-flags`：agent.yaml 三开关（transcript_persist/experience_extraction/skill_self_creation）**缺失（undefined）** → warn（按默认开处理，引导补齐）；显式 false 尊重关闭意图。
+  - `knowledge-retention`：lessons/raw 与 refined 中超 90 天未归档条目 >0 → warn（引导运行 retention）。
+  - `reflection`：refined/ 条目不附 `because of:` 证据引用（无法回溯 raw/）→ warn；无 refined 或均有证据 → pass。
+- **`src/core/knowledge.ts` + `src/core/knowledge-index.ts`（P3-3）**：`KnowledgeRecallHit` 增 `evidence?: string[]`；`recall` 对 `lessons/refined/` 命中条目前置收集 `because of:` 证据行（容错缺证据不带），非 refined 不附带。
+- **`src/cli-program.ts`（P3-3）**：`registerIdentityCommands` 增 `agentctl identity proposals <agent-id>`——列出提案账本状态机（proposed/approved/rejected/applied/expired，含批准依据 `user_anchor`）；`knowledge recall` 命中 refined 时以 `证据:` 标签展示证据链接。
+- **测试**：git（gitLog 过滤/limit/倒序/非仓库空数组）、doctor（6 检查项全 pass + 逐项破坏断言）、knowledge（recall refined 带证据 / raw 不带）、web-management-api（evolution 端点 + settleEmployee 后 evolve 提交可见）、cli-structure（identity 含 rollback + proposals）、e2e/web-console（进化历史 tab 可见）。
+- **文档**：`docs/DECISIONS.md` 新增 D-041 M5 ADR（D-041 收尾）；README 更新（D-041 节增进化历史/检索证据链/doctor 检查项 bullet + 路线图 D-041 全部完成）；`.agent/TASK_BOARD.md` / `.agent/FILE_LOCKS.md` 登记 TASK-044 为 DONE/RELEASED。
 
 ## 验证
 
-- `npm test`：全量 438 通过（此前 421，新增 17 用例——knowledge-retention 12 + git gitShowFile 2 + self-evolution 3）。
+- `npm test`：全量 442 通过（此前 438，新增 4 用例——git gitLog 1 + doctor 6 检查项 1 + knowledge recall 证据 1 + web evolution 1，另 cli-structure 断言扩为 arrayContaining）。
 - `npm run build`：通过（tsc + vite，仅既有 chunk-size 警告）。
 - `npm run lint`：eslint + prettier 全绿。
 - `npx tsc --noEmit`：通过。
@@ -37,5 +44,5 @@ Status: 分层自进化协议 M4 已实现，全量测试/构建/lint/tsc 通过
 ## 待确认 / 后续
 
 - 已 commit（AGENTS.md 常驻规则「任务完成即 commit」，已提交 main，不 push）。
-- **M5（P3）**：doctor 检查项（identity-baseline/identity-guard/proposal-ledger/memory-flags/knowledge-retention/reflection）+ Web 进化历史页（`git log --grep evolve:` + CURRENT_STATE）+ `knowledge recall` 覆盖 refined/。
+- **D-041 五阶段 M1-M5 全部完成**：P0 身份守卫 → P1 三开关+两级经验 → M3 提案对账 + Web 只读化 + 创建骨架 → M4 遗忘归档 + 身份回滚 + 账本上限 → M5 doctor 监控 + Web 进化历史 + 检索增强。
 - `identity_edits`（`proposal_required|direct`）仍仅声明未生效（P1 预留），后续按需启用。

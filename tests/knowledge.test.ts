@@ -135,6 +135,50 @@ describe('KnowledgeIndexImpl ingest/recall/compact/verifyConsistency (OP1 Stage 
     expect(consistency.ok).toBe(false);
     expect(consistency.issues.some((issue) => issue.kind === 'missing-index')).toBe(true);
   });
+
+  it('recall attaches because-of evidence links for refined lessons (D-041 P3-3)', async () => {
+    const { application, agentId } = await setup();
+    const dir = knowledgeDir(application, agentId);
+    // 一级原始记录 + 二级提炼经验（正文带 because of 证据引用）。
+    await fs.outputFile(
+      path.join(dir, 'lessons', 'raw', '2026-08-01-user-operations.md'),
+      [
+        '---',
+        'title: 原始会话记录',
+        'summary: 一次用户反馈闭环的完整过程',
+        'keywords: [反馈, 闭环]',
+        'updated_at: 2026-08-01',
+        '---',
+        '用户反馈了登录失败问题，最终定位是凭证过期。',
+      ].join('\n'),
+    );
+    await fs.outputFile(
+      path.join(dir, 'lessons', 'refined', '2026-08-02-feedback-loop.md'),
+      [
+        '---',
+        'title: 反馈闭环经验',
+        'summary: 用户反馈优先检查凭证有效期',
+        'keywords: [反馈, 凭证]',
+        'updated_at: 2026-08-02',
+        '---',
+        '用户反馈登录失败时优先检查凭证有效期。',
+        '',
+        '- `because of: knowledge/lessons/raw/2026-08-01-user-operations.md:12`',
+      ].join('\n'),
+    );
+    const index = new KnowledgeIndexImpl(dir);
+    await index.ingest();
+
+    const recall = await index.recall('凭证');
+    const refined = recall.hits.find((hit) => hit.entry.relPath.startsWith('lessons/refined/'));
+    expect(refined).toBeDefined();
+    expect(refined?.evidence).toBeDefined();
+    expect(refined?.evidence?.[0]).toContain('lessons/raw/2026-08-01-user-operations.md');
+
+    // 非 refined 条目不附带证据引用。
+    const raw = recall.hits.find((hit) => hit.entry.relPath.startsWith('lessons/raw/'));
+    expect(raw?.evidence).toBeUndefined();
+  });
 });
 
 describe('FactoryApplication knowledge API (OP1 Stage B)', () => {

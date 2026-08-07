@@ -717,3 +717,19 @@ Acceptance criteria: knowledge-retention 单测全绿；git/self-evolution 增�
 Started at: 2026-08-07 10:05 +0800
 Updated at: 2026-08-07 10:35 +0800
 ```
+
+```text
+Task ID: TASK-044
+Title: 分层自进化协议 M5（D-041 P3）——Web 进化历史只读视图 + doctor 6 检查项 + 检索增强
+Owner agent: claude-20260807-01
+Status: DONE
+Branch/worktree: main
+Allowed scope: src/core/git.ts（gitLog）、src/application/factory-application.ts（evolutionLog）、src/core/doctor.ts（6 检查项）、src/web/server.ts（GET evolution）、web/src/api.ts + AgentDetailPage.tsx（进化历史 tab）、src/core/knowledge-index.ts（recall 证据）、src/cli-program.ts（identity proposals + recall 证据）、tests/git.test.ts、tests/doctor.test.ts、tests/web-management-api.test.ts、tests/knowledge.test.ts、tests/cli-structure.test.ts、docs/DECISIONS.md、README.md、.agent 簿记
+Forbidden scope: 不引入向量库/新 DB/对外网络外发；不改 Web 只读化（身份文档仍只读）；不引入 MCP
+Dependencies: TASK-043（D-041 P4，M4）
+Expected output: gitLog + FactoryApplication.evolutionLog（git log --grep evolve: + CURRENT_STATE + usageSummary）；GET /api/v1/agents/:id/evolution 只读 + AgentDetailPage「进化历史」tab；doctor 增 identity-baseline/identity-guard/proposal-ledger/memory-flags/knowledge-retention/reflection 6 项；knowledge recall 命中带 because-of 证据 + agentctl identity proposals 列状态机
+Acceptance criteria: 各新增测试全绿；npm test/build/lint 全绿；任务完成即 commit（不 push）
+Started at: 2026-08-07 10:40 +0800
+Updated at: 2026-08-07 10:52 +0800
+Result: gitLog + evolutionLog + GET /api/v1/agents/:id/evolution + AgentDetailPage「进化历史」tab；doctor 6 检查项；knowledge recall 证据 + identity proposals CLI；增测 git/doctor/knowledge/web-management-api/cli-structure + e2e；全量 442 测试通过，build/lint/tsc 全绿。D-041 M1-M5 全部完成。
+```

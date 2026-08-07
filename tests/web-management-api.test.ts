@@ -374,4 +374,40 @@ describe('Web management API', () => {
     ).toHaveLength(1);
     await server.close();
   });
+
+  it('exposes the evolution history endpoint read-only (D-041 P3-1)', async () => {
+    const { app, paths, server, readHeaders } = await setup();
+    const response = await server.inject({
+      method: 'GET',
+      url: '/api/v1/agents/user-operations/evolution',
+      headers: readHeaders,
+    });
+
+    expect(response.statusCode).toBe(200);
+    const data = response.json<{
+      data: { commits: unknown[]; currentState: string; usage: unknown[] };
+    }>().data;
+    expect(Array.isArray(data.commits)).toBe(true);
+    expect(typeof data.currentState).toBe('string');
+    expect(Array.isArray(data.usage)).toBe(true);
+    // 新建员工尚无 evolve: 提交（空数组不抛错），但 CURRENT_STATE 有内容。
+    expect(data.currentState.length).toBeGreaterThan(0);
+
+    // 制造一条 evolve: 提交后应出现在历史里（git log --grep evolve:）。
+    const workspace = path.join(paths.workspaceRoot, 'user-operations');
+    await fs.writeFile(
+      path.join(workspace, 'agent', 'GOALS.md'),
+      `# 核心目标\n\n## 演进记录\n\n- 2026-08-07 evolve: 新增目标「复盘用户反馈闭环」\n`,
+    );
+    await app.settleEmployee('user-operations');
+    const response2 = await server.inject({
+      method: 'GET',
+      url: '/api/v1/agents/user-operations/evolution',
+      headers: readHeaders,
+    });
+    const commits = response2.json<{ data: { commits: Array<{ subject: string }> } }>().data
+      .commits;
+    expect(commits.some((commit) => commit.subject.includes('evolve:'))).toBe(true);
+    await server.close();
+  });
 });

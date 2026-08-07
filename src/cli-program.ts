@@ -951,12 +951,16 @@ function registerKnowledgeCommands(program: Command): void {
         console.log('未命中任何知识条目。');
         return;
       }
-      for (const { entry, score, matchedKeywords } of result.hits) {
+      for (const { entry, score, matchedKeywords, evidence } of result.hits) {
         console.log(
           `${chalk.green(entry.relPath)}  (score=${score}, 命中: ${matchedKeywords.join(', ')})`,
         );
         console.log(`  ${entry.title}`);
         if (entry.summary) console.log(`  ${entry.summary}`);
+        if (evidence && evidence.length > 0) {
+          console.log(`  ${chalk.cyan('证据:')}`);
+          for (const line of evidence) console.log(`    ${line}`);
+        }
       }
     });
   group
@@ -1023,9 +1027,8 @@ function registerKnowledgeCommands(program: Command): void {
     });
 }
 
-// D-041 P2-2：身份文档 git 回滚命令组。员工身份文档（ROLE/GOALS/OPERATING_SYSTEM/POLICIES/
-// CONSTITUTION/IDENTITY_BASELINE）全部进 evolve 提交历史；本组把某文件在指定提交的内容写回
-// 工作区（git show → 写盘 → evolve 提交 + 基线刷新），是身份文档的手动纠错逃生口。
+// D-041 P2-2/P3-3：身份文档命令组。rollback 是身份文档的 git 回滚逃生口；proposals 列提案
+// 状态机（proposed/approved/rejected/applied/expired），供审计「哪些身份改动有批准依据」。
 function registerIdentityCommands(program: Command): void {
   const group = program.command('identity').description('员工身份文档管理');
   group
@@ -1046,5 +1049,39 @@ function registerIdentityCommands(program: Command): void {
       console.log(
         chalk.green(`✓ ${result.relPath} 已回滚到 ${result.ref}（${result.restoredAt}）`),
       );
+    });
+  group
+    .command('proposals <agent-id>')
+    .description(
+      '列出员工提案账本状态机（proposed/approved/rejected/applied/expired，含批准依据 user_anchor）',
+    )
+    .action(async (id: string) => {
+      const { paths, application } = context();
+      await application.getAgent(id); // 校验员工存在。
+      const { readLedger } = await import('./core/proposal-ledger.js');
+      const ledger = await readLedger(paths.logsDir, id);
+      if (ledger.length === 0) {
+        console.log('提案账本为空。');
+        return;
+      }
+      for (const row of ledger) {
+        if (row.event === 'proposal') {
+          const { kind, target_file } = row as { kind?: string; target_file?: string };
+          console.log(
+            `[${new Date(row.ts).toISOString().slice(0, 19)}] 提案 ${row.proposal_id} ${row.status}` +
+              `${kind ? `（${kind}` : ''}${target_file ? `, ${target_file}` : ''}${kind || target_file ? '）' : ''}`,
+          );
+        } else {
+          const { decision, user_anchor, target_file } = row as {
+            decision: string;
+            user_anchor?: string;
+            target_file?: string;
+          };
+          console.log(
+            `[${new Date(row.ts).toISOString().slice(0, 19)}] 决策 ${row.proposal_id} → ${decision}` +
+              `${target_file ? `（${target_file}` : ''}${user_anchor ? `，依据：${user_anchor}` : ''}${target_file || user_anchor ? '）' : ''}`,
+          );
+        }
+      }
     });
 }

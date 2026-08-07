@@ -74,8 +74,8 @@ describe('agentctl command surface', () => {
     );
     expect(names('trash')).toEqual(expect.arrayContaining(['move', 'list', 'restore', 'purge']));
     expect(names('operations')).toEqual(expect.arrayContaining(['query']));
-    // D-041 P2-2：identity 命令组提供身份文档 git 回滚。
-    expect(names('identity')).toEqual(expect.arrayContaining(['rollback']));
+    // D-041 P2-2/P3-3：identity 命令组提供身份文档 git 回滚 + 提案账本状态机。
+    expect(names('identity')).toEqual(expect.arrayContaining(['rollback', 'proposals']));
   });
 
   it('create exposes --describe and no longer exposes --preset (D-029)', () => {

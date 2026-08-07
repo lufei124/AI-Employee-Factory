@@ -25,6 +25,9 @@ export interface KnowledgeRecallHit {
   score: number;
   /** 命中的关键词（便于调用方高亮/解释）。 */
   matchedKeywords: string[];
+  /** D-041 P3-3：证据引用（`because of: knowledge/lessons/raw/<file>:<line>`），
+   *  提炼经验经证据可回溯到一级原始记录（refined 命中才有）。 */
+  evidence?: string[];
 }
 
 export interface KnowledgeRecallResult {

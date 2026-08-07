@@ -127,3 +127,37 @@ export async function gitShowFile(
   if (result.exitCode !== 0) return undefined;
   return result.stdout;
 }
+
+/** git 提交记录条目。 */
+export interface GitLogEntry {
+  hash: string;
+  subject: string;
+  /** 提交时间（ISO，来自 %cI）。 */
+  date: string;
+}
+
+/** 读取提交记录（git log）。可选 grep 过滤提交消息（如 `evolve:`）、limit 取最近 N 条、
+ *  path 限定文件。非仓库/无记录 → 空数组。供 Web「进化历史」只读视图与审计。 */
+export async function gitLog(
+  workspace: string,
+  options: { grep?: string; limit?: number; path?: string } = {},
+): Promise<GitLogEntry[]> {
+  const args = ['log', '--format=%H%x00%s%x00%cI'];
+  if (options.grep) args.push('--grep', options.grep);
+  if (options.limit !== undefined) args.push('-n', String(options.limit));
+  if (options.path) args.push('--', options.path);
+  const result = await execa('git', args, {
+    cwd: workspace,
+    shell: false,
+    extendEnv: false,
+    reject: false,
+  });
+  if (result.exitCode !== 0) return [];
+  return result.stdout
+    .split('\n')
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const [hash, subject, date] = line.split('\0');
+      return { hash: hash ?? '', subject: subject ?? '', date: date ?? '' };
+    });
+}

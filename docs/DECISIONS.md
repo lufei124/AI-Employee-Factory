@@ -1,5 +1,26 @@
 # Decisions
 
+## D-041：分层自进化协议 M5——doctor 6 检查项 + Web 进化历史 + 检索增强
+
+- 状态：Accepted（已实施，TASK-044，D-041 收尾）
+- 日期：2026-08-07
+- 背景：P0（TASK-040）建身份守卫地板、P1（TASK-041）自进化链默认开、M3（TASK-042）提案对账 + Web 只读化、M4（TASK-043）遗忘归档 + 身份回滚。本批（M5/P3）是 D-041 **最后一阶段**，把前四批建立的约束变成**可观测、可审计**：doctor 能检视全部自进化机制的健康度；Web 提供进化历史只读页（evolve 提交可回溯）；检索能沿证据链回到原始记录。
+- 决定：
+  - **P3-1 Web「进化历史」只读视图**：后端 `FactoryApplication.evolutionLog(id)` = `git log --grep evolve:`（最多 100 条，按时间倒序）+ `CURRENT_STATE.md` 全文 + `usageSummary`（飞书使用统计）。`git.ts` 增 `gitLog(workspace, {grep, limit, path})`（`%H%x00%s%x00%cI` 格式化，非仓库/无提交返回空数组不抛错）。前端 `AgentDetailPage` 增「进化历史」tab（纯展示：提交流 + 使用统计表 + CURRENT_STATE markdown 渲染，无任何编辑/回滚入口）；`GET /api/v1/agents/:id/evolution` 只读端点。人工修正仍走飞书聊天或 CLI（`agentctl identity rollback`）。
+  - **P3-2 doctor 增 6 检查项**（对齐 D-041 前四批机制的健康监控，均随 `run(<id>)` 输出）：
+    - `identity-baseline`：`IDENTITY_BASELINE.md` 缺失/不可解析 → warn（无从对账）；相对基线漂移 → warn（remediation 指向 identity rollback）。
+    - `identity-guard`：ROLE 岗位定位/长期职责标题、POLICIES 红线词、CONSTITUTION 使命/变更流程标题缺失 → **fail**（硬门语义，与 `commitSelfEvolution` 提交前校验一致）。
+    - `proposal-ledger`：`appliedWithoutAnchor` 检出超出可进化范围且无 `user_anchor` 依据的身份改动 → **fail**；detail 带违规文件 + 当前协议（advisory/enforced），remediation 区分两种协议处置。
+    - `memory-flags`：agent.yaml 三开关（transcript_persist/experience_extraction/skill_self_creation）**缺失（undefined）** → warn（按默认开处理，引导补齐）；显式 `false` 尊重用户关闭意图（不误伤）。
+    - `knowledge-retention`：lessons/raw 与 lessons/refined 中超 90 天仍未归档的条目数 > 0 → warn（引导运行 retention）。
+    - `reflection`：refined/ 经验条目不附 `because of:` 证据引用（无法回溯 raw/）→ warn；无 refined 或均有证据 → pass。
+  - **P3-3 检索增强**：`KnowledgeRecallHit` 增 `evidence?: string[]`；`KnowledgeIndexImpl.recall` 对 `lessons/refined/` 命中条目前置收集 `because of:` 证据行（容错，缺证据不带），非 refined 不附带。CLI `agentctl recall` 命中 refined 时以 `证据:` 标签展示证据链接；CLI 增 `agentctl identity proposals <id>` 列出提案账本状态机（proposed/approved/rejected/applied/expired，含批准依据 `user_anchor`），供审计「哪些身份改动有批准依据」。
+- 边界：本批为**只读 + 监控**——不新增任何写入端点，不改变前四批的提交/对账/归档行为；doctor 检查项只报告状态不自动修复（remediation 指向 CLI/聊天）；Web 进化历史只读（后端无写端点、前端无编辑控件）。`identity proposals` 命令只读账本，不提供回写。
+- 原因：D-041 前四批建立了约束但缺少「漂移被及时发现」的闭环——doctor 6 检查项把身份守卫/提案对账/开关/遗忘/反思证据全部纳入可观测；Web 进化历史把「一切写入 git 版本化、可回溯」的承诺变成人工可见；recall 证据链让二级提炼经验可回溯到一级原始记录，数据血缘完整。
+- 影响：`git.ts`（gitLog）、`factory-application.ts`（evolutionLog + settleEmployee 复用）、`doctor.ts`（6 检查项）、`knowledge.ts`/`knowledge-index.ts`（evidence 字段 + recallEvidence）、`cli-program.ts`（identity proposals + recall 证据展示）、`web/server.ts`（evolution 端点）、`web/api.ts` + `web/src/pages/AgentDetailPage.tsx`（进化历史 tab）；增测 git（gitLog）、doctor（6 检查项）、knowledge（recall 证据）、web-management-api（evolution 端点）、cli-structure（identity 含 proposals）；全量测试 442 通过（此前 438），build/lint/tsc 全绿。D-041 M1-M5 全部完成。
+
+---
+
 ## D-041：分层自进化协议 M4——knowledge 遗忘归档 + 身份 git 回滚 + 账本压缩为摘要
 
 - 状态：Accepted（已实施，TASK-043）

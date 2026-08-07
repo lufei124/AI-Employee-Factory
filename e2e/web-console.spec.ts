@@ -117,6 +117,9 @@ test('initializes, creates, manages, backs up, and restores an isolated employee
   await page.getByRole('button', { name: '诊断' }).click();
   await page.getByRole('button', { name: '运行 Doctor' }).click();
   await expect(page.getByText(/诊断任务 .* 已进入操作中心/)).toBeVisible();
+  await page.getByRole('button', { name: '进化历史' }).click();
+  await expect(page.getByText('自进化提交')).toBeVisible();
+  await expect(page.getByText('当前状态（CURRENT_STATE.md）')).toBeVisible();
   await page.getByRole('button', { name: '日志' }).click();
   await page.getByRole('button', { name: '实时跟随' }).click();
   await expect(page.getByRole('button', { name: '停止跟随' })).toBeVisible();

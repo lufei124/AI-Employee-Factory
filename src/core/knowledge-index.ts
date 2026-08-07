@@ -228,12 +228,35 @@ export class KnowledgeIndexImpl implements KnowledgeIndex {
 
     return {
       query,
-      hits: results.map(({ entry, score, matched }) => ({
-        entry,
-        score,
-        matchedKeywords: [...matched],
-      })),
+      hits: await Promise.all(
+        results.map(async ({ entry, score, matched }) => ({
+          entry,
+          score,
+          matchedKeywords: [...matched],
+          ...(await this.recallEvidence(entry)),
+        })),
+      ),
     };
+  }
+
+  /** D-041 P3-3：提炼经验（lessons/refined/）召回时附带 `because of` 证据引用（回溯到一级原始记录）。
+   *  非 refined 条目不附带。读正文按 `because of:` 前缀行收集（容错，缺证据则不带）。 */
+  private async recallEvidence(entry: KnowledgeEntry): Promise<{ evidence?: string[] }> {
+    if (!entry.relPath.startsWith('lessons/refined/')) return {};
+    const file = path.join(this.root, entry.relPath.split('/').join(path.sep));
+    const content = await fs.readFile(file, 'utf8').catch(() => '');
+    const evidence = content
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('- `because of:') || line.startsWith('`because of:'))
+      .map((line) =>
+        line
+          .replace(/^[-*\s`]+/, '')
+          .replace(/`+$/g, '')
+          .trim(),
+      )
+      .filter(Boolean);
+    return evidence.length > 0 ? { evidence } : {};
   }
 
   async compact(): Promise<KnowledgeIndexResult> {
