@@ -1,5 +1,19 @@
 # Decisions
 
+## D-052：bridge 服务中断自愈——launchd KeepAlive + settle 周期状态同步
+
+- 状态：Accepted（已实施，TASK-052）
+- 日期：2026-08-07
+- 背景：员工再次「自己中断」——飞书发消息无响应。排查根因：① bridge 进程收到 SIGTERM 退出后，Factory 生成的 launchd plist **无 KeepAlive**（D-032 只配置 RunAtLoad），launchd 不会自动重启；② 唯一会自动恢复的 `reconcileServices`（D-032）**只在 Web 控制台启动时运行**，无 Web 场景服务中断永不恢复；③ 状态失同步：CURRENT_STATE 显示「运行中」、registry 也标 running，但服务实际已死（`refreshAgentStatus` 只观测不启动）。本次恢复靠人工 `agentctl start user-operations`。
+- 决定：
+  - **Part A（进程级即时自愈）**：launchd plist 支持 `KeepAlive` 键。`LaunchdPlistInput` 加 `keepAlive?: boolean`，`renderLaunchdPlist` 仅在显式 true 时渲染 `<key>KeepAlive</key><true/>`；`bridge()` 常驻服务设 `keepAlive: true`——进程意外退出/被杀后 launchd 自动重启。**只给常驻服务（bridge）设**；周期服务（settle/job）不设，避免「崩溃→立即重启」无限循环。主动 stop 走 `launchctl bootout`，KeepAlive 不参与停止语义（`lifecycleAction stop = 暂停` 语义不变，D-032）。
+  - **Part B（周期自愈 + 状态同步）**：把 `reconcileServices` 的每员工决策逻辑抽成 `reconcileAgentService(agent, config)`（archive/未启用 bridge 跳过；autoStart && real≠running && auth=ready → prepareRuntime + secureBridgeProfile + start；!autoStart && real=running → stop + setRunAtLoad(false)；否则维持真实状态），`reconcileServices` 与 `settleEmployee`（每 5 分钟周期 settle）都调用它。状态变化（nextStatus ≠ agent.status）时回写 registry **并同步 CURRENT_STATE**（`运行中/已停止` + last_event，经 `syncCurrentState` 单文件 git 提交），让 Web 进化历史一眼看到真实服务状态——此前 reconcile 不写状态，bridge 已死但仍显示「运行中」。
+- 边界：KeepAlive 只用于常驻服务；不改变 lifecycle 语义（stop=暂停不变）；不处理 identity-guard 拒提交问题（员工自进化另一问题，独立排查）。
+- 原因：bridge 中断无 KeepAlive 不重启 + reconcile 仅 Web 启动时运行 = 无 Web 场景服务中断「永久死」且无日志留痕（本次 SIGTERM 排查盲区）。KeepAlive 兜住进程级中断，settle 周期自愈兜住「意图常驻但没在跑」的漂移，CURRENT_STATE 同步让状态可信。
+- 影响：`launchd-service.ts`（keepAlive 渲染）、`factory-services.ts`（bridge keepAlive: true）、`factory-application.ts`（reconcileAgentService 抽取 + settleEmployee 接入 + CURRENT_STATE 同步）、`bridge-service.test.ts`（KeepAlive 渲染 + bridge 常驻断言）、`lifecycle-reconcile.test.ts`（settle 周期自愈 3 条：拉起/关停/维持）；增测 5 条；全量 506 测试 + build/lint 全绿。
+
+---
+
 ## D-046：飞书消息元数据上抛 usage 审计 + 任务完成态自动写状态
 
 - 状态：Accepted（已实施，TASK-050；TASK-051 收口 bridge 升级与模型确认）

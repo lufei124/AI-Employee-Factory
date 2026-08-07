@@ -91,7 +91,9 @@ export class LaunchdServiceAdapterFactory implements ServiceAdapterFactory {
       stdoutPath: path.join(logDir, 'bridge.stdout.log'),
       stderrPath: path.join(logDir, 'bridge.stderr.log'),
       // D-032：员工桥接服务默认随开机常驻（RunAtLoad<true/>）；停止时由 lifecycleAction 改写为 false。
+      // D-052：KeepAlive<true/>——bridge 进程意外退出/被杀后 launchd 自动重启（本次 SIGTERM 后无 KeepAlive 不重启即根因）。
       runAtLoad: true,
+      keepAlive: true,
     };
     return new LaunchdServiceAdapter(
       input,

@@ -126,6 +126,8 @@ agentctl stop user-operations
 
 Bridge 使用官方 `@larksuite/channel` WebSocket 长连接，不需要配置 webhook。Factory 生成自有 launchd plist，运行 Bridge 的前台 `run` 命令，从而强制注入 `CLAUDE_CONFIG_DIR`/`CODEX_HOME` 和员工专属 `LARK_CHANNEL_HOME`。plist 不包含 Secret。
 
+常驻服务带 `KeepAlive`（D-052）：bridge 进程意外退出/被杀后 launchd 自动重启；周期 settle（每 5 分钟）也会做服务自愈——「意图常驻但没在跑」的服务自动拉起、状态同步回 registry 与 `agent/CURRENT_STATE.md`（含单文件 git 提交），Web 进化历史能看到「系统检测到桥接服务中断，已自动拉起」。主动 `stop` 仍走 `launchctl bootout`，不受 KeepAlive 影响。
+
 授权完成后，Factory 会把 Bridge profile 的 `permissions.defaultAccess` 与 `maxAccess` 收紧为 `workspace`，避免上游默认 `full` 映射为 Claude `bypassPermissions` 或 Codex `danger-full-access`。启动前会再次校验并同步该安全配置。基础即时消息不需要手工编造权限清单；群聊免 @、会议 Agent 等扩展能力应按 Bridge 官方增量授权流程单独开启。
 
 ## 聊天、单次任务和日志
@@ -322,7 +324,7 @@ agentctl archive user-operations
 
 ## 当前限制与 Roadmap
 
-v1 不包含常驻 Web 服务、局域网/远程访问、账号系统、浏览器内终端、多 Agent 共享机器人 Router、Agent 自由互聊、云端多租户、Skill 市场、生产数据写入、知识图谱或 systemd 实现。核心模型是「单一 AI 员工 + 定时 Job + Web 单轮对话」；Chief 编排、Todo 状态机与 MCP 接入已于 TASK-030（D-027）移除。后续优先项是 systemd adapter 与可选的加密 Secret provider。分层自进化协议（D-041）已完成全部五阶段：三开关默认开 + 经验两级化（M2）、提案对账账本 + Web 只读收敛 + 创建骨架化（M3）、遗忘归档 + 身份 git 回滚（M4）、doctor 检查项 + Web 进化历史 + 检索增强（M5）；检索增强由 D-042 进一步升级为 BM25 召回引擎 + 运行时 RAG 注入（`knowledge/.retrieved.md`）；显式 runtime 迁移工作流已由 D-044（TASK-048）落地（claude ↔ codex 双向）；archival 后端由 D-045（TASK-049）落地（local-sqlite 单条显式归档）；飞书消息元数据上抛 usage 审计 + 任务完成态自动写状态由 D-046（TASK-050）落地。
+v1 不包含常驻 Web 服务、局域网/远程访问、账号系统、浏览器内终端、多 Agent 共享机器人 Router、Agent 自由互聊、云端多租户、Skill 市场、生产数据写入、知识图谱或 systemd 实现。核心模型是「单一 AI 员工 + 定时 Job + Web 单轮对话」；Chief 编排、Todo 状态机与 MCP 接入已于 TASK-030（D-027）移除。后续优先项是 systemd adapter 与可选的加密 Secret provider。分层自进化协议（D-041）已完成全部五阶段：三开关默认开 + 经验两级化（M2）、提案对账账本 + Web 只读收敛 + 创建骨架化（M3）、遗忘归档 + 身份 git 回滚（M4）、doctor 检查项 + Web 进化历史 + 检索增强（M5）；检索增强由 D-042 进一步升级为 BM25 召回引擎 + 运行时 RAG 注入（`knowledge/.retrieved.md`）；显式 runtime 迁移工作流已由 D-044（TASK-048）落地（claude ↔ codex 双向）；archival 后端由 D-045（TASK-049）落地（local-sqlite 单条显式归档）；飞书消息元数据上抛 usage 审计 + 任务完成态自动写状态由 D-046（TASK-050）落地；bridge 服务中断自愈（launchd KeepAlive + settle 周期状态同步）由 D-052（TASK-052）落地。
 
 **关于飞书（D-046 答疑，TASK-051 收口）**：
 

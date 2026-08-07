@@ -851,7 +851,7 @@ Result: 全局 `npm install -g lark-channel-bridge@0.7.0`（0.5.9→0.7.0，/opt
 Task ID: TASK-052
 Title: bridge 服务中断自愈——launchd KeepAlive + settle 周期状态同步（D-052）
 Owner agent: claude-20260807-01
-Status: ACTIVE
+Status: DONE
 Branch/worktree: main
 Allowed scope: src/services/launchd-service.ts（keepAlive 渲染）、src/services/factory-services.ts（bridge 常驻 keepAlive: true）、src/application/factory-application.ts（reconcile 每员工逻辑抽方法 + settleEmployee 接入 + CURRENT_STATE 状态同步）、tests/service-adapter.test.ts、tests/lifecycle-reconcile.test.ts、docs/DECISIONS.md（D-052）、README.md、.agent 簿记
 Forbidden scope: 不改 lifecycle 语义（stop=pause、setRunAtLoad 关停逻辑不变）；不给周期服务（settle/job）加 KeepAlive；不做共享 Router；不处理 identity-guard 拒提交问题（员工自进化另一问题，本任务只修服务中断自愈）
@@ -859,4 +859,6 @@ Dependencies: 用户拍板「KeepAlive + 状态同步」「走任务流程（推
 Expected output: bridge plist 写 KeepAlive<true/>（进程意外退出/被杀后 launchd 自动重启；主动 stop 仍由 bootout 生效）；reconcileServices 每员工决策逻辑抽成可复用方法并在 settleEmployee（每 5 分钟周期）也调用——自动拉起「意图常驻但没在跑」的服务、关停「已停止但仍在跑」、回写 registry 真实状态；状态变化时同步 CURRENT_STATE（含单文件 git 提交）
 Acceptance criteria: 新增测试全绿（renderLaunchdPlist keepAlive 渲染 true/false、bridge 服务 keepAlive、settle 拉起死服务 + registry 状态同步 + CURRENT_STATE 更新）；既有 reconcileServices 测试不回归；npm test/build/lint 全绿；任务完成即 commit（不 push）
 Started at: 2026-08-07 16:35 +0800
-Updated at: 2026-08-07 16:35 +0800
+Updated at: 2026-08-07 16:52 +0800
+Result: 代码——launchd-service.ts 加 keepAlive?: boolean，renderLaunchdPlist 仅显式 true 渲染 `<key>KeepAlive</key><true/>`（周期服务缺省不写，避免崩溃立即重启）；factory-services.ts bridge() 设 keepAlive: true；factory-application.ts 把 reconcileServices 每员工决策抽成 reconcileAgentService（archive/未启用 bridge 跳过；autoStart && real≠running && auth=ready → prepareRuntime+secureBridgeProfile+start；!autoStart && real=running → stop+setRunAtLoad(false)；否则维持真实状态），reconcileServices 与 settleEmployee（每 5 分钟周期）共用；状态变化回写 registry + 同步 CURRENT_STATE（运行中/已停止 + last_event「系统检测到桥接服务中断，已自动拉起」等，经 syncCurrentState 单文件 git 提交）。测试——bridge-service.test.ts 加 KeepAlive 渲染 + bridge factory plist 断言，lifecycle-reconcile.test.ts 加 settle 周期自愈 3 条（拉起+registry+CURRENT_STATE/关停/维持）；全量 506 测试 + build/lint 全绿。运行时验证——agentctl restart user-operations 落地 canonical plist 含 `<key>KeepAlive</key><true/>`、服务 running（pid 1977）；kill 模拟崩溃 → launchd 自动重启（新 pid 2123）、bridge 重连 bot 喵小弟；settle 周期服务已安装（StartInterval 300s，到点触发 reconcile）。D-052 ADR + README（常驻 KeepAlive + settle 自愈说明 + roadmap 补 D-052）。
+```

@@ -149,6 +149,71 @@ describe('reconcileServices（D-032：Web 启动拉起常驻员工）', () => {
   });
 });
 
+describe('settleEmployee 周期自愈（D-052）', () => {
+  it('检测意图常驻但未在跑的服务 → 拉起 + 回写 running + CURRENT_STATE 同步', async () => {
+    isAutoStart.mockResolvedValue(true);
+    status.mockResolvedValue({ state: 'not-installed', detail: '' });
+    const { app } = await setup();
+    await createBridgeAgent(app, 'a6');
+    // 本测试只验证服务自愈，隔离身份对账（settleActive）。
+    vi.spyOn(
+      app as unknown as { settleActive: () => Promise<unknown> },
+      'settleActive',
+    ).mockResolvedValue(undefined);
+
+    await app.settleEmployee('a6');
+
+    expect(start).toHaveBeenCalledWith();
+    const saved = await app.registry.read();
+    const agent = saved.agents.find((item) => item.id === 'a6');
+    expect(agent?.status).toBe('running');
+    // D-052：状态变化同步 CURRENT_STATE（此前仅 Web 启动 reconcile 不写，bridge 已死仍显示运行中）。
+    const currentState = await fs.readFile(
+      path.join(agent!.workspace.path, 'agent', 'CURRENT_STATE.md'),
+      'utf8',
+    );
+    expect(currentState).toContain('系统检测到桥接服务中断，已自动拉起');
+  });
+
+  it('检测意图已停止但仍在跑的服务 → 关停 + 回写 stopped + 改写 RunAtLoad false', async () => {
+    isAutoStart.mockResolvedValue(false);
+    status.mockResolvedValue({ state: 'running', detail: '' });
+    const { app } = await setup();
+    await createBridgeAgent(app, 'a7');
+    await app.registry.updateAgent('a7', (current) => ({ ...current, status: 'running' }));
+    vi.spyOn(
+      app as unknown as { settleActive: () => Promise<unknown> },
+      'settleActive',
+    ).mockResolvedValue(undefined);
+
+    await app.settleEmployee('a7');
+
+    expect(stop).toHaveBeenCalledWith();
+    expect(setRunAtLoad).toHaveBeenCalledWith(false);
+    const saved = await app.registry.read();
+    expect(saved.agents.find((item) => item.id === 'a7')?.status).toBe('stopped');
+  });
+
+  it('常驻且运行中 → 维持不打扰（不调 start/stop）', async () => {
+    isAutoStart.mockResolvedValue(true);
+    status.mockResolvedValue({ state: 'running', detail: '' });
+    const { app } = await setup();
+    await createBridgeAgent(app, 'a8');
+    await app.registry.updateAgent('a8', (current) => ({ ...current, status: 'running' }));
+    vi.spyOn(
+      app as unknown as { settleActive: () => Promise<unknown> },
+      'settleActive',
+    ).mockResolvedValue(undefined);
+
+    await app.settleEmployee('a8');
+
+    expect(start).not.toHaveBeenCalled();
+    expect(stop).not.toHaveBeenCalled();
+    const saved = await app.registry.read();
+    expect(saved.agents.find((item) => item.id === 'a8')?.status).toBe('running');
+  });
+});
+
 describe('lifecycleAction 停止＝暂停（D-032）', () => {
   it('stop 调用 setRunAtLoad(false)，使停机跨重启保持', async () => {
     isAutoStart.mockResolvedValue(true);

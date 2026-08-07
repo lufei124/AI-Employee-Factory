@@ -16,6 +16,10 @@ export interface LaunchdPlistInput {
   startInterval?: number;
   /** D-032：true 时 plist 写 RunAtLoad<true/>，员工随开机常驻；默认 false（定时任务等）。 */
   runAtLoad?: boolean;
+  /** D-052：true 时 plist 写 KeepAlive<true/>，进程意外退出/被杀后 launchd 自动重启。
+   *  仅用于需要自愈的常驻服务（bridge）；周期服务（settle/job）不设，避免「崩溃→立即重启」无限循环。
+   *  主动 stop 走 launchctl bootout，KeepAlive 不参与停止语义。 */
+  keepAlive?: boolean;
 }
 
 function xml(value: string): string {
@@ -50,7 +54,8 @@ export function renderLaunchdPlist(input: LaunchdPlistInput): string {
       ? `<key>StartCalendarInterval</key><dict><key>Hour</key><integer>${input.calendar.hour}</integer><key>Minute</key><integer>${input.calendar.minute}</integer></dict>`
       : '';
   const runAtLoad = input.runAtLoad === true ? '<true/>' : '<false/>';
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>${xml(input.label)}</string><key>ProgramArguments</key>${array([input.program, ...input.args])}<key>EnvironmentVariables</key>${dictionary(input.env)}<key>WorkingDirectory</key><string>${xml(path.dirname(input.stdoutPath))}</string><key>StandardOutPath</key><string>${xml(input.stdoutPath)}</string><key>StandardErrorPath</key><string>${xml(input.stderrPath)}</string><key>RunAtLoad</key>${runAtLoad}${calendar}${startInterval}</dict></plist>\n`;
+  const keepAlive = input.keepAlive === true ? '<key>KeepAlive</key><true/>' : '';
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>${xml(input.label)}</string><key>ProgramArguments</key>${array([input.program, ...input.args])}<key>EnvironmentVariables</key>${dictionary(input.env)}<key>WorkingDirectory</key><string>${xml(path.dirname(input.stdoutPath))}</string><key>StandardOutPath</key><string>${xml(input.stdoutPath)}</string><key>StandardErrorPath</key><string>${xml(input.stderrPath)}</string><key>RunAtLoad</key>${runAtLoad}${keepAlive}${calendar}${startInterval}</dict></plist>\n`;
 }
 
 export class LaunchdServiceAdapter implements ServiceAdapter {

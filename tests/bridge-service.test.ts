@@ -142,7 +142,25 @@ describe('launchd plist', () => {
     expect(renderLaunchdPlist(base)).toContain('<key>RunAtLoad</key><false/>');
   });
 
-  it('bridge factory installs a RunAtLoad<true/> plist (常驻随开机)', async () => {
+  // D-052：KeepAlive 由 input 控制——bridge 常驻自愈用 true；周期服务（settle/job）不设，避免崩溃立即重启。
+  it('emits KeepAlive only for an explicit true flag', () => {
+    const base = {
+      label: 'com.aiemployees.user-operations',
+      program: '/usr/local/bin/agentctl',
+      args: ['_service', 'bridge', 'user-operations'],
+      env: { CLAUDE_CONFIG_DIR: agent.runtime_home.path },
+      stdoutPath: '/tmp/private/logs/user-operations/bridge.stdout.log',
+      stderrPath: '/tmp/private/logs/user-operations/bridge.stderr.log',
+    };
+    expect(renderLaunchdPlist({ ...base, keepAlive: true })).toContain(
+      '<key>KeepAlive</key><true/>',
+    );
+    expect(renderLaunchdPlist({ ...base, keepAlive: false })).not.toContain('KeepAlive');
+    // 缺省（定时/周期任务等）不渲染 KeepAlive，向后兼容。
+    expect(renderLaunchdPlist(base)).not.toContain('KeepAlive');
+  });
+
+  it('bridge factory installs a RunAtLoad<true/> + KeepAlive<true/> plist (常驻自愈)', async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-bridge-runatload-'));
     try {
       const paths = resolveFactoryPaths({
@@ -157,6 +175,8 @@ describe('launchd plist', () => {
         'utf8',
       );
       expect(canonical).toContain('<key>RunAtLoad</key><true/>');
+      // D-052：bridge 进程意外退出/被杀后 launchd 自动重启。
+      expect(canonical).toContain('<key>KeepAlive</key><true/>');
       expect(await service.isAutoStart()).toBe(true);
     } finally {
       await fs.remove(home);

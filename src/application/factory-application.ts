@@ -314,37 +314,9 @@ export class FactoryApplication {
     const data = await this.registry.read();
     const activated: string[] = [];
     for (const agent of data.agents) {
-      if (agent.archived || !agent.bridge.enabled) continue;
       try {
         const config = await readAgentConfigFile(path.join(agent.workspace.path, 'agent.yaml'));
-        const service = bridgeLaunchdService(agent, config.runtime, this.paths);
-        const [autoStart, real] = await Promise.all([service.isAutoStart(), service.status()]);
-        let nextStatus: RegistryAgent['status'];
-        // 自检决策留痕：autoStart/真实状态/授权→动作，便于事后还原「谁在何时把服务停/起」。
-        const decision = `[reconcile] ${agent.id} autoStart=${autoStart} real=${real.state} auth=${agent.bridge.authorization} status=${agent.status}`;
-        if (autoStart && real.state !== 'running' && agent.bridge.authorization === 'ready') {
-          await this.prepareRuntime(agent, config);
-          await this.secureBridgeProfile(agent, config.runtime);
-          await service.start();
-          activated.push(agent.id);
-          nextStatus = 'running';
-          console.warn(`${decision} → 拉起`);
-        } else if (!autoStart && real.state === 'running') {
-          await service.stop();
-          await service.setRunAtLoad(false);
-          nextStatus = 'stopped';
-          console.warn(`${decision} → 关停（autoStart=false 且仍在运行）`);
-        } else {
-          nextStatus = real.state === 'running' ? 'running' : 'stopped';
-          console.warn(`${decision} → 维持 ${nextStatus}`);
-        }
-        if (nextStatus !== agent.status) {
-          await this.registry.updateAgent(agent.id, (current) => ({
-            ...current,
-            status: nextStatus,
-            updated_at: new Date().toISOString(),
-          }));
-        }
+        if (await this.reconcileAgentService(agent, config)) activated.push(agent.id);
       } catch (error) {
         // best-effort：单个员工故障/未就绪不阻断整体；但留下可查的现场，
         // 否则服务被意外停/无法拉起时无任何日志（本次 17:56 SIGTERM 排查即因此盲区）。
@@ -354,6 +326,54 @@ export class FactoryApplication {
       }
     }
     return { activated };
+  }
+
+  /** D-052：单个员工的桥接服务自愈决策（从 reconcileServices 抽出供 settleEmployee 复用）。
+   *  按「autoStart 意图 / launchd 真实状态 / 授权」决策：意图常驻但没在跑 → prepareRuntime +
+   *  secureBridgeProfile + start + 激活；已停止但仍在跑 → stop + 关掉自启；否则维持真实状态。
+   *  状态变化时回写 registry 并同步 CURRENT_STATE（单文件 git 提交），让 Web 进化历史一眼看到真实服务状态。
+   *  返回是否拉起了服务。best-effort：内部异常由调用方 catch；archive/未启用 bridge 直接跳过。 */
+  private async reconcileAgentService(agent: RegistryAgent, config: AgentConfig): Promise<boolean> {
+    if (agent.archived || !agent.bridge.enabled) return false;
+    const service = bridgeLaunchdService(agent, config.runtime, this.paths);
+    const [autoStart, real] = await Promise.all([service.isAutoStart(), service.status()]);
+    let nextStatus: RegistryAgent['status'];
+    // 自检决策留痕：autoStart/真实状态/授权→动作，便于事后还原「谁在何时把服务停/起」。
+    const decision = `[reconcile] ${agent.id} autoStart=${autoStart} real=${real.state} auth=${agent.bridge.authorization} status=${agent.status}`;
+    let activated = false;
+    if (autoStart && real.state !== 'running' && agent.bridge.authorization === 'ready') {
+      await this.prepareRuntime(agent, config);
+      await this.secureBridgeProfile(agent, config.runtime);
+      await service.start();
+      activated = true;
+      nextStatus = 'running';
+      console.warn(`${decision} → 拉起`);
+    } else if (!autoStart && real.state === 'running') {
+      await service.stop();
+      await service.setRunAtLoad(false);
+      nextStatus = 'stopped';
+      console.warn(`${decision} → 关停（autoStart=false 且仍在运行）`);
+    } else {
+      nextStatus = real.state === 'running' ? 'running' : 'stopped';
+      console.warn(`${decision} → 维持 ${nextStatus}`);
+    }
+    if (nextStatus !== agent.status) {
+      await this.registry.updateAgent(agent.id, (current) => ({
+        ...current,
+        status: nextStatus,
+        updated_at: new Date().toISOString(),
+      }));
+      // D-052：状态变化同步 CURRENT_STATE（此前仅 Web 启动 reconcile 不写状态，bridge 已死但仍显示「运行中」）。
+      await this.syncCurrentState(agent.id, agent.workspace.path, {
+        state: nextStatus === 'running' ? '运行中' : '已停止',
+        last_event: activated
+          ? '系统检测到桥接服务中断，已自动拉起'
+          : nextStatus === 'stopped'
+            ? '系统检测到已停止服务仍在运行，已自动关停'
+            : '系统刷新服务状态',
+      });
+    }
+    return activated;
   }
 
   async getAgent(id: string): Promise<{ registry: RegistryAgent; agent: AgentConfig }> {
@@ -1826,6 +1846,15 @@ export class FactoryApplication {
   // D-035：对飞书员工执行一次无 transcript 的沉淀（仅 adopt/提交/reconcile，供定时扫描与手动触发）。
   async settleEmployee(id: string): Promise<void> {
     const { registry, agent } = await this.getAgent(id);
+    // D-052：周期 settle（每 5 分钟）顺带做桥接服务自愈——「意图常驻但没在跑」的服务拉起、
+    // 「已停止但仍在跑」的服务关停，并同步 registry + CURRENT_STATE。此前 reconcileServices
+    // 仅在 Web 控制台启动时运行，无 Web 场景服务中断（如 17:56 SIGTERM）永不自动恢复。
+    // best-effort：reconcile 失败仅告警，不阻断身份对账主流程。
+    await this.reconcileAgentService(registry, agent).catch((error) =>
+      console.warn(
+        `[settle-reconcile] ${id} 服务自检失败（跳过，不阻断 settle）：${error instanceof Error ? error.message : String(error)}`,
+      ),
+    );
     await this.settleActive(id, agent, registry);
   }
 
