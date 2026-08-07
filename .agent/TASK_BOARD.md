@@ -748,3 +748,20 @@ Acceptance criteria: 新增测试（gitShowCommitFiles + files/content 端点含
 Started at: 2026-08-07 10:58 +0800
 Updated at: 2026-08-07 11:15 +0800
 Result: gitShowCommitFiles + evolutionCommitFiles/evolutionFileContent（双向路径防护）+ GET evolution/files + evolution/content + EvolutionTab 钻取（提交高亮 → 文件清单带 A/M/D/R 徽章 → pre 全文）；增测 git/web-management-api（含 .. 与 .git 穿越拒绝、缺参 400、无文件 404）；顺手修复 M3 骨架化后 e2e 三条过期断言（Skills 预置 skill / 身份文档只读预览 / feedback skill 路径）；全量 444 测试 + build/lint/tsc/e2e 全绿。
+```
+
+```text
+Task ID: TASK-046
+Title: .md 记忆检索增强（D-042）——BM25 召回引擎升级 + 运行时 RAG 注入（knowledge/.retrieved.md）
+Owner agent: claude-20260807-01
+Status: DONE
+Branch/worktree: main
+Allowed scope: src/core/knowledge.ts（KnowledgeRecallHit.snippet?）、src/core/knowledge-index.ts（正文入索引 + InvertedIndex v2 + BM25 + 中文整词/大词恒开 + 模糊回退 + snippet + mtime 自动重建 + scan 跳过便签）、src/core/retrieval-brief.ts（新）、src/application/factory-application.ts（recallForTask + 注入 runBridgeMessage/runJob）、src/core/templates.ts（gitignore .retrieved.md + ensureRuntimePrompt 幂等标记）、templates/claude-agent/ENTRY.md.tmpl、templates/codex-agent/ENTRY.md.tmpl（RAG 阅读行）、src/cli-program.ts（recall 打印 snippet）、tests/knowledge.test.ts、tests/self-evolution.test.ts、docs/DECISIONS.md、README.md、.agent 簿记
+Forbidden scope: 不动 usage.db（用量分析库维持现状，非对话存储）；不改提示词主体/正式知识文件；不引入向量库/新 DB/对外网络外发
+Dependencies: 用户批准的检索增强方案（AskUserQuestion：引擎增强+运行时注入 / usage.db 保留现状）、TASK-044（recall 证据）
+Expected output: 召回引擎升级为 BM25 排序（正文全文入索引 + 字段加权 + top-8 相关度下限）、中文整词/字符大词恒开混合（不再全或无回退）、错拼模糊回退、命中带正文片段 snippet、索引按 mtime 自动重建（模型直写 knowledge/ 后无需手动 rebuild）；运行时注入——每次 run/Job/飞书消息执行前系统把相关召回结果写入 knowledge/.retrieved.md 便签（三重隔离：dot 前缀+无 frontmatter+scan 跳过 / gitignore / 归档不碰），员工开场先读
+Acceptance criteria: 新增测试全绿（knowledge：正文召回/中文混合/模糊错拼/snippet/便签忽略；self-evolution：recallForTask 写便签 + git 排除 + 未入索引 + 未归档）；npm test/build/lint/tsc/e2e 全绿；任务完成即 commit（不 push）
+Started at: 2026-08-07 11:30 +0800
+Updated at: 2026-08-07 12:10 +0800
+Result: knowledge-index.ts 全量重写（A1 正文入索引上限 2000 token/文档 → A2 InvertedIndex v2 确定性构建 + version 升 2 + readIndex v1 重建 → A3 BM25 K1=1.5/B=0.75 字段加权 title2.0/keywords1.8/summary1.3/body1.0 + top-8 + 0.15×topScore 下限 → A4 chineseKeywords 整词+大词恒开导出 → A5 模糊回退 0.6×idf → A6 recallDetail 一次磁盘读 evidence+snippet → A7 readIndex mtime 节流 10s 自动重建 + scan 跳过 .retrieved.md）；新建 retrieval-brief.ts 渲染便签；FactoryApplication.recallForTask（原子写，仅 hits>0）+ 注入 runBridgeMessage/runJob（chat 跳过）；templates gitignore + 两 ENTRY RAG 阅读行 + ensureRuntimePrompt 幂等标记（含 knowledge/.retrieved.md 阅读行）；CLI recall 打印 snippet；增测 knowledge 5 条 + self-evolution 1 条；全量 450 测试 + build/lint/tsc/e2e 全绿。
+```

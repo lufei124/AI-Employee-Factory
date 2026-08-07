@@ -140,7 +140,8 @@ export async function renderAgentWorkspace(input: {
     // T01：基线提交不应跟踪运行时敏感配置。.claude/settings.json 由模板生成（permissions 默认），
     // 属本机运行时产物、备份按 basename 排除为敏感文件，故从 Git 跟踪中剔除。
     // D-041 P2-1：knowledge/.archive/ 遗忘归档目录不进 git（归档条目不膨胀 git 历史，可恢复）。
-    '.env\n.env.*\n!.env.example\n*.pem\n*.key\n*.p12\n*.token\nconfig/env.local\n.claude/settings.json\nlogs/*\n!logs/.gitkeep\nknowledge/.index.json\nknowledge/.archive/\n.DS_Store\n',
+    // D-042 B5：knowledge/.retrieved.md 运行时 RAG 便签不进 git（每次任务覆盖写，非正式知识）。
+    '.env\n.env.*\n!.env.example\n*.pem\n*.key\n*.p12\n*.token\nconfig/env.local\n.claude/settings.json\nlogs/*\n!logs/.gitkeep\nknowledge/.index.json\nknowledge/.archive/\nknowledge/.retrieved.md\n.DS_Store\n',
   );
   await fs.ensureFile(path.join(workspace, 'logs/.gitkeep'));
   // OP1 Stage B：knowledge/ 目录约定。以 frontmatter（title/summary/keywords/updated_at/authority_layer）
@@ -303,7 +304,9 @@ export async function ensureRuntimePrompt(input: {
   const existing = await fs.readFile(file, 'utf8').catch(() => '');
   if (
     existing.includes('## 宿主平台（AI Employee Factory）') &&
-    existing.includes(RUNTIME_PROMPT_PROTOCOL_MARKER)
+    existing.includes(RUNTIME_PROMPT_PROTOCOL_MARKER) &&
+    // D-042 B4：已含 RAG 便签阅读行（knowledge/.retrieved.md）视为已回填，幂等不反复覆盖。
+    existing.includes('knowledge/.retrieved.md')
   ) {
     return false;
   }

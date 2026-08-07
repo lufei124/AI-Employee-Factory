@@ -217,6 +217,54 @@ describe('员工自我进化（TASK-029）', () => {
     expect(status.stdout).not.toContain('lessons/batch.md');
   });
 
+  it('recallForTask 写入 .retrieved.md 便签：gitignored、永不被 evolve 提交/索引/归档（D-042 B5）', async () => {
+    const { app, paths } = await setup();
+    const workspace = path.join(paths.workspaceRoot, 'worker-a');
+    // 造一条可召回的知识（knowledgeWrite 会重取索引）。
+    await app.knowledgeWrite(
+      'worker-a',
+      'lessons/feishu-loop.md',
+      [
+        '---',
+        'title: 飞书消息闭环',
+        'summary: 飞书消息的闭环跟进',
+        'keywords: [飞书, 闭环]',
+        'updated_at: 2026-08-06',
+        '---',
+        '收到飞书消息后先确认问题，再闭环跟进。',
+      ].join('\n'),
+    );
+    // 模拟 runJob 前的召回注入：写入便签。
+    await app.recallForTask('worker-a', '飞书消息闭环跟进');
+    const scratchpad = path.join(workspace, 'knowledge', '.retrieved.md');
+    expect(await fs.pathExists(scratchpad)).toBe(true);
+    const content = await fs.readFile(scratchpad, 'utf8');
+    expect(content).toContain('<!-- factory:retrieved -->');
+    expect(content).toContain('lessons/feishu-loop.md');
+
+    // runAdminJob 走完整自进化链后：便签未 evolve 提交，git status 也不含它（gitignored）。
+    // 唯一 seam = JobRunner 内的 ProcessRunner.runLogged（mock 底层运行器，验证提交逻辑而非真实 spawn）。
+    const { ProcessRunner } = await import('../src/core/process-runner.js');
+    vi.spyOn(ProcessRunner.prototype, 'runLogged').mockResolvedValue(fakeResult('完成。'));
+    await runAdminJob(app, 'content-output', '产出内容');
+    const status = await execa('git', ['status', '--short'], {
+      cwd: workspace,
+      shell: false,
+      extendEnv: false,
+      reject: false,
+    });
+    expect(status.stdout).not.toContain('.retrieved.md');
+    const log = await gitLog(workspace, 'knowledge/.retrieved.md');
+    expect(log).toHaveLength(0); // 从未被提交。
+
+    // 便签未入索引（scan 跳过点文件）、未被归档（.archive 不存在）。
+    const index = await fs.readJson(path.join(workspace, 'knowledge', '.index.json'));
+    expect(index.entries.some((e: { relPath: string }) => e.relPath === '.retrieved.md')).toBe(
+      false,
+    );
+    expect(await fs.pathExists(path.join(workspace, 'knowledge', '.archive'))).toBe(false);
+  });
+
   it('employee-authored skills/workflows/knowledge content is auto-committed (D-029 broaden)', async () => {
     const { app, paths } = await setup();
     const workspace = path.join(paths.workspaceRoot, 'worker-a');

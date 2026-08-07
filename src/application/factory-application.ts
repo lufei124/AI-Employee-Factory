@@ -27,6 +27,7 @@ import {
   purgeKnowledgeArchive,
   restoreKnowledge,
 } from '../core/knowledge-retention.js';
+import { RETRIEVED_BRIEF_FILE, renderRetrievalBrief } from '../core/retrieval-brief.js';
 import { FileLock } from '../core/locks.js';
 import { initializeFactory, readConfig } from '../core/config.js';
 import { CreateAgentService, type CreateAgentInput } from '../core/create-agent.js';
@@ -395,6 +396,30 @@ export class FactoryApplication {
   async knowledgeRecall(id: string, query: string): Promise<KnowledgeRecallResult> {
     const { registry } = await this.getAgent(id);
     return this.knowledgeIndex(registry).then((index) => index.recall(query));
+  }
+
+  // D-042 Part B：运行时 RAG 注入。按当前任务文本召回知识，命中时把便签写入
+  // `<workspace>/knowledge/.retrieved.md`（dot 前缀 + 无 frontmatter + .gitignore 三重隔离：
+  // 不进索引、不进 evolve 提交、归档不碰）。每次运行覆盖写 = 最后一次任务的缓存。
+  // 故意不用 knowledgeWrite（那会重取索引 + 提交）；best-effort，异常仅告警不阻断。
+  async recallForTask(id: string, taskText: string): Promise<void> {
+    const { registry } = await this.getAgent(id);
+    try {
+      const query = taskText.trim().slice(0, 4000);
+      if (!query) return;
+      const index = await this.knowledgeIndex(registry);
+      const result = await index.recall(query);
+      if (result.hits.length === 0) return; // 无命中不写，避免陈旧便签误导。
+      const brief = renderRetrievalBrief({
+        query,
+        hits: result.hits,
+        generatedAt: new Date().toISOString(),
+      });
+      const file = path.join(this.knowledgeRoot(registry), RETRIEVED_BRIEF_FILE);
+      await atomicWriteFile(file, brief, 0o644);
+    } catch (error) {
+      console.warn(`[recall-for-task] ${id} 召回写入便签失败（跳过）：`, error);
+    }
   }
 
   async knowledgeVerify(id: string): Promise<KnowledgeConsistency> {
@@ -1089,6 +1114,10 @@ export class FactoryApplication {
   // 用真实 claude 跑 runLogged（真实 transcript），再跑完整沉淀链（skill/记忆/提交/reconcile）。
   async runBridgeMessage(id: string, args: string[], stdin: string): Promise<number> {
     const { registry, agent } = await this.getAgent(id);
+    // D-042 Part B：按本条飞书消息召回相关记忆到 knowledge/.retrieved.md（best-effort）。
+    await this.recallForTask(id, stdin).catch((error) =>
+      console.warn(`[recall-for-task] ${id} 召回写入便签失败（跳过）：`, error),
+    );
     const realClaude =
       process.env.AIEMPLOYEES_REAL_CLAUDE || (await resolveRealClaude(process.env));
     const ctx: ExecutionContext = {
@@ -1570,6 +1599,13 @@ export class FactoryApplication {
     const { registry, agent } = await this.getAgent(id);
     const job = await new JobStore(registry.workspace.path).get(jobId);
     if (job.execution.type === 'agent') await this.prepareRuntime(registry, agent);
+    // D-042 Part B：agent 任务按 prompt 内容召回相关记忆到 knowledge/.retrieved.md
+    // （job-runner 在内部读 prompt；这里同源再读一次作 query，best-effort 失败仅告警）。
+    if (job.execution.type === 'agent') {
+      await this.recallForTask(id, await this.jobPrompt(registry, job)).catch((error) =>
+        console.warn(`[recall-for-task] ${id} 召回写入便签失败（跳过）：`, error),
+      );
+    }
     // OP1 Stage C+D：agent.yaml.memory.transcript_persist=true 时持久化会话摘要（经 options 透传），
     // experience_extraction=true 时提取经验写回 knowledge/lessons/（仅当 transcript_persist 已启用）。
     // D-041 P1-1：判定经 resolveMemoryFlags 归一（缺失开关按默认 true 启用）。
@@ -1583,6 +1619,14 @@ export class FactoryApplication {
         await this.settleActive(id, agent, registry, result.transcriptFile);
         return result;
       });
+  }
+
+  /** 读 agent 任务 prompt 全文（与 job-runner 同源：assertInside 收紧在工作区内）。 */
+  private async jobPrompt(registry: RegistryAgent, job: JobConfig): Promise<string> {
+    if (job.execution.type !== 'agent') return '';
+    const promptPath = path.resolve(registry.workspace.path, job.execution.prompt_file);
+    await assertInsideReal(registry.workspace.path, promptPath, '任务 Prompt 文件');
+    return fs.readFile(promptPath, 'utf8').catch(() => '');
   }
 
   // OP1 Stage A：运行前强制校验 memory/authority_order 不变量（W1 收敛）。

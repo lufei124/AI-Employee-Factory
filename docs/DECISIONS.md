@@ -1,5 +1,27 @@
 # Decisions
 
+## D-042：.md 记忆检索增强——BM25 召回引擎升级 + 运行时 RAG 注入
+
+- 状态：Accepted（已实施，TASK-046）
+- 日期：2026-08-07
+- 背景：用户问「现在对话都存在 db 是干嘛的，记忆检索应该对 .md」。查证：对话**不存 db**——`~/.ai-employees/logs/usage.db` 只是**用量/成本分析库**（每飞书消息的 duration/tokens/cost/exit_code/脱敏 prompt/`transcript_file` 指针），完整对话在 `logs/<agent>/runs/<slug>/stdout.log`（JSONL）+ `transcript.jsonl`，正式记忆在 `<workspace>/knowledge/**/*.md`。用户直觉成立：**记忆检索本就该对 .md**，usage.db 维持现状。真正的问题是 .md 侧两个短板：召回引擎弱（正文不进索引、仅精确 token 匹配、无模糊/中文混合、评分朴素、索引只在缺失时重建）+ 召回结果从不注入运行时（模型每次干活自己翻 `knowledge/`，系统不把「与当前任务相关的记忆」递到嘴边）。用户确认两个都修。
+- 决定：
+  - **A1 正文入索引**：`parseDocument` 不再丢弃正文——索引每条目内部形态 `IndexableEntry`（公开 `KnowledgeEntry` 不变）带 `len`（文档总 token 数）与 `fieldTokens{title/keywords/summary/body}`；正文 token 上限 ~2000/文档控 `.index.json` 体积。
+  - **A2 InvertedIndex v2**：`{[token]: TermPosting[]}`（记录各字段 tf）+ 每条目写 `len`；`version` 升 2，`readIndex` 检到 v1 文件一次性重建。`buildInverted` 改为**确定性**（token 排序 + posting 按 relPath 排序），保证 `verifyConsistency` 的 `JSON.stringify` 对比稳定。
+  - **A3 BM25 评分**（K1=1.5、B=0.75）：`idf_t = ln(1+(N-df_t+0.5)/(df_t+0.5))`，`score_d += w·idf_t·(tf·(k1+1))/(tf+k1·(1-b+b·dl/avgdl))`；字段权重 title=2.0 / keywords=1.8 / summary=1.3 / body=1.0；top-K=8 + 相关度下限 0.15×topScore。不加 layer 权重（与 README「正式业务知识 > 已确认决策」事实优先级一致）。
+  - **A4 中文整词 + 大词恒开**：删掉「仅零命中才走中文大词」的 all-or-nothing 分支——对每个汉字串 `len≥4` 整词 + 字符大词**同时**进查询 token 集，两者都进 BM25（正文中文同样大词入索引）。`chineseKeywords` 导出供测试。
+  - **A5 模糊/子串回退**：对零精确命中的查询 token 遍历词表（上限 10000），编辑距离 ≤1（≤7 字符）/ ≤2（≥8 字符）+ 长 token 前缀/子串；命中贡献 `0.6×idf`，精确命中占优。纯汉字 token 除外（噪音）。
+  - **A6 片段 snippet**：`KnowledgeRecallHit` 增 `snippet?: string`；`recallDetail` 一次磁盘读合并 refined 的 `because of:` 证据行 + 首个正文命中点前后 ~200 字符窗口（剥 markdown）。
+  - **A7 索引新鲜度**：`readIndex` 在 `.index.json` mtime 早于 `knowledge/**/*.md` 最新 mtime 时重建——节流到每 10s 一次 stat-tree（模块级时间戳），避免桥接热路径每消息全扫；覆盖「模型用自身工具直写 knowledge/ 后未触发 `knowledgeWrite` 重取」的陈旧窗口。
+  - **B1-B3 运行时 RAG 注入**：新增 `src/core/retrieval-brief.ts` 渲染无 frontmatter 便签（`<!-- factory:retrieved -->…<!-- factory:retrieved-end -->` 包裹，列 top-K 命中 `[[title]](relPath) [score]` + summary + snippet + evidence）。`FactoryApplication.recallForTask(id, taskText)` 在 `knowledge/.retrieved.md` 原子写便签（仅 hits>0 时写，避免陈旧缓存；故意**不用** `knowledgeWrite`，那会重取 + commit；best-effort 异常 warn-and-skip）。注入点均在建 ctx 前：`runBridgeMessage`（query=飞书消息 stdin）、`runJob`（`execution.type==='agent'` 时读 prompt 文件作 query）；`chat` 跳过（交互态，模型本就读 knowledge/）。
+  - **B4 模板与幂等**：gitignore 追加 `knowledge/.retrieved.md`；两个 `ENTRY.md.tmpl` 加「任务开始前先读 `knowledge/.retrieved.md`（系统按当前任务召回的相关记忆；不存在则跳过，以 `knowledge/` 正式文件为准；该文件系统自动生成、勿编辑/勿当正式知识）」；`ensureRuntimePrompt` 幂等标记检查扩展为「含 `knowledge/.retrieved.md` 阅读行」——否则每次 settle 重写 CLAUDE.md 刷 `evolve:` 提交。
+  - **B5 三重隔离**：dot 前缀 + 无 frontmatter + `scan()` 文件名显式跳过 → 永不进 `.index.json`、永不被召回；gitignore 行 → `gitStatusShort`（无 `--ignored`）不列出 → `commitSelfEvolution` 永不 commit；`archiveStaleKnowledge` 只扫 `lessons/{raw,refined}` 不碰。每次运行覆盖写 = 最后一次任务的缓存，可审计。
+- 边界：usage.db 维持现状（用量分析，非对话存储，Web「使用统计」+ `agentctl usage query` 依赖它）；`.retrieved.md` 不是正式知识、不参与索引/召回/提交/归档；注入仅新增读取提示（模型开场可读便签），不改提示词主体、不改正式知识文件。
+- 原因：正文不进索引是召回弱的最大根因（关键词只在标题/摘要/关键词命中）；BM25 相对朴素命中数评分大幅提升排序质量且无外部依赖；中文大词恒开避免「整词不中则全不中」的全或无断层；运行时注入把「检索」与「使用」接起来，模型开场即拿到与当前任务相关的记忆，比每次自己翻 `knowledge/` 更准、更省 token。
+- 影响：`knowledge.ts`（`KnowledgeRecallHit.snippet?`）、`knowledge-index.ts`（全量重写：正文索引 + InvertedIndex v2 + BM25 + 中文混合 + 模糊 + snippet + mtime 重取 + scan 跳过便签）、`retrieval-brief.ts`（新建）、`factory-application.ts`（recallForTask + 注入 runBridgeMessage/runJob）、`templates.ts`（gitignore + ensureRuntimePrompt 幂等标记）、两个 `ENTRY.md.tmpl`（RAG 阅读行）、`cli-program.ts`（recall 打印 snippet）；增测 knowledge（正文召回/中文混合/模糊错拼/snippet/便签忽略）、self-evolution（recallForTask 写便签 + git 排除 + 未入索引 + 未归档）；全量 450 测试 + build/lint/tsc/e2e 全绿。
+
+---
+
 ## D-041：分层自进化协议 M5 增强——进化历史「点开看」（提交 → 变更文件 → 文件全文）
 
 - 状态：Accepted（已实施，TASK-045）

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { FactoryApplication } from '../src/application/factory-application.js';
 import { CreateAgentService } from '../src/core/create-agent.js';
 import { initializeFactory } from '../src/core/config.js';
-import { KnowledgeIndexImpl, tokenize } from '../src/core/knowledge-index.js';
+import { KnowledgeIndexImpl, chineseKeywords, tokenize } from '../src/core/knowledge-index.js';
 import { KNOWLEDGE_INDEX_FILE } from '../src/core/knowledge.js';
 import { resolveFactoryPaths } from '../src/core/paths.js';
 import { RegistryStore } from '../src/core/registry.js';
@@ -178,6 +178,127 @@ describe('KnowledgeIndexImpl ingest/recall/compact/verifyConsistency (OP1 Stage 
     // 非 refined 条目不附带证据引用。
     const raw = recall.hits.find((hit) => hit.entry.relPath.startsWith('lessons/raw/'));
     expect(raw?.evidence).toBeUndefined();
+  });
+
+  it('indexes body prose — a keyword only in the body is recallable (D-042 A1)', async () => {
+    const { application, agentId } = await setup();
+    const dir = knowledgeDir(application, agentId);
+    // title/summary/keywords 均不含「闭环」；「闭环」只出现在正文。
+    await fs.writeFile(
+      path.join(dir, 'lessons', 'body-only.md'),
+      [
+        '---',
+        'title: 用户反馈处理',
+        'summary: 处理用户反馈的基本流程',
+        'keywords: [反馈]',
+        'updated_at: 2026-08-05',
+        '---',
+        '收到用户反馈后应先确认问题，再走闭环跟进流程。',
+      ].join('\n'),
+    );
+    const index = new KnowledgeIndexImpl(dir);
+    await index.ingest();
+    const recall = await index.recall('闭环');
+    expect(recall.hits.length).toBeGreaterThan(0);
+    expect(recall.hits[0]!.entry.relPath).toBe('lessons/body-only.md');
+  });
+
+  it('mixes Chinese whole-word and character-bigram tokens always-on (D-042 A4)', async () => {
+    expect(chineseKeywords('用户反馈闭环跟进')).toEqual(
+      expect.arrayContaining(['用户反馈闭环跟进', '用户', '反馈', '闭环', '跟进']),
+    );
+    const { application, agentId } = await setup();
+    const dir = knowledgeDir(application, agentId);
+    await fs.writeFile(
+      path.join(dir, 'lessons', 'zh-mix.md'),
+      [
+        '---',
+        'title: 飞书消息闭环',
+        'summary: 飞书消息的闭环跟进',
+        'keywords: [飞书]',
+        'updated_at: 2026-08-05',
+        '---',
+        '正文。',
+      ].join('\n'),
+    );
+    const index = new KnowledgeIndexImpl(dir);
+    await index.ingest();
+    // 查询整词「飞书消息闭环」虽非完整命中，但字符大词「消息」/「闭环」应命中。
+    const recall = await index.recall('飞书消息闭环');
+    expect(recall.hits.length).toBeGreaterThan(0);
+    expect(recall.hits[0]!.entry.relPath).toBe('lessons/zh-mix.md');
+  });
+
+  it("fuzzy fallback recalls a typo'd Latin keyword (D-042 A5)", async () => {
+    const { application, agentId } = await setup();
+    const dir = knowledgeDir(application, agentId);
+    await fs.writeFile(
+      path.join(dir, 'references', 'websocket.md'),
+      [
+        '---',
+        'title: WebSocket 连接',
+        'summary: WebSocket 长连接配置',
+        'keywords: [WebSocket, 连接]',
+        'updated_at: 2026-08-05',
+        '---',
+        '正文。',
+      ].join('\n'),
+    );
+    const index = new KnowledgeIndexImpl(dir);
+    await index.ingest();
+    const recall = await index.recall('websoket');
+    expect(recall.hits.length).toBeGreaterThan(0);
+    expect(recall.hits[0]!.entry.relPath).toBe('references/websocket.md');
+    expect(recall.hits[0]!.score).toBeGreaterThan(0);
+  });
+
+  it('attaches a body snippet to recall hits (D-042 A6)', async () => {
+    const { application, agentId } = await setup();
+    const dir = knowledgeDir(application, agentId);
+    await fs.writeFile(
+      path.join(dir, 'lessons', 'snippet.md'),
+      [
+        '---',
+        'title: 凭证过期排查',
+        'summary: 登录失败优先查凭证',
+        'keywords: [凭证]',
+        'updated_at: 2026-08-05',
+        '---',
+        '用户反馈登录失败时，先检查凭证有效期，再查网络与权限配置。',
+      ].join('\n'),
+    );
+    const index = new KnowledgeIndexImpl(dir);
+    await index.ingest();
+    const recall = await index.recall('凭证');
+    const hit = recall.hits.find((candidate) => candidate.entry.relPath === 'lessons/snippet.md');
+    expect(hit?.snippet).toBeDefined();
+    expect(hit?.snippet?.toLowerCase()).toContain('凭证');
+  });
+
+  it('ignores the .retrieved.md scratchpad in ingest and verifyConsistency (D-042 B5)', async () => {
+    const { application, agentId } = await setup();
+    const dir = knowledgeDir(application, agentId);
+    await fs.writeFile(
+      path.join(dir, 'lessons', 'real.md'),
+      [
+        '---',
+        'title: 真实条目',
+        'summary: 正式知识',
+        'keywords: [真实]',
+        'updated_at: 2026-08-05',
+        '---',
+        '正文。',
+      ].join('\n'),
+    );
+    // 无 frontmatter 的便签 + 已入 gitignore 的派生文件——scan 应跳过（点前缀 + 无 frontmatter 双保险）。
+    await fs.writeFile(path.join(dir, '.retrieved.md'), '<!-- factory:retrieved -->\n# 便签\n');
+    const index = new KnowledgeIndexImpl(dir);
+    const result = await index.ingest();
+    expect(result.entries).toBe(1); // 便签不计入。
+    const consistency = await index.verifyConsistency();
+    expect(consistency.ok).toBe(true); // 无孤立、无计数漂移。
+    const recall = await index.recall('便签');
+    expect(recall.hits.length).toBe(0); // 便签不可被召回。
   });
 });
 

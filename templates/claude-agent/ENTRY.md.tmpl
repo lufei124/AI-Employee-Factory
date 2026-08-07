@@ -2,6 +2,8 @@
 
 请先阅读 `agent/`、`knowledge/`、`skills/` 与 `tasks/` 中的正式文件。
 
+任务开始前先读 `knowledge/.retrieved.md`（系统按当前任务召回的相关记忆；不存在则跳过，以 `knowledge/` 正式文件为准；该文件系统自动生成、每次任务覆盖，勿编辑、勿当正式知识）。
+
 原生自动记忆只能作为辅助。当自动记忆与 `agent/`、`knowledge/`、`skills/` 或正式业务数据冲突时，必须以正式文件和正式业务数据为准。不得因为原生记忆内容而绕过权限规则。
 
 ## 宿主平台（AI Employee Factory）

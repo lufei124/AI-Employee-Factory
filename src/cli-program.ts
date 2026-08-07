@@ -951,12 +951,13 @@ function registerKnowledgeCommands(program: Command): void {
         console.log('未命中任何知识条目。');
         return;
       }
-      for (const { entry, score, matchedKeywords, evidence } of result.hits) {
+      for (const { entry, score, matchedKeywords, evidence, snippet } of result.hits) {
         console.log(
           `${chalk.green(entry.relPath)}  (score=${score}, 命中: ${matchedKeywords.join(', ')})`,
         );
         console.log(`  ${entry.title}`);
         if (entry.summary) console.log(`  ${entry.summary}`);
+        if (snippet) console.log(`  ${chalk.gray(`片段: ${snippet}`)}`);
         if (evidence && evidence.length > 0) {
           console.log(`  ${chalk.cyan('证据:')}`);
           for (const line of evidence) console.log(`    ${line}`);

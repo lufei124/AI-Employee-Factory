@@ -28,6 +28,8 @@ export interface KnowledgeRecallHit {
   /** D-041 P3-3：证据引用（`because of: knowledge/lessons/raw/<file>:<line>`），
    *  提炼经验经证据可回溯到一级原始记录（refined 命中才有）。 */
   evidence?: string[];
+  /** D-042：正文命中片段（首个命中点前后 ~200 字符，剥 markdown）。CLI/Web/运行时便签展示用。 */
+  snippet?: string;
 }
 
 export interface KnowledgeRecallResult {
