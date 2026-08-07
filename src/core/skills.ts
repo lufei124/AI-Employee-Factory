@@ -192,6 +192,23 @@ export class SkillService {
     const existing = await this.readStoreMetadata(target, name, scope);
     if (existing.digest === newDigest) return existing;
 
+    // 源即目标（原位自维护技能：autoAdoptSelfSkills 把 store 内路径同时当 source 与 target）：
+    // 只原位刷新 .agentctl.yaml 元数据 + 重投影，不做「先删再拷贝」的自我替换——否则
+    // source 被 remove 后 fs.copy 必然 ENOENT（skill-self adopt 报错根因，D-034 修复）。
+    if (resolved === target) {
+      const metadata: SkillMetadata = {
+        name,
+        version: this.nextVersion(existing.version, parseSkillFrontmatter(skillText).version),
+        source: existing.source ?? 'self',
+        installed_at: existing.installed_at,
+        digest: newDigest,
+        scope,
+      };
+      await fs.writeFile(path.join(target, '.agentctl.yaml'), YAML.stringify(metadata));
+      if (scope === 'project') await this.project(name);
+      return metadata;
+    }
+
     // 版本化替换：备份旧版 → 清理 target → stage 复制 → rename 覆盖 → 重投影。
     const stage = path.join(root, `.staging-${name}-${randomUUID()}`);
     const archived = await this.backupToArchive(target, name, existing.version);

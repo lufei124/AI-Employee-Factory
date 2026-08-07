@@ -291,6 +291,36 @@ describe('SkillService.upsert / adopt / rollback (D-034)', () => {
     expect(metaAfter).toBe(metaBefore);
   });
 
+  it('upserts a self-managed skill in place (source === target) without self-destructing (TASK-054)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-'));
+    roots.push(root);
+    const workspace = path.join(root, 'agent');
+    const source = path.join(root, 'self-skill');
+    await fs.outputFile(
+      path.join(source, 'SKILL.md'),
+      '---\nname: self-skill\ndescription: d\nversion: 1.0.0\n---\n',
+    );
+    const service = new SkillService(workspace, 'claude');
+    await service.upsert(source);
+    const storeDir = path.join(workspace, 'skills/self-skill');
+    // 模拟 autoAdoptSelfSkills 场景：员工改写了 store 内技能（digest 变化），新增数据文件。
+    await fs.outputFile(path.join(storeDir, 'collected.jsonl'), '{"ok":true}\n');
+
+    // 以 store 内路径为 source 调用 upsert → resolved === target，走原位刷新分支。
+    const metadata = await service.upsert(storeDir);
+
+    expect(metadata.version).toBe('1.0.1'); // 同版本号 patch+1
+    const meta = await fs.readFile(path.join(storeDir, '.agentctl.yaml'), 'utf8');
+    expect(meta).toContain(metadata.digest); // 元数据 digest 原位刷新
+    // 目录未被「先删再拷贝」重建——员工数据文件与 SKILL.md 都保留原位。
+    expect(await fs.pathExists(path.join(storeDir, 'collected.jsonl'))).toBe(true);
+    expect(await fs.pathExists(path.join(storeDir, 'SKILL.md'))).toBe(true);
+    // 投影软链保持。
+    expect(
+      (await fs.lstat(path.join(workspace, '.claude/skills/self-skill'))).isSymbolicLink(),
+    ).toBe(true);
+  });
+
   it('adopt writes metadata and projects a manually-written skill', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-skill-'));
     roots.push(root);
