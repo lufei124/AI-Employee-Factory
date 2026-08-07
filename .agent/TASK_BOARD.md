@@ -883,7 +883,7 @@ Result: 身份文档解锁——ROLE.md 开头插「# 岗位定位」+ agent.yam
 Task ID: TASK-054
 Title: 修复 doctor 既有两警告——skill-self self-upsert ENOENT（Factory bug）+ 旧 agent.yaml 补 memory.enforced
 Owner agent: claude-20260807-01
-Status: ACTIVE
+Status: DONE
 Branch/worktree: main
 Allowed scope: src/core/skills.ts（upsert 源即目标自毁修复）、tests/skills.test.ts（新增 self-upsert 用例）；员工 agent.yaml（memory 块补 enforced: true）；.agent 簿记
 Forbidden scope: 不改 autoAdoptSelfSkills 触发逻辑（保留自维护技能自进化语义）；不动 authority_order 内容；不改 digest 算法覆盖范围
@@ -891,5 +891,6 @@ Dependencies: TASK-053 收尾 doctor 剩 3 警告中 2 项——skill-self adopt
 Expected output: upsert 增加「resolved===target」分支——原位刷新 .agentctl.yaml（新 digest + nextVersion）+ project 投影，不做先删再拷贝的自我替换；新增测试覆盖 self-upsert（digest 变化 → 元数据刷新 + 投影保持 + 目录不丢）；agent.yaml memory 块补 enforced: true（authority_order 以 agent 开头、无重复，validateMemoryConfig 通过）
 Acceptance criteria: settle 后无「[skill-self] 自动 adopt 失败」；doctor「记忆强制」warn → pass（已启用运行时强制）；doctor 剩余警告仅 Codex 未安装（既有，与本任务无关）；npm test/build/lint 全绿；任务完成即 commit（不 push）
 Started at: 2026-08-07 18:58 +0800
-Updated at: 2026-08-07 18:58 +0800
+Updated at: 2026-08-07 19:15 +0800
+Result: Factory bug 修复——skills.ts upsert 增加「resolved===target」原位分支（TASK-054）：autoAdoptSelfSkills 对已改写的原位技能（digest 变化）调 upsert(source==target)，旧分支先 remove(target) 再 fs.copy(resolved) → source 已删 → ENOENT lstat（TASK-051 记录为「坏 symlink」实为自毁）；新分支只原位刷新 .agentctl.yaml（新 digest + nextVersion）+ project 投影，员工数据文件（feedback_raw.jsonl/.env）原位保留。新增测试「upserts a self-managed skill in place (source === target) without self-destructing (TASK-054)」验证元数据刷新 + 投影软链保持 + collected.jsonl/SKILL.md 不丢。员工 agent.yaml memory 块补 enforced: true（authority_order 合法，validateMemoryConfig 通过，config_hash 仅覆盖 runtime 块故无漂移）。验证——`agentctl bridge settle user-operations` 输出仅「✓ settle 完成」无 skill-self ENOENT；skill .agentctl.yaml digest 原位刷新为 a01bf8…（与实测一致）；员工 git log 出现 evolve: 更新 agent.yaml + evolve: 更新 .agentctl.yaml；doctor 33 通过/2 警告/0 失败（「记忆强制」已启用运行时强制 pass；2 警告为既有 Codex 未安装 + 最近日志历史 ENOENT 行，均非本任务引入）；全量 npm test 507/507 + build/lint 全绿。
 ```
