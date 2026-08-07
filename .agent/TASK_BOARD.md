@@ -814,3 +814,19 @@ Started at: 2026-08-07 13:40 +0800
 Updated at: 2026-08-07 14:00 +0800
 Result: archival-local-sqlite.ts（LocalSqliteArchivalBackend：archive 幂等 INSERT OR IGNORE + 二次 redactSecrets + 0600 + WAL；validateArchivalRelPath 形状校验；assertArchivableWorkspacePath 白名单 + assertInsideReal 防逃逸；list/query 过滤）；factory-application 三方法（archivalAdd 读文件 + frontmatter authority_layer 推断 defaultLayerFor + 幂等返回既有引用）；cli-program archival 组（add/list/query）；增测 11 条（含 app 层 e2e 与范围隔离）；全量 483 测试 + build/lint/tsc 全绿 + CLI 冒烟（add 幂等 / list 审计）。
 ```
+
+```text
+Task ID: TASK-050
+Title: 飞书消息元数据上抛 usage 审计 + 任务完成态自动写状态（D-046 + D-041 完成态闭环）
+Owner agent: claude-20260807-01
+Status: IN_PROGRESS
+Branch/worktree: main
+Allowed scope: src/core/bridge-audit.ts（新）、src/core/usage-log.ts（元数据列迁移）、src/core/current-state.ts（last_task 键）、src/application/factory-application.ts（bridgeAudit + runBridgeMessage 埋元数据 + syncTaskStart/Complete + 三挂钩点）、src/cli-program.ts（usage audit）、src/web/server.ts（GET usage/messages）、web/src/api.ts + web/src/pages/AgentDetailPage.tsx（最近飞书消息列表）、tests/bridge-audit.test.ts（新）、tests/task-state.test.ts（新）、tests/usage-log.test.ts、tests/current-state.test.ts、tests/cli-structure.test.ts、tests/web-ui.test.tsx、docs/DECISIONS.md（D-046）、README.md、.agent 簿记
+Forbidden scope: 不升级 bridge（JSONL schema 变更记作升级风险）；不改 bridge 私有日志格式写入；不把完整消息 id 显示到 CLI/Web（仅截断展示）
+Dependencies: 用户拍板「CLI+Web 都做」「开始+完成都写」（AskUserQuestion）、已批准计划（TASK-050）
+Expected output: bridge 0.5.9 结构化 JSONL（bridges/<id>/profiles/<id>/logs/bridge-*.jsonl）→ bridge-audit parser + usage.db 元数据列（chat_type/source/chat_id/msg_id/sender_id/run_id 幂等迁移）+ usage audit CLI + Web 最近消息审计列表；任务开始/完成自动更新 CURRENT_STATE「最近任务」行并单文件 git 提交（飞书开始+完成，定时/对话只写完成）
+Acceptance criteria: 新增测试全绿（bridge-audit 解析/合并/截断/时间近邻匹配、usage-log 迁移+元数据、task-state 完成态写入+提交、CLI surface）；npm test/build/lint/tsc 全绿；任务完成即 commit（不 push）
+Started at: 2026-08-07 15:08 +0800
+Updated at: 2026-08-07 15:08 +0800
+Result: （待填写）
+```
