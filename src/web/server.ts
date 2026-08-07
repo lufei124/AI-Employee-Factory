@@ -272,6 +272,20 @@ export function buildWebServer(options: BuildWebServerOptions): FastifyInstance 
     },
   );
 
+  // D-046：该员工最近飞书消息使用记录（usage.db，倒序，默认 50 条）。供进化历史 tab「最近消息」。
+  server.get<{ Params: { id: string }; Querystring: { limit?: string } }>(
+    '/api/v1/agents/:id/usage/messages',
+    async (request) => {
+      const limit = request.query.limit ? Number(request.query.limit) : 50;
+      return {
+        data: await options.application.queryUsage({
+          agentId: request.params.id,
+          limit: Number.isFinite(limit) && limit > 0 ? limit : 50,
+        }),
+      };
+    },
+  );
+
   server.post<{ Params: { id: string; action: string } }>(
     '/api/v1/agents/:id/actions/:action',
     async (request) => {

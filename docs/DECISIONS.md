@@ -1,5 +1,26 @@
 # Decisions
 
+## D-046：飞书消息元数据上抛 usage 审计 + 任务完成态自动写状态
+
+- 状态：Accepted（已实施，TASK-050）
+- 日期：2026-08-07
+- 背景：用户对上轮「飞书入站差距」表格提 4 点：①解释「一个机器人路由给多个员工」②解释 bridge 0.5.9 落后 0.7.0 的影响 ③把飞书消息元数据上抛到 Factory 层做 usage 统计/审计 ④任务完成时自动更新 CURRENT_STATE + 自动 git 提交，一眼看到「在做什么/做到哪了」。③④要做，①②作答（写进 README）。**关键调查发现**：D-036 的边界「该元数据在外部 bridge 内，本层不可达」前提**已不成立**——bridge 0.5.9 本身就把每条飞书消息写成**结构化 JSONL** 到 Factory 自己的磁盘（`~/.ai-employees/bridges/<id>/profiles/<profile>/logs/bridge-YYYYMMDD.jsonl`，含 chatId/msgId/sender/chatType/source/accessMode/runId/durationMs/result/costUsd + 带时区时间戳，已实测），只是私有格式不可查询。**无需升级 bridge** 即可解析。
+- 决定：
+  - **Task 3（元数据上抛）**：
+    - `bridge-audit.ts`（新建）：解析 bridge JSONL → 可查询审计记录 `BridgeMessageAudit`。按时间序逐行累积、以 scope(chatId) 为桶：`intake.enter`（msgId/sender/chatType/preview/ts）开一条 → `run.started`（source/accessMode/queueWaitMs/runId）→ `run.completed`（result/durationMs）→ `agent.exit`（code）→ `agent.usage`（costUsd）→ `card.final`（interrupted）收尾。不依赖 traceId/runId 一致性（实测 intake 与 run 的 traceId 不同）。容错：malformed 行跳过、文件缺失/空返回 `[]`、不抛异常。
+    - `usage-log.ts`：`messages` 表加 6 个可空列 `chat_type/source/chat_id/msg_id/sender_id/run_id`，`ensure()` 里 `PRAGMA table_info` 查缺列幂等 `ALTER TABLE ADD COLUMN`（老库自动升级）。`runBridgeMessage` 在 usage record 前按**时间近邻**（`|Date.parse(jsonl ts) − startedAt|` ≤ 60s）匹配当前 run 的元数据（`bridgeMessageMetaForRun`），匹配失败全 null（best-effort）。
+    - **完整 ID 落库 usage.db**（0600，与 bridge JSONL 同信任域）；CLI/Web 展示一律 `shortId()` 截断（`…xxxxxx` 仿 bridge stdout）。
+    - 审计面：CLI `agentctl usage audit <agent-id> [--since] [--limit]` + Web `GET /api/v1/agents/:id/usage/messages` + 进化历史 tab「最近飞书消息」列表（用户拍板 CLI + Web 都做）。
+  - **Task 4（完成态自动写）**：
+    - `current-state.ts` 加 `last_task`（最近任务）键 + `last_audit`（最近审计）键；`task-state.ts`（新建）纯函数 `sanitizeTaskLabel`（首行截 40 字）/`formatDuration`（44s/1m46s/1h2m）/`taskStartRow`/`taskCompleteRow`。
+    - 挂钩点（用户拍板节奏）：`runBridgeMessage` 开始+完成都写（source=飞书，label=stdin 首行）；`runJob` 只写完成（source=定时，label=job id + prompt 首行，`skipped` 不算完成）；`chat` 只写完成（source=对话，label=交互对话）。全部经 `syncCurrentState` 单文件 git 提交（`chore: 更新当前状态`），best-effort 不阻断主流程。
+    - **审计键解耦**：`recordState`（身份对账「检测到未授权身份改动已拒绝提交」）原写 `last_event`，与任务完成的 `last_event` 冲突会被覆盖 → 改走 `last_audit`（对账提示必须留痕，不随任务事件被冲掉）。
+- 边界：本批不升级 bridge（0.5.9 已具备 Factory 依赖全能力；升级若改 JSONL schema，parser 容错 + doctor 可提示）；凭据不复制（D-015）不受影响；「一个机器人路由给多个员工」不在 v1 范围（Roadmap 共享 Router，bridge 按 profile 路由不支持按消息路由）。
+- 原因：usage 统计/审计此前只能看到「耗时/成本/退出码」，看不到**是哪条消息、谁发的、在哪个会话**——上抛后 CLI/Web 都能按消息审计（含命令记录与成本）。任务完成态此前只在生命周期事件时更新 CURRENT_STATE，员工做完事不留痕，用户看不到「在做什么/做到哪了」；挂钩后每次任务开始/完成自动写状态 + 单文件提交，一眼可回溯。
+- 影响：`bridge-audit.ts`（新建：readBridgeAudit/bridgeLogsDir/shortId/truncatePreview/matchBridgeRunMeta）、`task-state.ts`（新建）、`usage-log.ts`（迁移 + record 元数据）、`current-state.ts`（last_task/last_audit 键）、`factory-application.ts`（runBridgeMessage 埋点 + bridgeAudit + syncTaskStart/Complete + 三挂钩点 + recordState 改 last_audit）、`cli-program.ts`（usage audit）、`web/server.ts` + `web/src/api.ts` + `AgentDetailPage.tsx`（最近消息列表）；增测 19 条（bridge-audit parser 10 / usage-log 元数据+迁移 2 / task-state 单测+runJob 集成 5 / current-state 键渲染 1 / cli-structure audit 1 / web-server 端点 1）；全量 502 测试 + build/lint/tsc 全绿 + CLI 冒烟（`usage audit user-operations` 出今日审计表 / `usage query` 含元数据列）。
+
+---
+
 ## D-045：archival local-sqlite 后端——D-014 frozen 契约的唯一本地实现
 
 - 状态：Accepted（已实施，TASK-049）

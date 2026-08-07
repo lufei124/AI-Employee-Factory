@@ -87,6 +87,8 @@ describe('agentctl command surface', () => {
     expect(names('archival')).toEqual(expect.arrayContaining(['add', 'list', 'query']));
     // D-041 P2-2/P3-3：identity 命令组提供身份文档 git 回滚 + 提案账本状态机。
     expect(names('identity')).toEqual(expect.arrayContaining(['rollback', 'proposals']));
+    // D-036 + D-046：usage 组提供 query/summary/audit（audit 解析 bridge 结构化 JSONL → 消息审计）。
+    expect(names('usage')).toEqual(expect.arrayContaining(['query', 'summary', 'audit']));
   });
 
   it('create exposes --describe and no longer exposes --preset (D-029)', () => {

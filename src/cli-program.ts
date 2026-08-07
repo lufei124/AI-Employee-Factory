@@ -14,6 +14,7 @@ import { RegistryStore } from './core/registry.js';
 import type { RuntimeProvider } from './schemas/agent-schema.js';
 import { parseRuntimeProvider } from './core/runtime-migrate.js';
 import { FactoryApplication } from './application/factory-application.js';
+import { shortId, truncatePreview } from './core/bridge-audit.js';
 import { settleLaunchdService } from './services/factory-services.js';
 import { startWebConsole } from './web/start.js';
 
@@ -981,6 +982,40 @@ function registerUsageCommands(program: Command): void {
         ...(options.until ? { until: options.until } : {}),
       });
       console.log(YAML.stringify(rows));
+    });
+  group
+    .command('audit <agent-id>')
+    .description(
+      'D-046：解析 bridge 结构化日志，列出该员工飞书消息审计（发送者/预览/结果/耗时/成本）',
+    )
+    .option('--since <YYYY-MM-DD>', '只列该日期及之后的记录')
+    .option('--limit <number>', '返回最近 N 条', '50')
+    .action(async (id: string, options: { since?: string; limit?: string }) => {
+      const { application } = context();
+      const records = await application.bridgeAudit(id, {
+        ...(options.since ? { since: options.since } : {}),
+        limit: options.limit ? Number(options.limit) : 50,
+      });
+      if (!records.length)
+        return console.log(`暂无 ${id} 的飞书消息审计记录（bridge 日志缺失或为空）。`);
+      // 时间｜kind｜chat 类型｜来源｜发送者(截断)｜预览(截断)｜结果｜耗时｜成本（ID 一律截断展示，守 D-046）。
+      for (const r of records) {
+        const dur = r.durationMs === null ? '-' : `${Math.round(r.durationMs / 1000)}s`;
+        const cost = r.costUsd === null ? '-' : `$${r.costUsd.toFixed(4)}`;
+        console.log(
+          [
+            r.ts.slice(0, 16).replace('T', ' '),
+            r.kind,
+            r.chatType,
+            r.source || '-',
+            shortId(r.senderId),
+            truncatePreview(r.preview, 30),
+            r.result ?? '-',
+            dur,
+            cost,
+          ].join('\t'),
+        );
+      }
     });
 }
 

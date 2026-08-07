@@ -115,6 +115,98 @@ describe('UsageDb (D-036)', () => {
     expect(db.summary()).toEqual([]);
   });
 
+  it('records D-046 message metadata and queries it back', async () => {
+    const { db } = await setup();
+    record(db, {
+      agentId: 'ops',
+      chatType: 'group',
+      source: 'im',
+      chatId: 'oc_2ffedace5f97b2e60824cc3b07851c82',
+      msgId: 'om_x100b68608bb51480b4835804ba4f6fd',
+      senderId: 'ou_fcbf2b9cb3ed94e76158d62d44fbe15c',
+      runId: 'c9f7ab7a-a7e0-4810-ae54-8065c9de753c',
+    });
+    const [row] = db.query();
+    expect(row).toMatchObject({
+      agentId: 'ops',
+      chatType: 'group',
+      source: 'im',
+      chatId: 'oc_2ffedace5f97b2e60824cc3b07851c82',
+      msgId: 'om_x100b68608bb51480b4835804ba4f6fd',
+      senderId: 'ou_fcbf2b9cb3ed94e76158d62d44fbe15c',
+      runId: 'c9f7ab7a-a7e0-4810-ae54-8065c9de753c',
+    });
+    // 未提供元数据时全 null（不伪造）。
+    record(db, { agentId: 'growth' });
+    const [plain] = db.query({ agentId: 'growth' });
+    expect(plain?.chatId).toBeNull();
+    expect(plain?.runId).toBeNull();
+  });
+
+  it('migrates an old D-036 db: missing columns are added idempotently', async () => {
+    const { dbFile } = await setup();
+    // 手工构造旧版（D-036）schema 并写一条老记录。
+    const Database = (await import('better-sqlite3')).default;
+    await fs.ensureDir(path.dirname(dbFile));
+    const old = new Database(dbFile);
+    old.exec(`
+      CREATE TABLE messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id TEXT NOT NULL,
+        provider TEXT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT NOT NULL,
+        duration_ms INTEGER NOT NULL,
+        exit_code INTEGER NOT NULL,
+        prompt TEXT NOT NULL,
+        prompt_chars INTEGER NOT NULL,
+        args_json TEXT,
+        model TEXT,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        cache_read_input_tokens INTEGER,
+        cache_creation_input_tokens INTEGER,
+        total_cost_usd REAL,
+        topics_json TEXT,
+        transcript_file TEXT
+      );
+      INSERT INTO messages (agent_id, provider, started_at, finished_at, duration_ms, exit_code, prompt, prompt_chars)
+      VALUES ('legacy', 'claude', '2026-08-01T00:00:00.000Z', '2026-08-01T00:01:00.000Z', 60000, 0, '老消息', 3);
+    `);
+    old.close();
+
+    // 旧 UsageDb 打开 → 自动补列 + 老记录仍可读。
+    const db = new UsageDb(dbFile);
+    const legacy = db.query({ agentId: 'legacy' });
+    expect(legacy).toHaveLength(1);
+    expect(legacy[0]!.prompt).toBe('老消息');
+    expect(legacy[0]!.chatId).toBeNull();
+
+    // 补列后带元数据写入 + 读回。
+    record(db, {
+      agentId: 'ops',
+      chatType: 'p2p',
+      chatId: 'oc_abc',
+      senderId: 'ou_def',
+      runId: 'run-1',
+    });
+    const [row] = db.query({ agentId: 'ops' });
+    expect(row).toMatchObject({
+      chatType: 'p2p',
+      chatId: 'oc_abc',
+      senderId: 'ou_def',
+      runId: 'run-1',
+    });
+    db.close();
+
+    // 幂等：再次打开不再报错、不重复加列。
+    const reopened = new UsageDb(dbFile);
+    record(reopened, { agentId: 'ops', msgId: 'om_x' });
+    const rows = reopened.query({ agentId: 'ops' });
+    expect(rows).toHaveLength(2);
+    reopened.close();
+  });
+
   it('persists across re-open (separate instance reads same file)', async () => {
     const { db, dbFile } = await setup();
     record(db, { agentId: 'persist' });

@@ -96,6 +96,14 @@ import {
 import { OperationStore, type OperationSummary } from '../core/operation-store.js';
 import { OperationManager } from '../core/operation-manager.js';
 import { UsageDb, type UsageFilter, type UsageSummaryRow } from '../core/usage-log.js';
+import {
+  bridgeLogsDir,
+  matchBridgeRunMeta,
+  readBridgeAudit,
+  type BridgeAuditFilter,
+  type BridgeMessageAudit,
+  type BridgeRunMeta,
+} from '../core/bridge-audit.js';
 import { PruneService, type PruneOptions, type PruneResult } from '../core/prune.js';
 import { TrashService, type TrashEntryDto, type TrashPreview } from '../core/trash.js';
 import { ProcessRunner, type LoggedRunOptions } from '../core/process-runner.js';
@@ -113,6 +121,7 @@ import {
   ensureStateEditAllowed,
   type StateRow,
 } from '../core/current-state.js';
+import { sanitizeTaskLabel, taskCompleteRow, taskStartRow } from '../core/task-state.js';
 import type { TranscriptSummary } from '../core/transcript.js';
 import {
   buildRuntimeEnvironment,
@@ -856,7 +865,9 @@ export class FactoryApplication {
           : {}),
         recordState: async (message: string) => {
           const file = path.join(workspace, 'agent', 'CURRENT_STATE.md');
-          const result = await updateCurrentState(file, { last_event: message }).catch(
+          // D-046：对账提示走 last_audit（最近审计）而非 last_event——任务完成态会写 last_event，
+          // 共用会覆盖审计提示（身份违规必须留痕）。写入后随 commitAgentFile 单文件提交。
+          const result = await updateCurrentState(file, { last_audit: message }).catch(
             (error: unknown) => {
               console.warn(
                 `[identity-protocol] 更新 ${agent.id} 的当前状态失败：${error instanceof Error ? error.message : String(error)}`,
@@ -1042,6 +1053,12 @@ export class FactoryApplication {
     const code = await new ProcessRunner(this.paths.logsDir).runInteractive(
       getRuntimeAdapter(agent.runtime).chat(registry, agent.runtime),
     );
+    // D-046：交互对话只写完成态（无起止时间戳，仅退出码 + 标签），best-effort。
+    await this.syncTaskComplete(id, registry.workspace.path, {
+      source: '对话',
+      taskLabel: '交互对话',
+      exitCode: code,
+    });
     // OP1 Stage C：chat 交互不落盘 transcript（D-006），仅当显式 opt-in 时经 runLogged 持久化。
     return code;
   }
@@ -1315,6 +1332,9 @@ export class FactoryApplication {
         LARK_CHANNEL_PROFILE: registry.bridge.profile ?? id,
       },
     };
+    // D-046：飞书任务开始即写「处理中 · 标签」（经 syncCurrentState 单文件提交，一眼看到在做什么）。
+    const taskLabel = sanitizeTaskLabel(stdin);
+    await this.syncTaskStart(id, registry.workspace.path, { source: '飞书', taskLabel });
     const result = await new ProcessRunner(this.paths.logsDir).runLogged(id, ctx, {
       // D-041 P1-1：transcript 判定经 resolveMemoryFlags 归一（缺失开关按默认 true 启用）。
       transcript: resolveMemoryFlags(agent.memory).transcript_persist,
@@ -1324,6 +1344,18 @@ export class FactoryApplication {
       structured: true,
     });
     await this.settleActive(id, agent, registry, result.transcriptFile);
+    // D-046：任务完成写状态（完成/失败 + 耗时 + 标签），settle 之后让沉淀链提交先落盘。
+    await this.syncTaskComplete(id, registry.workspace.path, {
+      source: '飞书',
+      taskLabel,
+      exitCode: result.exitCode,
+      durationMs: Date.parse(result.finishedAt) - Date.parse(result.startedAt),
+    });
+    // D-046：按时间近邻匹配本条消息在 bridge JSONL 的元数据（chatType/source/chatId/msgId/senderId/runId）。
+    // best-effort——匹配失败全缺省，不阻断 usage 记录。
+    const meta = await this.bridgeMessageMetaForRun(registry, Date.parse(result.startedAt)).catch(
+      () => null,
+    );
     // D-036：记录本条飞书消息的使用（耗时/退出码/token/成本/主题）。best-effort，失败不阻断。
     this.getUsageDb().record({
       agentId: id,
@@ -1336,6 +1368,16 @@ export class FactoryApplication {
       ...(result.usage ? { usage: result.usage } : {}),
       ...(result.transcriptFile ? { topics: readTranscriptTopics(result.transcriptFile) } : {}),
       ...(result.transcriptFile ? { transcriptFile: result.transcriptFile } : {}),
+      ...(meta
+        ? {
+            chatType: meta.chatType,
+            source: meta.source,
+            chatId: meta.chatId,
+            msgId: meta.msgId,
+            senderId: meta.senderId,
+            ...(meta.runId ? { runId: meta.runId } : {}),
+          }
+        : {}),
     });
     return result.exitCode;
   }
@@ -1541,6 +1583,14 @@ export class FactoryApplication {
   // D-036：飞书使用聚合统计（按天 + 员工）。
   async usageSummary(filter: UsageFilter = {}): Promise<UsageSummaryRow[]> {
     return this.getUsageDb().summary(filter);
+  }
+
+  // D-046：解析该员工 bridge 的结构化 JSONL 日志 → 飞书消息审计记录（时间倒序）。
+  // 供 `usage audit` CLI 与 Web「最近飞书消息」共享。文件缺失/坏行 → 空数组不抛错。
+  async bridgeAudit(id: string, filter: BridgeAuditFilter = {}): Promise<BridgeMessageAudit[]> {
+    const { registry } = await this.getAgent(id);
+    const profile = registry.bridge.profile ?? id;
+    return readBridgeAudit(bridgeLogsDir(registry.bridge.home, profile), filter);
   }
 
   // D-041 P3-1：员工进化历史只读视图——`git log --grep evolve:`（自进化提交，可回溯）+
@@ -1801,6 +1851,24 @@ export class FactoryApplication {
       .then(async (result) => {
         // D-035：员工自进化沉淀链统一入口（runJob 与飞书 bridge 共用）。
         await this.settleActive(id, agent, registry, result.transcriptFile);
+        // D-046：定时/手动任务只写完成态（source=定时，标签=job id + prompt 首行）。
+        // skipped（未到运行窗口被跳过）不算完成任务，不写状态。
+        if (!result.skipped) {
+          const startedMs = Date.parse(result.startedAt ?? '');
+          const finishedMs = Date.parse(result.finishedAt ?? '');
+          const durationMs =
+            Number.isFinite(startedMs) && Number.isFinite(finishedMs)
+              ? finishedMs - startedMs
+              : undefined;
+          await this.syncTaskComplete(id, registry.workspace.path, {
+            source: '定时',
+            taskLabel: `${job.id} · ${sanitizeTaskLabel(
+              await this.jobPrompt(registry, job).catch(() => ''),
+            )}`,
+            exitCode: result.exitCode,
+            ...(durationMs !== undefined ? { durationMs } : {}),
+          });
+        }
         return result;
       });
   }
@@ -2093,6 +2161,35 @@ export class FactoryApplication {
         `[current-state] 提交 ${id} 的状态文件失败：工作区缺少 git 身份配置（user.name / user.email）。`,
       );
     }
+  }
+
+  // --- D-046：任务开始/完成自动写 CURRENT_STATE + 自动 git 提交（best-effort） ---
+
+  /** 任务开始：写 `最近任务：<source>任务 处理中 · <标签>`（经 syncCurrentState 自动单文件提交）。best-effort。 */
+  private async syncTaskStart(
+    id: string,
+    workspace: string,
+    opts: { source: string; taskLabel: string },
+  ): Promise<void> {
+    await this.syncCurrentState(id, workspace, taskStartRow(opts));
+  }
+
+  /** 任务完成：写 `最近事件` + `最近任务：<source>任务 <完成|失败>[ · 耗时] · <标签>`。best-effort。 */
+  private async syncTaskComplete(
+    id: string,
+    workspace: string,
+    opts: { source: string; taskLabel: string; exitCode: number; durationMs?: number },
+  ): Promise<void> {
+    await this.syncCurrentState(id, workspace, taskCompleteRow(opts));
+  }
+
+  /** 供 runBridgeMessage 埋点：读该员工 bridge JSONL，按时间近邻匹配当前 run 的消息元数据。 */
+  private async bridgeMessageMetaForRun(
+    registry: RegistryAgent,
+    startedAtMs: number,
+  ): Promise<BridgeRunMeta | null> {
+    const profile = registry.bridge.profile ?? registry.id;
+    return matchBridgeRunMeta(bridgeLogsDir(registry.bridge.home, profile), startedAtMs);
   }
 
   // OP3-A 长期：以 agent.yaml 为唯一真相，重建 Registry 的 config_hash 派生缓存。

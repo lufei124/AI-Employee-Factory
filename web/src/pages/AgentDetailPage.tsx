@@ -26,6 +26,7 @@ import {
   type OperationDto,
   type SkillMetadata,
   type SkillScope,
+  type UsageMessage,
 } from '../api.js';
 import { CopyButton } from '../components/CopyButton.js';
 import { ConfirmDialog } from '../components/ConfirmDialog.js';
@@ -682,9 +683,18 @@ const STATUS_LABEL: Record<string, string> = {
   R: '重命名',
 };
 
+// D-046：展示 ID 截断（仿 bridge stdout `…xxxxxx`），完整 openId/msgId 不外露。
+function shortDisplayId(id: string | null): string {
+  if (!id) return '-';
+  return id.length <= 8 ? id : `…${id.slice(-6)}`;
+}
+
 function EvolutionTab({ agentId }: { agentId: string }) {
   const [data, setData] = useState<EvolutionLog>();
   const [error, setError] = useState('');
+  // D-046：最近飞书消息（usage.db，含 bridge 元数据），独立于聚合统计加载。
+  const [messages, setMessages] = useState<UsageMessage[]>();
+  const [messagesError, setMessagesError] = useState('');
   // 钻取状态：selectedCommit → 该提交文件清单；selectedFile → 该文件全文。
   const [selectedCommit, setSelectedCommit] = useState<string>();
   const [commitFiles, setCommitFiles] = useState<EvolutionCommitFile[]>();
@@ -694,7 +704,16 @@ function EvolutionTab({ agentId }: { agentId: string }) {
   const [contentError, setContentError] = useState('');
   const load = async () => {
     try {
-      setData(await api.evolutionLog(agentId));
+      const [log, recent] = await Promise.all([
+        api.evolutionLog(agentId),
+        api.usageMessages(agentId, 50).catch((cause: unknown) => {
+          // 最近消息属增强展示：加载失败不阻断进化历史主视图。
+          setMessagesError(cause instanceof Error ? cause.message : String(cause));
+          return undefined;
+        }),
+      ]);
+      setData(log);
+      setMessages(recent);
       setError('');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -819,6 +838,52 @@ function EvolutionTab({ agentId }: { agentId: string }) {
             <p className="mt-2 text-[11px] text-muted-foreground">
               合计费用：${totalCost.toFixed(4)}
             </p>
+            <h3 className="mb-2 mt-5 text-xs font-semibold uppercase text-muted-foreground">
+              最近飞书消息（{messages?.length ?? 0}）
+            </h3>
+            {messagesError ? (
+              <p className="text-sm text-destructive">{messagesError}</p>
+            ) : !messages ? (
+              <p className="text-sm text-muted-foreground">加载最近消息…</p>
+            ) : messages.length === 0 ? (
+              <p className="text-sm text-muted-foreground">暂无消息记录。</p>
+            ) : (
+              <ul className="max-h-[360px] space-y-1.5 overflow-auto pr-1">
+                {messages.map((message) => (
+                  <li
+                    key={message.id}
+                    className="flex items-baseline gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-xs"
+                  >
+                    <span className="min-w-0 flex-1 truncate" title={message.prompt}>
+                      {message.prompt.length > 40
+                        ? `${message.prompt.slice(0, 40)}…`
+                        : message.prompt}
+                    </span>
+                    <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                      {message.chatType ?? '?'}/{message.source ?? '-'}
+                    </span>
+                    <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                      {shortDisplayId(message.senderId)}
+                    </span>
+                    <span
+                      className={cn(
+                        'shrink-0 rounded px-1 font-mono text-[10px]',
+                        message.exitCode === 0
+                          ? 'bg-emerald-500/15 text-emerald-700'
+                          : 'bg-red-500/15 text-red-700',
+                      )}
+                    >
+                      {message.exitCode === 0 ? 'OK' : `✗${message.exitCode}`}
+                    </span>
+                    {message.totalCostUsd !== null && (
+                      <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                        ${message.totalCostUsd.toFixed(4)}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
           <div>
             <h3 className="mb-2 text-xs font-semibold uppercase text-muted-foreground">

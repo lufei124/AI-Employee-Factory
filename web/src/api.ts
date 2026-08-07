@@ -154,6 +154,34 @@ export interface EvolutionLog {
   usage: EvolutionUsageRow[];
 }
 
+// D-046：最近飞书消息使用记录（usage.db 行，含 bridge 元数据）。完整 ID 仅展示层截断。
+export interface UsageMessage {
+  id: number;
+  agentId: string;
+  provider: string | null;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  exitCode: number;
+  prompt: string;
+  promptChars: number;
+  argsJson: string | null;
+  model: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadInputTokens: number | null;
+  cacheCreationInputTokens: number | null;
+  totalCostUsd: number | null;
+  topicsJson: string | null;
+  transcriptFile: string | null;
+  chatType: string | null;
+  source: string | null;
+  chatId: string | null;
+  msgId: string | null;
+  senderId: string | null;
+  runId: string | null;
+}
+
 export interface SkillMetadata {
   name: string;
   version: string;
@@ -247,6 +275,8 @@ export const api = {
     request<{ content: string }>(
       `/agents/${encodeURIComponent(id)}/evolution/content?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(relPath)}`,
     ),
+  usageMessages: (id: string, limit = 50) =>
+    request<UsageMessage[]>(`/agents/${encodeURIComponent(id)}/usage/messages?limit=${limit}`),
   terminalGuidance: (id: string) =>
     request<{ runtimeLogin: string; bridgeAuthorize: string; chat: string }>(
       `/agents/${encodeURIComponent(id)}/terminal-guidance`,

@@ -819,7 +819,7 @@ Result: archival-local-sqlite.ts（LocalSqliteArchivalBackend：archive 幂等 I
 Task ID: TASK-050
 Title: 飞书消息元数据上抛 usage 审计 + 任务完成态自动写状态（D-046 + D-041 完成态闭环）
 Owner agent: claude-20260807-01
-Status: IN_PROGRESS
+Status: DONE
 Branch/worktree: main
 Allowed scope: src/core/bridge-audit.ts（新）、src/core/usage-log.ts（元数据列迁移）、src/core/current-state.ts（last_task 键）、src/application/factory-application.ts（bridgeAudit + runBridgeMessage 埋元数据 + syncTaskStart/Complete + 三挂钩点）、src/cli-program.ts（usage audit）、src/web/server.ts（GET usage/messages）、web/src/api.ts + web/src/pages/AgentDetailPage.tsx（最近飞书消息列表）、tests/bridge-audit.test.ts（新）、tests/task-state.test.ts（新）、tests/usage-log.test.ts、tests/current-state.test.ts、tests/cli-structure.test.ts、tests/web-ui.test.tsx、docs/DECISIONS.md（D-046）、README.md、.agent 簿记
 Forbidden scope: 不升级 bridge（JSONL schema 变更记作升级风险）；不改 bridge 私有日志格式写入；不把完整消息 id 显示到 CLI/Web（仅截断展示）
@@ -827,6 +827,6 @@ Dependencies: 用户拍板「CLI+Web 都做」「开始+完成都写」（AskUse
 Expected output: bridge 0.5.9 结构化 JSONL（bridges/<id>/profiles/<id>/logs/bridge-*.jsonl）→ bridge-audit parser + usage.db 元数据列（chat_type/source/chat_id/msg_id/sender_id/run_id 幂等迁移）+ usage audit CLI + Web 最近消息审计列表；任务开始/完成自动更新 CURRENT_STATE「最近任务」行并单文件 git 提交（飞书开始+完成，定时/对话只写完成）
 Acceptance criteria: 新增测试全绿（bridge-audit 解析/合并/截断/时间近邻匹配、usage-log 迁移+元数据、task-state 完成态写入+提交、CLI surface）；npm test/build/lint/tsc 全绿；任务完成即 commit（不 push）
 Started at: 2026-08-07 15:08 +0800
-Updated at: 2026-08-07 15:08 +0800
-Result: （待填写）
+Updated at: 2026-08-07 15:42 +0800
+Result: bridge-audit.ts（readBridgeAudit 事件累积合并 intake→run→agent→card，scope 桶 + 容错；matchBridgeRunMeta 时间近邻 ≤60s）；usage-log.ts 6 元数据列幂等迁移（PRAGMA 查缺 ALTER）+ record 埋点；task-state.ts（sanitizeTaskLabel/formatDuration/taskStartRow/taskCompleteRow 纯函数）；current-state.ts last_task + last_audit（recordState 对账提示改走 last_audit，避免被任务完成态覆盖）；factory-application：runBridgeMessage 开始+完成挂钩 + 元数据匹配、runJob/chat 只写完成、bridgeAudit 方法；cli-program usage audit（截断展示）；web GET /usage/messages + AgentDetailPage 最近飞书消息列表；D-046 ADR + README（使用审计段 + Q1/Q2 答疑 + CURRENT_STATE 更新）；增测 19 条；全量 502 测试 + build/lint/tsc 全绿 + CLI 冒烟（usage audit user-operations 出真实审计表 / usage query 含元数据列）。
 ```

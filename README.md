@@ -69,7 +69,7 @@ Web 只监听 `127.0.0.1`，每次启动生成一次性 fragment token，交换�
 
 CC Switch Provider 同步、Codex 登录、飞书扫码/App 授权和交互聊天保持在隔离的终端入口中。Web 页面会显示状态和可复制命令，不在浏览器中模拟终端。
 
-每个员工的 `agent/CURRENT_STATE.md` 由系统与员工共同维护：运行器登录、飞书授权、服务启停、归档/恢复等生命周期事件会自动更新状态行并单文件 git 提交；员工（AI）在工作开始/结束时按运行指南更新「工作进展」段（claude 侧已放行编辑该文件）。任务/对话完成不自动写状态。
+每个员工的 `agent/CURRENT_STATE.md` 由系统与员工共同维护：运行器登录、飞书授权、服务启停、归档/恢复等生命周期事件会自动更新状态行并单文件 git 提交；员工（AI）在工作开始/结束时按运行指南更新「工作进展」段（claude 侧已放行编辑该文件）。任务状态自动更新（D-046）：飞书消息**开始即写**「最近任务：飞书任务 处理中 · …」，**完成写**「完成/失败（退出码 N）· 耗时 · 任务标签」；定时/手动任务与交互对话**只写完成**——每条任务态更新经单文件 git 提交（`chore: 更新当前状态`），Web 进化历史 tab 一眼看到「在做什么 / 做到哪了」。
 
 员工（AI）可在任务执行中自我进化：按运行指南更新自己的目标（`agent/GOALS.md`）、工作系统（`agent/OPERATING_SYSTEM.md`）与规则（`agent/POLICIES.md`），或写回工作过程中的经验到 `knowledge/`、沉淀 `skills/` 与 `workflows/`——系统会自动检测并单文件 git 提交（`evolve:` 前缀），让下次执行更准确。岗位定位（`agent/ROLE.md` 的 `# 岗位定位` 段）与宪法（`agent/CONSTITUTION.md`）由系统从 `agent.yaml.description` 渲染/播种，员工只可提案，改动经用户在飞书聊天批准后由员工落盘。
 
@@ -193,6 +193,19 @@ agentctl job disable user-operations daily-feedback-review
 
 员工（AI）可在任务中给自己配置定时任务，无需人工介入：在 `automation/jobs/*.yaml` 写 `managed_by: employee` + `enabled: true`，系统会在每次任务执行结束后自动安装 launchd 调度并单文件 git 提交；删除文件或 `enabled: false` 自动反注册，修改 `schedule.time` 自动重新加载。`managed_by` 缺省为 `admin`，只有 `employee` 任务会被自动 reconcile。（Web「任务」页用 `[员工]/[管理员]` 徽标区分。）
 
+## 飞书使用审计
+
+每条飞书消息的使用记录（耗时/退出码/token/成本/主题）落本地 `logs/usage.db`（D-036）；D-046 起把消息元数据一并上抛——bridge 0.5.9 会把每条消息写成结构化 JSONL 到 `~/.ai-employees/bridges/<id>/profiles/<profile>/logs/bridge-YYYYMMDD.jsonl`，Factory 解析成可查询审计（chat 类型/source/会话/发送者/runId），`runBridgeMessage` 按时间近邻匹配后同步进 usage.db。**完整 ID 仅存本地 0600 库**，CLI/Web 展示一律截断（`…xxxxxx`）。
+
+```bash
+agentctl usage query --agent user-operations --limit 20    # 每条消息使用记录（含 chat_type/source/chat_id/msg_id/sender_id/run_id）
+agentctl usage summary --agent user-operations             # 按天 + 员工聚合（消息数/平均耗时/总成本/错误数）
+agentctl usage audit user-operations --limit 10            # 解析 bridge JSONL → 消息审计表（时间/类型/发送者/预览/结果/耗时/成本）
+agentctl usage audit user-operations --since 2026-08-07    # 只列该日期及之后
+```
+
+Web 员工详情「进化历史」tab 同样显示「最近飞书消息」列表（chat 类型/来源/发送者截断/预览/退出码/成本）。
+
 ## Skill 安装与迁移
 
 Skill 按作用域分为两级：
@@ -309,7 +322,12 @@ agentctl archive user-operations
 
 ## 当前限制与 Roadmap
 
-v1 不包含常驻 Web 服务、局域网/远程访问、账号系统、浏览器内终端、多 Agent 共享机器人 Router、Agent 自由互聊、云端多租户、Skill 市场、生产数据写入、知识图谱或 systemd 实现。核心模型是「单一 AI 员工 + 定时 Job + Web 单轮对话」；Chief 编排、Todo 状态机与 MCP 接入已于 TASK-030（D-027）移除。后续优先项是 systemd adapter、可选的加密 Secret provider、任务完成自动写状态、飞书入站。分层自进化协议（D-041）已完成全部五阶段：三开关默认开 + 经验两级化（M2）、提案对账账本 + Web 只读收敛 + 创建骨架化（M3）、遗忘归档 + 身份 git 回滚（M4）、doctor 检查项 + Web 进化历史 + 检索增强（M5）；检索增强由 D-042 进一步升级为 BM25 召回引擎 + 运行时 RAG 注入（`knowledge/.retrieved.md`）；显式 runtime 迁移工作流已由 D-044（TASK-048）落地（claude ↔ codex 双向）；archival 后端由 D-045（TASK-049）落地（local-sqlite 单条显式归档）。
+v1 不包含常驻 Web 服务、局域网/远程访问、账号系统、浏览器内终端、多 Agent 共享机器人 Router、Agent 自由互聊、云端多租户、Skill 市场、生产数据写入、知识图谱或 systemd 实现。核心模型是「单一 AI 员工 + 定时 Job + Web 单轮对话」；Chief 编排、Todo 状态机与 MCP 接入已于 TASK-030（D-027）移除。后续优先项是 systemd adapter 与可选的加密 Secret provider。分层自进化协议（D-041）已完成全部五阶段：三开关默认开 + 经验两级化（M2）、提案对账账本 + Web 只读收敛 + 创建骨架化（M3）、遗忘归档 + 身份 git 回滚（M4）、doctor 检查项 + Web 进化历史 + 检索增强（M5）；检索增强由 D-042 进一步升级为 BM25 召回引擎 + 运行时 RAG 注入（`knowledge/.retrieved.md`）；显式 runtime 迁移工作流已由 D-044（TASK-048）落地（claude ↔ codex 双向）；archival 后端由 D-045（TASK-049）落地（local-sqlite 单条显式归档）；飞书消息元数据上抛 usage 审计 + 任务完成态自动写状态由 D-046（TASK-050）落地。
+
+**关于飞书（D-046 答疑）**：
+
+- **「一个机器人路由给多个员工」**：bridge 的模型是 **profile = 一个飞书应用 = 一个 agent**（`bridge.profile = agent.id`，独立 app-id/secret，`LARK_CHANNEL_HOME` 按员工隔离）；路由是**按 profile、不按消息**。当前每员工一个专属机器人；「单一飞书机器人收到消息后由 Router（在 Factory 层）决定派给哪个员工」不在 v1 范围（即上述「多 Agent 共享机器人 Router」），bridge 本身也不支持按消息路由。影响：管 N 个员工 = 管 N 个飞书应用。
+- **bridge 版本（0.5.9 vs 0.7.0）**：官方无 changelog/releases。0.5.9 已具备 Factory 依赖的全能力（streaming 卡片、COT、会话连续性、排队、全部斜杠命令、workspace 权限收紧、结构化 JSONL 日志含 costUsd）；缺**飞书文档评论**（Factory 不用的可选能力）与 0.6.0–0.7.0 未公开修复。对本项目影响低风险，升级非紧急；若升级改了 JSONL schema，`usage audit` parser 已有容错。
 
 ## 开发验证
 

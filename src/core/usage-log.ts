@@ -28,6 +28,13 @@ export interface UsageMessageInput {
   /** transcript 摘要的主题关键词（best-effort）。 */
   topics?: string[];
   transcriptFile?: string;
+  /** D-046：飞书消息元数据（来自 bridge 结构化 JSONL，best-effort 可为空）。完整 ID 落库，展示层截断。 */
+  chatType?: string;
+  source?: string;
+  chatId?: string;
+  msgId?: string;
+  senderId?: string;
+  runId?: string;
 }
 
 export interface UsageMessage {
@@ -49,6 +56,12 @@ export interface UsageMessage {
   totalCostUsd: number | null;
   topicsJson: string | null;
   transcriptFile: string | null;
+  chatType: string | null;
+  source: string | null;
+  chatId: string | null;
+  msgId: string | null;
+  senderId: string | null;
+  runId: string | null;
 }
 
 export interface UsageFilter {
@@ -86,10 +99,26 @@ CREATE TABLE IF NOT EXISTS messages (
   cache_creation_input_tokens INTEGER,
   total_cost_usd REAL,
   topics_json TEXT,
-  transcript_file TEXT
+  transcript_file TEXT,
+  chat_type TEXT,
+  source TEXT,
+  chat_id TEXT,
+  msg_id TEXT,
+  sender_id TEXT,
+  run_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_messages_agent_started ON messages (agent_id, started_at);
 `;
+
+/** D-046：usage.db 旧库补列（幂等）。老库（D-036 建）无元数据列，ensure 时逐列 ALTER 补齐。 */
+const MIGRATION_COLUMNS: Array<[name: string, ddl: string]> = [
+  ['chat_type', 'ALTER TABLE messages ADD COLUMN chat_type TEXT'],
+  ['source', 'ALTER TABLE messages ADD COLUMN source TEXT'],
+  ['chat_id', 'ALTER TABLE messages ADD COLUMN chat_id TEXT'],
+  ['msg_id', 'ALTER TABLE messages ADD COLUMN msg_id TEXT'],
+  ['sender_id', 'ALTER TABLE messages ADD COLUMN sender_id TEXT'],
+  ['run_id', 'ALTER TABLE messages ADD COLUMN run_id TEXT'],
+];
 
 export class UsageDb {
   private db: Database.Database | null = null;
@@ -109,6 +138,7 @@ export class UsageDb {
       const db = new Database(this.file);
       db.pragma('journal_mode = WAL');
       db.exec(SCHEMA);
+      this.migrate(db);
       this.db = db;
     } catch (error) {
       this.openFailed = true;
@@ -136,12 +166,14 @@ export class UsageDb {
           agent_id, provider, started_at, finished_at, duration_ms, exit_code,
           prompt, prompt_chars, args_json, model,
           input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens,
-          total_cost_usd, topics_json, transcript_file
+          total_cost_usd, topics_json, transcript_file,
+          chat_type, source, chat_id, msg_id, sender_id, run_id
         ) VALUES (
           @agentId, @provider, @startedAt, @finishedAt, @durationMs, @exitCode,
           @prompt, @promptChars, @argsJson, @model,
           @inputTokens, @outputTokens, @cacheReadInputTokens, @cacheCreationInputTokens,
-          @totalCostUsd, @topicsJson, @transcriptFile
+          @totalCostUsd, @topicsJson, @transcriptFile,
+          @chatType, @source, @chatId, @msgId, @senderId, @runId
         )`,
       ).run({
         agentId: input.agentId,
@@ -161,6 +193,12 @@ export class UsageDb {
         totalCostUsd: usage?.totalCostUsd ?? null,
         topicsJson: input.topics && input.topics.length > 0 ? JSON.stringify(input.topics) : null,
         transcriptFile: input.transcriptFile ?? null,
+        chatType: input.chatType ?? null,
+        source: input.source ?? null,
+        chatId: input.chatId ?? null,
+        msgId: input.msgId ?? null,
+        senderId: input.senderId ?? null,
+        runId: input.runId ?? null,
       });
       // 上限裁剪：保留最近 USAGE_DB_MAX_ROWS 条。子查询在行数未超限时返回 NULL，`id <= NULL` 为假 → 空操作。
       db.prepare(
@@ -250,6 +288,18 @@ export class UsageDb {
     }
   }
 
+  /** D-046：幂等补列——PRAGMA 查缺列，逐个 ALTER。老库不补列会导致 record 时报错，故在 ensure 时执行。 */
+  private migrate(db: Database.Database): void {
+    const cols = new Set(
+      (db.prepare('PRAGMA table_info(messages)').all() as Array<{ name: string }>).map(
+        (c) => c.name,
+      ),
+    );
+    for (const [name, ddl] of MIGRATION_COLUMNS) {
+      if (!cols.has(name)) db.exec(ddl);
+    }
+  }
+
   private mapRow(row: Record<string, unknown>): UsageMessage {
     return {
       id: Number(row.id),
@@ -272,6 +322,12 @@ export class UsageDb {
       totalCostUsd: row.total_cost_usd === null ? null : Number(row.total_cost_usd),
       topicsJson: row.topics_json === null ? null : String(row.topics_json),
       transcriptFile: row.transcript_file === null ? null : String(row.transcript_file),
+      chatType: row.chat_type === null ? null : String(row.chat_type),
+      source: row.source === null ? null : String(row.source),
+      chatId: row.chat_id === null ? null : String(row.chat_id),
+      msgId: row.msg_id === null ? null : String(row.msg_id),
+      senderId: row.sender_id === null ? null : String(row.sender_id),
+      runId: row.run_id === null ? null : String(row.run_id),
     };
   }
 }

@@ -80,6 +80,24 @@ describe('updateCurrentState (OP6-B)', () => {
     expect(content).toContain('- 飞书：已授权');
   });
 
+  it('renders and merges D-046 task state keys (last_task / last_audit)', async () => {
+    const file = await stateFile(
+      `# 当前状态\n\n${STATE_BLOCK_BEGIN}\n- 状态：已就绪\n${STATE_BLOCK_END}\n`,
+    );
+    await updateCurrentState(file, { last_task: '飞书任务 完成 · 44s · 写周报' });
+    let content = await fs.readFile(file, 'utf8');
+    expect(content).toContain('- 最近任务：飞书任务 完成 · 44s · 写周报');
+    // 审计键与任务键共存不覆盖（D-046：对账提示不被任务完成态覆盖）。
+    await updateCurrentState(file, {
+      last_event: '定时任务 完成（退出码 0）',
+      last_audit: '检测到未授权身份改动已拒绝提交：agent/POLICIES.md',
+    });
+    content = await fs.readFile(file, 'utf8');
+    expect(content).toContain('- 最近任务：飞书任务 完成 · 44s · 写周报');
+    expect(content).toContain('- 最近事件：定时任务 完成（退出码 0）');
+    expect(content).toContain('- 最近审计：检测到未授权身份改动已拒绝提交：agent/POLICIES.md');
+  });
+
   it('upgrades the legacy seed content to the marker-block format with event rows', async () => {
     const file = await stateFile(LEGACY_SEED_CONTENT);
     const result = await updateCurrentState(file, {

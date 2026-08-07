@@ -72,6 +72,8 @@ const KEY_LABELS: Record<StateKey, string> = {
   runtime_auth: '运行器',
   feishu_auth: '飞书',
   last_event: '最近事件',
+  last_task: '最近任务',
+  last_audit: '最近审计',
 };
 
 /** 员工生命周期状态（系统侧事件可写到的取值）。 */
@@ -87,6 +89,11 @@ export interface StateRow {
   feishu_auth?: string;
   /** 最近一次生命周期事件（如「运行器登录」）。 */
   last_event?: string;
+  /** D-046：最近任务（处理中/完成/失败 + 耗时 + 任务标签）。任务开始/完成时自动更新。 */
+  last_task?: string;
+  /** 最近一次系统审计记录（如「检测到未授权身份改动已拒绝提交」）。与 last_event 解耦，
+   *  避免任务完成态覆盖对账提示；审计类消息专用，生命周期事件仍走 last_event。 */
+  last_audit?: string;
 }
 
 type StateKey = keyof StateRow;
