@@ -383,6 +383,7 @@ export function createProgram(): Command {
   registerPruneCommands(program);
   registerUsageCommands(program);
   registerIdentityCommands(program);
+  registerArchivalCommands(program);
 
   program
     .command('archive <agent-id>')
@@ -1078,6 +1079,59 @@ function registerKnowledgeCommands(program: Command): void {
       await confirmDanger(`永久删除归档条目 ${archiveRelPath}？`, options.yes === true);
       await application.knowledgePurgeArchive(id, archiveRelPath);
       console.log(chalk.green('✓ 已永久删除。'));
+    });
+}
+
+// TASK-049（D-045）：archival 命令组。单条显式归档——`archival add <agent-id> <rel-path>` 的
+// rel-path 参数即 per-entry 显式授权（D-014 invariant ②）；仅接受 knowledge/** 或 agent/ 身份
+// 文档（invariant ③）；local-sqlite 无网络面。无自动批量（D-041 retention 归档只做本地
+// knowledge/.archive 移走，绝不自动进 archival DB）。
+function registerArchivalCommands(program: Command): void {
+  const group = program.command('archival').description('知识归档（local-sqlite，单条显式）');
+  group
+    .command('add <agent-id> <rel-path>')
+    .description(
+      '单条显式归档：把 knowledge/** 或 agent/ 身份文档归档到 logs/archives/<id>.db（参数即授权）',
+    )
+    .action(async (id: string, relPath: string) => {
+      const { application } = context();
+      const record = await application.archivalAdd(id, relPath);
+      console.log(
+        chalk.green(`✓ 已归档 ${record.relPath}`) +
+          `  [${record.authorityLayer}] ${record.bytes} 字节 → ${record.reference}`,
+      );
+    });
+  group
+    .command('list <agent-id>')
+    .description('审计：列出该员工的全部归档条目（id/rel_path/layer/archived_at/bytes/reference）')
+    .action(async (id: string) => {
+      const { application } = context();
+      const rows = await application.archivalList(id);
+      if (rows.length === 0) {
+        console.log('（无归档条目）');
+        return;
+      }
+      console.log(YAML.stringify(rows));
+    });
+  group
+    .command('query <agent-id>')
+    .description('查询归档条目（内容已脱敏）')
+    .option(
+      '--layer <layer>',
+      '按 authority_layer 过滤（agent|knowledge|decisions|skills|native_memory|session）',
+    )
+    .option('--limit <number>', '返回最近 N 条', '100')
+    .action(async (id: string, options: { layer?: string; limit?: string }) => {
+      const { application } = context();
+      const rows = await application.archivalQuery(id, {
+        ...(options.layer ? { authorityLayer: options.layer as 'knowledge' } : {}),
+        limit: options.limit ? Number(options.limit) : 100,
+      });
+      if (rows.length === 0) {
+        console.log('（无匹配条目）');
+        return;
+      }
+      console.log(YAML.stringify(rows));
     });
 }
 

@@ -21,6 +21,7 @@ import type {
   KnowledgeIndexResult,
   KnowledgeRecallResult,
 } from '../core/knowledge.js';
+import { defaultLayerFor } from '../core/knowledge.js';
 import {
   archiveStaleKnowledge,
   listKnowledgeArchive,
@@ -28,6 +29,13 @@ import {
   restoreKnowledge,
 } from '../core/knowledge-retention.js';
 import { RETRIEVED_BRIEF_FILE, renderRetrievalBrief } from '../core/retrieval-brief.js';
+import {
+  LocalSqliteArchivalBackend,
+  archiveDbFile,
+  assertArchivableWorkspacePath,
+  type ArchivalRecord,
+  type ArchivalQuery,
+} from '../core/archival-local-sqlite.js';
 import { FileLock } from '../core/locks.js';
 import {
   applyRuntimeMigration,
@@ -431,6 +439,67 @@ export class FactoryApplication {
   async knowledgeVerify(id: string): Promise<KnowledgeConsistency> {
     const { registry } = await this.getAgent(id);
     return this.knowledgeIndex(registry).then((index) => index.verifyConsistency());
+  }
+
+  // TASK-049（D-045）：archival local-sqlite 公开入口（CLI archival add/list/query）。
+  // 单条显式归档：rel-path 参数即 per-entry 授权（D-014 invariant ②）；白名单
+  // knowledge/** 或 agent/ 身份文档（invariant ③，assertArchivableWorkspacePath 防软链逃逸）。
+  // authorityLayer 推断：读文件 frontmatter 的 authority_layer，缺省按顶层目录推断
+  // （复用 knowledge.ts defaultLayerFor 语义）。
+  async archivalAdd(id: string, relPath: string): Promise<ArchivalRecord> {
+    const { registry } = await this.getAgent(id);
+    const normalized = await assertArchivableWorkspacePath(
+      this.paths.workspaceRoot,
+      registry.workspace.path,
+      relPath,
+    );
+    const file = path.join(registry.workspace.path, ...normalized.split('/'));
+    const content = await fs.readFile(file, 'utf8');
+    // frontmatter authority_layer 推断（与 knowledge-index 同款解析，容忍无 frontmatter）。
+    const fm = /^---\s*\n([\s\S]*?)\n---/.exec(content)?.[1];
+    let metaLayer: unknown;
+    try {
+      if (fm) metaLayer = YAML.parse(fm)?.authority_layer;
+    } catch {
+      metaLayer = undefined;
+    }
+    const authorityLayer = defaultLayerFor(normalized, metaLayer);
+    const backend = new LocalSqliteArchivalBackend(archiveDbFile(this.paths.logsDir, registry.id));
+    const result = await backend.archive({
+      relPath: normalized,
+      content,
+      authorityLayer,
+      createdAt: new Date().toISOString(),
+    });
+    const record = backend.list().find((row) => row.reference === result.reference);
+    backend.close();
+    return (
+      record ?? {
+        id: 0,
+        relPath: normalized,
+        authorityLayer,
+        createdAt: '',
+        archivedAt: '',
+        bytes: result.bytes,
+        reference: result.reference,
+      }
+    );
+  }
+
+  async archivalList(id: string): Promise<ArchivalRecord[]> {
+    const { registry } = await this.getAgent(id);
+    const backend = new LocalSqliteArchivalBackend(archiveDbFile(this.paths.logsDir, registry.id));
+    const rows = backend.list();
+    backend.close();
+    return rows;
+  }
+
+  async archivalQuery(id: string, filter: ArchivalQuery = {}): Promise<ArchivalRecord[]> {
+    const { registry } = await this.getAgent(id);
+    const backend = new LocalSqliteArchivalBackend(archiveDbFile(this.paths.logsDir, registry.id));
+    const rows = backend.query(filter);
+    backend.close();
+    return rows;
   }
 
   // D-041 P2-1：knowledge 遗忘归档公开入口（CLI knowledge retention / restore / purge）。

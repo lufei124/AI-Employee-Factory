@@ -798,3 +798,19 @@ Started at: 2026-08-07 13:00 +0800
 Updated at: 2026-08-07 13:50 +0800
 Result: runtime-migrate.ts（buildRuntimeMigrationPlan/applyRuntimeMigration/parseRuntimeProvider/targetRuntimeHome/writeCodexConfigToml/switchSkillsProjection）；skills.ts 抽 projectSkillsToProvider（幂等相对软链语义单一实现），create-agent.projectCodexSkills 删除复用；factory-application.runtimeMigrate（FileLock + 停/重启 bridge/settle/job 服务 best-effort + 迁移后 doctor 非硬门验证 + syncCurrentState）+ runtimeMigratePlan；cli-program runtime migrate（--to/--dry-run/--discard/--yes，confirmDanger）；增测 15 条；全量 473 测试 + build/lint/tsc 全绿。
 ```
+
+```text
+Task ID: TASK-049
+Title: archival local-sqlite 后端（D-045）——D-014 frozen 契约的唯一本地实现
+Owner agent: claude-20260807-01
+Status: DONE
+Branch/worktree: main
+Allowed scope: src/core/archival-local-sqlite.ts（新）、src/application/factory-application.ts（archivalAdd/archivalList/archivalQuery）、src/cli-program.ts（archival 顶层组）、tests/archival.test.ts（新）、tests/cli-structure.test.ts、docs/DECISIONS.md、README.md、.agent 簿记
+Forbidden scope: 不改 src/core/archival.ts（D-014 frozen）；不做 push 批量（用户拍板单条显式）；D-041 retention 自动归档只做本地 knowledge/.archive 移走，绝不自动进 archival DB
+Dependencies: 用户拍板「单条显式归档」CLI 形态（AskUserQuestion）、已批准计划（TASK-048 + TASK-049）
+Expected output: `agentctl archival add <id> <rel-path>`（rel-path 参数即 per-entry 授权）→ 归档到 logs/archives/<id>.db（usage.db 同款懒打开 WAL/0600/幂等/二次 redactSecrets）；list 审计 + query 过滤；白名单 knowledge/** 或 agent/ 身份文档（assertInsideReal 防软链逃逸）
+Acceptance criteria: 新增 11 条测试全绿（建表+WAL+0600/幂等/redactSecrets 兜底/路径形状拒绝/白名单软链逃逸拒绝/query list 过滤/CLI surface/端到端 layer 推断/范围隔离）；npm test/build/lint/tsc 全绿；任务完成即 commit（不 push）
+Started at: 2026-08-07 13:40 +0800
+Updated at: 2026-08-07 14:00 +0800
+Result: archival-local-sqlite.ts（LocalSqliteArchivalBackend：archive 幂等 INSERT OR IGNORE + 二次 redactSecrets + 0600 + WAL；validateArchivalRelPath 形状校验；assertArchivableWorkspacePath 白名单 + assertInsideReal 防逃逸；list/query 过滤）；factory-application 三方法（archivalAdd 读文件 + frontmatter authority_layer 推断 defaultLayerFor + 幂等返回既有引用）；cli-program archival 组（add/list/query）；增测 11 条（含 app 层 e2e 与范围隔离）；全量 483 测试 + build/lint/tsc 全绿 + CLI 冒烟（add 幂等 / list 审计）。
+```

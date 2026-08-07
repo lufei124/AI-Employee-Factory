@@ -1,5 +1,23 @@
 # Decisions
 
+## D-045：archival local-sqlite 后端——D-014 frozen 契约的唯一本地实现
+
+- 状态：Accepted（已实施，TASK-049）
+- 日期：2026-08-07
+- 背景：`src/core/archival.ts` 从 OP1 Stage E（D-014 ADR）起只定义 ArchivalBackend 契约（`kind` 默认 `'none'`，零调用点）——「知识归档后端」是 roadmap 遗留项。用户在做 roadmap 清点（第 5 项）时拍板做掉，并明确选择**单条显式归档** CLI 形态（AskUserQuestion：`archival add <id> <rel-path>`，不做 push 批量）。本批实现 'local-sqlite' 变体，把 D-014 四条 frozen 不变量逐一落地。
+- 决定：
+  - **DB 位置**：`~/.ai-employees/logs/archives/<agent-id>.db`——单员工单库（避免串扰）；logsDir 已是受管目录（0700，config.ts 初始化）；DB 文件显式 chmod 0600；WAL 侧文件由目录权限保护。对齐 usage.db 先例（usage-log.ts 同款懒打开 ensure()、WAL、CREATE TABLE IF NOT EXISTS、失败降级、named-param prepared statements、close()）。
+  - **Schema**：`archive_entries(id PK AUTOINCREMENT, rel_path UNIQUE, authority_layer, content, created_at, archived_at, bytes, reference)` + `idx_archive_entries_layer` 索引。`reference = 'archive_entries/<id>'` 稳定引用（INSERT 后按行 id 回填）。
+  - **D-014 四条 invariants 落实**：① `archive()` 内**二次 redactSecrets**（后端不信任调用方，禁止原始 Secret 落盘；bytes 按脱敏后字节数）② **per-entry 显式授权**在 CLI 入口——`archival add <id> <rel-path>` 的 rel-path 参数即授权（无自动批量；D-041 retention 自动归档只做本地 `knowledge/.archive` 移走，绝不自动进 archival DB）③ **白名单 + 防逃逸**——`validateArchivalRelPath`（相对/无穿越/顶层目录白名单 `knowledge/**` 或 `agent/` 身份文档）+ `assertArchivableWorkspacePath`（`assertInsideReal` 解析真实路径，软链逃逸拒绝；文件必须存在且为普通文件）④ **local-sqlite 无网络面**；`external` 后端仍须安全评审（本 ADR 维持 D-014 原约束）。
+  - **authorityLayer 推断**：`archivalAdd` 读文件 frontmatter 的 `authority_layer`，缺省按顶层目录推断（复用 `knowledge.ts defaultLayerFor` 语义——decisions/ 归 decisions 层，其余归 knowledge）。
+  - **幂等**：同 relPath 重复归档 `INSERT OR IGNORE` no-op，返回既有行引用（重复 add 不产生重复记录）。
+  - **CLI 形态**（新顶层组 `archival`）：`add <agent-id> <rel-path>`（单条显式归档）/ `list <agent-id>`（审计：id/rel_path/layer/archived_at/bytes/reference）/ `query <agent-id> [--layer <layer>] [--limit <n>]`（过滤查询，内容已脱敏；非法 layer → VALIDATION_ERROR）。
+- 边界：不改 `archival.ts`（D-014 frozen 契约原样，实现侧独立模块）；不做 push 批量/自动归档（用户拍板）；archival DB 只存已脱敏内容，不存 Secret；不归档 runtime_home/bridge 内容（invariant ③ 白名单天然排除）。
+- 原因：D-014 契约冻结两年（从 OP1 Stage E 起）没有实现，归档能力停留在「员工本地 `.archive` 移走」级别——没有跨库审计、没有稳定引用、没有查询。local-sqlite 是最低侵入的实现（零网络面、零新依赖、与 usage.db 同款运维模式），单条显式 CLI 保持「归档是用户主动决策」的产品语义（D-014 invariant ②），幂等 + 脱敏 + 白名单 + 防逃逸把写入面收紧到只碰可迁移身份知识。
+- 影响：`archival-local-sqlite.ts`（新建：LocalSqliteArchivalBackend/validateArchivalRelPath/assertArchivableWorkspacePath/archiveDbFile）、`factory-application.ts`（archivalAdd/archivalList/archivalQuery）、`cli-program.ts`（archival 顶层组）、`cli-structure.test.ts`（archival 断言）；增测 11 条（建表+WAL+0600/幂等/redactSecrets 兜底/路径形状拒绝/白名单与软链逃逸拒绝/query list 过滤/CLI surface/app 层 e2e layer 推断/范围隔离）；全量 483 测试 + build/lint/tsc 全绿 + CLI 冒烟（add 幂等 / list 审计）。
+
+---
+
 ## D-044：显式 runtime 迁移工作流——claude ↔ codex 双向迁移，内部一致事务
 
 - 状态：Accepted（已实施，TASK-048）
