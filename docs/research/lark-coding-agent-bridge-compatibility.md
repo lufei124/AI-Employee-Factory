@@ -189,18 +189,18 @@ Factory 不使用 Bridge 自带 daemon，而是由 `com.aiemployees.<agent-id>` 
 
 ## 6. 当前 Factory 的兼容性差距
 
-| 项目                                      | 结果                        | 说明/建议                                                                                                                        |
-| ----------------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `profile create <id> --agent --workspace` | 兼容                        | 当前 argv 符合官方 CLI。                                                                                                         |
-| 无 App ID 的 QR 授权                      | 兼容                        | 必须保持在交互终端中执行。                                                                                                       |
-| 已有 App ID                               | 基本兼容                    | Factory 只传 `--app-id`/`--tenant`，Secret 由 Bridge 隐藏输入，这是正确边界。                                                    |
-| `LARK_CHANNEL_HOME` 隔离                  | 兼容                        | 每员工不同 Bridge Home 与上游路径机制匹配。                                                                                      |
-| Factory 管理 launchd + Bridge `run`       | 兼容                        | 不要同时使用 Bridge `start` 管理同一 profile。                                                                                   |
-| Claude 默认 CC Switch                     | **不兼容**                  | 移除 Claude 默认路径上的 per-agent `CLAUDE_CONFIG_DIR`，调整 runtime 引导/doctor。                                               |
-| Bridge profile 默认权限                   | **不符合 Factory 安全默认** | profile 创建后需将 `permissions.defaultAccess/maxAccess` 收紧为 `workspace`，否则 Claude 是 `bypassPermissions`。                |
-| 能力探测                                  | **不完整**                  | 当前只检查 `run --help` 的 `--profile/--agent/--workspace`，还应检查 `profile create/export`、`--app-id`、`--tenant`和安装版本。 |
-| Bridge 授权状态                           | **语义偏弱**                | `profile export` 成功只能证明 profile 可导出，不能证明 WebSocket 能连接或 bot 能收发。                                           |
-| 版本保证                                  | **需加固**                  | 上游 main 是 0.7.0；本机实际 `lark-channel-bridge --version` 是 0.5.9。不应在不探测的情况下假设 0.7.0 全部行为。                 |
+| 项目                                      | 结果                        | 说明/建议                                                                                                                                                                                  |
+| ----------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `profile create <id> --agent --workspace` | 兼容                        | 当前 argv 符合官方 CLI。                                                                                                                                                                   |
+| 无 App ID 的 QR 授权                      | 兼容                        | 必须保持在交互终端中执行。                                                                                                                                                                 |
+| 已有 App ID                               | 基本兼容                    | Factory 只传 `--app-id`/`--tenant`，Secret 由 Bridge 隐藏输入，这是正确边界。                                                                                                              |
+| `LARK_CHANNEL_HOME` 隔离                  | 兼容                        | 每员工不同 Bridge Home 与上游路径机制匹配。                                                                                                                                                |
+| Factory 管理 launchd + Bridge `run`       | 兼容                        | 不要同时使用 Bridge `start` 管理同一 profile。                                                                                                                                             |
+| Claude 默认 CC Switch                     | **不兼容**                  | 移除 Claude 默认路径上的 per-agent `CLAUDE_CONFIG_DIR`，调整 runtime 引导/doctor。                                                                                                         |
+| Bridge profile 默认权限                   | **不符合 Factory 安全默认** | profile 创建后需将 `permissions.defaultAccess/maxAccess` 收紧为 `workspace`，否则 Claude 是 `bypassPermissions`。                                                                          |
+| 能力探测                                  | **不完整**                  | 当前只检查 `run --help` 的 `--profile/--agent/--workspace`，还应检查 `profile create/export`、`--app-id`、`--tenant`和安装版本。                                                           |
+| Bridge 授权状态                           | **语义偏弱**                | `profile export` 成功只能证明 profile 可导出，不能证明 WebSocket 能连接或 bot 能收发。                                                                                                     |
+| 版本保证                                  | **已加固（TASK-051）**      | 上游 main 是 0.7.0；本机 `lark-channel-bridge --version` 已由 0.5.9 升级到 0.7.0。0.7.0 与 0.5.9 的 JSONL 事件名/字段（intake/run/agent/card）与 CLI 面（`--version`/`run`/`profile create | export`）经 bundle 比对全保留，`usage audit` parser 无感；doctor 能力探测对 0.7.0 报 pass。 |
 
 Bridge 新 profile 默认 `full/full`，且权限映射为 Claude `bypassPermissions` / Codex `danger-full-access`，见 [Bridge permissions implementation](https://github.com/zarazhangrui/lark-coding-agent-bridge/blob/e5d3ce57ca95212cfa53965a6f2cc2d998aa691c/src/config/permissions.ts#L93-L128) 和 [defaultPermissions](https://github.com/zarazhangrui/lark-coding-agent-bridge/blob/e5d3ce57ca95212cfa53965a6f2cc2d998aa691c/src/config/permissions.ts#L176-L181)。Factory 当前能力检查只查三个 `run` 参数，见 [`BridgeAdapter.inspectCapabilities`](../../src/core/bridge.ts#L58-L71)；`bridge status` 把 `profile export` 成功当成 ready，见 [`FactoryApplication.bridgeStatus`](../../src/application/factory-application.ts#L294-L305)。
 

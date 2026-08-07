@@ -195,7 +195,7 @@ agentctl job disable user-operations daily-feedback-review
 
 ## 飞书使用审计
 
-每条飞书消息的使用记录（耗时/退出码/token/成本/主题）落本地 `logs/usage.db`（D-036）；D-046 起把消息元数据一并上抛——bridge 0.5.9 会把每条消息写成结构化 JSONL 到 `~/.ai-employees/bridges/<id>/profiles/<profile>/logs/bridge-YYYYMMDD.jsonl`，Factory 解析成可查询审计（chat 类型/source/会话/发送者/runId），`runBridgeMessage` 按时间近邻匹配后同步进 usage.db。**完整 ID 仅存本地 0600 库**，CLI/Web 展示一律截断（`…xxxxxx`）。
+每条飞书消息的使用记录（耗时/退出码/token/成本/主题）落本地 `logs/usage.db`（D-036）；D-046 起把消息元数据一并上抛——bridge（本机 0.7.0；0.5.9→0.7.0 事件与字段保持，TASK-051 已核对）把每条消息写成结构化 JSONL 到 `~/.ai-employees/bridges/<id>/profiles/<profile>/logs/bridge-YYYYMMDD.jsonl`，Factory 解析成可查询审计（chat 类型/source/会话/发送者/runId），`runBridgeMessage` 按时间近邻匹配后同步进 usage.db。**完整 ID 仅存本地 0600 库**，CLI/Web 展示一律截断（`…xxxxxx`）。
 
 ```bash
 agentctl usage query --agent user-operations --limit 20    # 每条消息使用记录（含 chat_type/source/chat_id/msg_id/sender_id/run_id）
@@ -324,10 +324,10 @@ agentctl archive user-operations
 
 v1 不包含常驻 Web 服务、局域网/远程访问、账号系统、浏览器内终端、多 Agent 共享机器人 Router、Agent 自由互聊、云端多租户、Skill 市场、生产数据写入、知识图谱或 systemd 实现。核心模型是「单一 AI 员工 + 定时 Job + Web 单轮对话」；Chief 编排、Todo 状态机与 MCP 接入已于 TASK-030（D-027）移除。后续优先项是 systemd adapter 与可选的加密 Secret provider。分层自进化协议（D-041）已完成全部五阶段：三开关默认开 + 经验两级化（M2）、提案对账账本 + Web 只读收敛 + 创建骨架化（M3）、遗忘归档 + 身份 git 回滚（M4）、doctor 检查项 + Web 进化历史 + 检索增强（M5）；检索增强由 D-042 进一步升级为 BM25 召回引擎 + 运行时 RAG 注入（`knowledge/.retrieved.md`）；显式 runtime 迁移工作流已由 D-044（TASK-048）落地（claude ↔ codex 双向）；archival 后端由 D-045（TASK-049）落地（local-sqlite 单条显式归档）；飞书消息元数据上抛 usage 审计 + 任务完成态自动写状态由 D-046（TASK-050）落地。
 
-**关于飞书（D-046 答疑）**：
+**关于飞书（D-046 答疑，TASK-051 收口）**：
 
-- **「一个机器人路由给多个员工」**：bridge 的模型是 **profile = 一个飞书应用 = 一个 agent**（`bridge.profile = agent.id`，独立 app-id/secret，`LARK_CHANNEL_HOME` 按员工隔离）；路由是**按 profile、不按消息**。当前每员工一个专属机器人；「单一飞书机器人收到消息后由 Router（在 Factory 层）决定派给哪个员工」不在 v1 范围（即上述「多 Agent 共享机器人 Router」），bridge 本身也不支持按消息路由。影响：管 N 个员工 = 管 N 个飞书应用。
-- **bridge 版本（0.5.9 vs 0.7.0）**：官方无 changelog/releases。0.5.9 已具备 Factory 依赖的全能力（streaming 卡片、COT、会话连续性、排队、全部斜杠命令、workspace 权限收紧、结构化 JSONL 日志含 costUsd）；缺**飞书文档评论**（Factory 不用的可选能力）与 0.6.0–0.7.0 未公开修复。对本项目影响低风险，升级非紧急；若升级改了 JSONL schema，`usage audit` parser 已有容错。
+- **「一个机器人路由给多个员工」**：bridge 的模型是 **profile = 一个飞书应用 = 一个 agent**（`bridge.profile = agent.id`，独立 app-id/secret，`LARK_CHANNEL_HOME` 按员工隔离）；路由是**按 profile、不按消息**。当前每员工一个专属机器人；「单一飞书机器人收到消息后由 Router（在 Factory 层）决定派给哪个员工」不在 v1 范围（即上述「多 Agent 共享机器人 Router」），bridge 本身也不支持按消息路由。影响：管 N 个员工 = 管 N 个飞书应用。**用户已拍板保持该模型**——一 profile = 一飞书应用 = 一员工，不做共享 Router。
+- **bridge 版本（0.5.9 → 0.7.0）**：官方无 changelog/releases。已核对 0.7.0 与 0.5.9 的 Factory 依赖面：JSONL 事件名与字段**全保留**（`intake.enter/command`、`run.started/completed`、`agent.exit/usage`、`card.final` + `chatType/source/accessMode/runId/result/durationMs/costUsd/interrupted`），`usage audit` parser 无感；CLI 面 `--version`/`run`/`profile create|export` 与 bin 入口不变，doctor 能力探测 pass。0.5.9 缺的**飞书文档评论**（Factory 不用的可选能力）在 0.7.0 仍非依赖项。本机已 `npm install -g lark-channel-bridge@0.7.0` 升级（升级前若已有 0.5.9 JSONL 历史，parser 兼容读取）。
 
 ## 开发验证
 

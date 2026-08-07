@@ -830,11 +830,12 @@ Started at: 2026-08-07 15:08 +0800
 Updated at: 2026-08-07 15:42 +0800
 Result: bridge-audit.ts（readBridgeAudit 事件累积合并 intake→run→agent→card，scope 桶 + 容错；matchBridgeRunMeta 时间近邻 ≤60s）；usage-log.ts 6 元数据列幂等迁移（PRAGMA 查缺 ALTER）+ record 埋点；task-state.ts（sanitizeTaskLabel/formatDuration/taskStartRow/taskCompleteRow 纯函数）；current-state.ts last_task + last_audit（recordState 对账提示改走 last_audit，避免被任务完成态覆盖）；factory-application：runBridgeMessage 开始+完成挂钩 + 元数据匹配、runJob/chat 只写完成、bridgeAudit 方法；cli-program usage audit（截断展示）；web GET /usage/messages + AgentDetailPage 最近飞书消息列表；D-046 ADR + README（使用审计段 + Q1/Q2 答疑 + CURRENT_STATE 更新）；增测 19 条；全量 502 测试 + build/lint/tsc 全绿 + CLI 冒烟（usage audit user-operations 出真实审计表 / usage query 含元数据列）。
 ```
+
 ```text
 Task ID: TASK-051
 Title: bridge 升级 0.5.9 → 0.7.0 + 确认「一 profile 一飞书应用一员工」模型（D-046 答疑收口）
 Owner agent: claude-20260807-01
-Status: IN_PROGRESS
+Status: DONE
 Branch/worktree: main
 Allowed scope: 本机全局 npm 包 lark-channel-bridge 升级到 0.7.0 + 升级后验证；docs/README.md（「关于飞书（D-046 答疑）」Q1/Q2 + 飞书使用审计段）、docs/DECISIONS.md（D-046 边界更新）、docs/research/lark-coding-agent-bridge-compatibility.md（版本记录）；.agent 簿记
 Forbidden scope: 不做共享 Router 改造（用户拍板保持一 profile = 一应用 = 一员工）；不改 Factory 代码与 bridge 私有日志格式
@@ -842,6 +843,6 @@ Dependencies: 用户拍板「0.5.9 可以升级到 0.7.0」「保持一个 profi
 Expected output: 全局 lark-channel-bridge 升到 0.7.0；0.7.0 与 0.5.9 的 JSONL schema/CLI 面兼容性核对结果写进文档（事件名与字段全保留，parser 无感）；README Q1/Q2 答疑从「升级非紧急」改为「已升级 0.7.0 + schema 已核对」并确认 profile 模型；D-046 边界同步
 Acceptance criteria: `lark-channel-bridge --version` 出 0.7.0；doctor bridge 检查 pass；`agentctl usage audit user-operations` 冒烟仍出审计表；npm test/build/lint 全绿；任务完成即 commit（不 push）
 Started at: 2026-08-07 15:50 +0800
-Updated at: 2026-08-07 15:50 +0800
-Result: （待填写）
+Updated at: 2026-08-07 16:10 +0800
+Result: 全局 `npm install -g lark-channel-bridge@0.7.0`（0.5.9→0.7.0，/opt/homebrew/lib）；0.7.0 与 0.5.9 bundle 比对——JSONL 事件名（intake.enter/command、run.started/completed、agent.exit/usage、card.final）与 parser 依赖字段（msgId/sender/scope/chatType/accessMode/queueWaitMs/runId/result/durationMs/costUsd/interrupted）全保留、CLI 面（--version/run/profile create|export）+ bin + engines 不变；升级后 doctor bridge 能力探测 pass（0.7.0: run/profile create/profile export）、usage audit 冒烟仍出审计表（doctor 2 失败/4 警告为既有 .env.example 与 skill adopt 问题，与升级无关）；README Q1/Q2 答疑收口（已升级 0.7.0 + schema 已核对；确认保持一 profile=一飞书应用=一员工，不做共享 Router）+ 审计段版本表述更新；DECISIONS D-046 状态/背景/边界同步；research doc「版本保证」由「需加固」改「已加固（TASK-051）」；全量 502 测试 + build/lint 全绿。
 ```
