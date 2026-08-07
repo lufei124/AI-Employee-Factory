@@ -139,7 +139,8 @@ export async function renderAgentWorkspace(input: {
     path.join(workspace, '.gitignore'),
     // T01：基线提交不应跟踪运行时敏感配置。.claude/settings.json 由模板生成（permissions 默认），
     // 属本机运行时产物、备份按 basename 排除为敏感文件，故从 Git 跟踪中剔除。
-    '.env\n.env.*\n!.env.example\n*.pem\n*.key\n*.p12\n*.token\nconfig/env.local\n.claude/settings.json\nlogs/*\n!logs/.gitkeep\nknowledge/.index.json\n.DS_Store\n',
+    // D-041 P2-1：knowledge/.archive/ 遗忘归档目录不进 git（归档条目不膨胀 git 历史，可恢复）。
+    '.env\n.env.*\n!.env.example\n*.pem\n*.key\n*.p12\n*.token\nconfig/env.local\n.claude/settings.json\nlogs/*\n!logs/.gitkeep\nknowledge/.index.json\nknowledge/.archive/\n.DS_Store\n',
   );
   await fs.ensureFile(path.join(workspace, 'logs/.gitkeep'));
   // OP1 Stage B：knowledge/ 目录约定。以 frontmatter（title/summary/keywords/updated_at/authority_layer）

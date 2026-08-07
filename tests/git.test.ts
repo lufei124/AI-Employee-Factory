@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
-import { gitAddCommit, gitCommitFile, gitStatusShort } from '../src/core/git.js';
+import { gitAddCommit, gitCommitFile, gitShowFile, gitStatusShort } from '../src/core/git.js';
 
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => fs.remove(root))));
@@ -80,5 +80,32 @@ describe('git.ts (OP6-A)', () => {
       requireIdentity: false,
     });
     expect(ok).toBe(false);
+  });
+
+  it('gitShowFile reads a committed file content at HEAD / specified ref (D-041 P2-2)', async () => {
+    const root = await setupWorkspace();
+    await gitAddCommit(root, 'chore: initial scaffold');
+    // HEAD 下的文件全文可读。
+    expect(await gitShowFile(root, 'a.txt')).toBe('hello');
+    // 文件在工作区被改动后，git show 仍读已提交版本（供身份回滚写回历史快照）。
+    await fs.writeFile(path.join(root, 'a.txt'), 'dirty working tree');
+    expect(await gitShowFile(root, 'a.txt')).toBe('hello');
+    // 指定 ref 读历史提交；初始提交前无历史 → undefined。
+    const firstCommit = (
+      await execa('git', ['rev-list', '--max-count=1', 'HEAD'], { cwd: root, shell: false })
+    ).stdout.trim();
+    await fs.writeFile(path.join(root, 'b.txt'), 'second');
+    await gitCommitFile(root, 'b.txt', 'chore: second');
+    expect(await gitShowFile(root, 'b.txt', firstCommit)).toBeUndefined();
+    expect(await gitShowFile(root, 'b.txt', 'HEAD')).toBe('second');
+  });
+
+  it('gitShowFile returns undefined for nonexistent path or non-repo', async () => {
+    const root = await setupWorkspace();
+    await gitAddCommit(root, 'chore: initial scaffold');
+    expect(await gitShowFile(root, 'no-such-file.md')).toBeUndefined();
+    const plain = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-git-plain-'));
+    roots.push(plain);
+    expect(await gitShowFile(plain, 'a.txt')).toBeUndefined();
   });
 });

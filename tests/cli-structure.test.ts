@@ -35,6 +35,7 @@ describe('agentctl command surface', () => {
         'skill',
         'skill-store',
         'knowledge',
+        'identity',
         'web',
         'trash',
         'operations',
@@ -58,7 +59,9 @@ describe('agentctl command surface', () => {
     expect(names('bridge')).toEqual(expect.arrayContaining(['authorize', 'status']));
     expect(names('job')).toEqual(expect.arrayContaining(['list', 'validate', 'run']));
     expect(names('skill')).toEqual(expect.arrayContaining(['list', 'install', 'remove']));
-    expect(names('knowledge')).toEqual(expect.arrayContaining(['rebuild', 'recall', 'verify']));
+    expect(names('knowledge')).toEqual(
+      expect.arrayContaining(['rebuild', 'recall', 'verify', 'retention', 'restore', 'purge']),
+    );
     expect(names('skill-store')).toEqual(
       expect.arrayContaining([
         'list-repos',
@@ -71,6 +74,8 @@ describe('agentctl command surface', () => {
     );
     expect(names('trash')).toEqual(expect.arrayContaining(['move', 'list', 'restore', 'purge']));
     expect(names('operations')).toEqual(expect.arrayContaining(['query']));
+    // D-041 P2-2：identity 命令组提供身份文档 git 回滚。
+    expect(names('identity')).toEqual(expect.arrayContaining(['rollback']));
   });
 
   it('create exposes --describe and no longer exposes --preset (D-029)', () => {

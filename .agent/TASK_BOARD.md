@@ -707,7 +707,7 @@ Updated at: 2026-08-06 21:05 +0800
 Task ID: TASK-043
 Title: 分层自进化协议 M4（D-041 P2）——knowledge 遗忘归档 + 身份 git 回滚 + 账本上限
 Owner agent: claude-20260807-01
-Status: ACTIVE
+Status: DONE
 Branch/worktree: main
 Allowed scope: src/core/knowledge-retention.ts（新）、src/core/git.ts（gitShowFile）、src/application/factory-application.ts（settleActive 归档 + identityRollback）、src/cli-program.ts（knowledge retention + identity rollback）、src/core/knowledge-index.ts（.archive 排除）、src/core/templates.ts（.gitignore .archive）、tests/knowledge-retention.test.ts（新）、tests/git.test.ts、tests/self-evolution.test.ts、docs/DECISIONS.md、README.md、.agent 簿记
 Forbidden scope: 不做 doctor 检查项/Web 进化历史/recall 增强（M5）；不引入向量库/新 DB；不引入对外网络外发
@@ -715,5 +715,5 @@ Dependencies: TASK-042（D-041 P3，M3）
 Expected output: knowledge-retention.ts（raw/refined 超 retentionDays 移 knowledge/.archive/<date>/，可 restore/purge，重建索引）；agentctl knowledge retention/restore；gitShowFile + agentctl identity rollback <id> <file> [--ref]（写回 + evolve 提交 + 基线更新）；proposal-ledger/.reflection-signals 5000 行截断为摘要
 Acceptance criteria: knowledge-retention 单测全绿；git/self-evolution 增测全绿；npm test/build/lint 全绿；任务完成即 commit（不 push）
 Started at: 2026-08-07 10:05 +0800
-Updated at: 2026-08-07 10:05 +0800
+Updated at: 2026-08-07 10:35 +0800
 ```

@@ -108,3 +108,22 @@ export async function gitCommitFile(
   });
   return commit.exitCode === 0;
 }
+
+/** 读取某提交（缺省 HEAD）下文件的全文（git show <ref>:<path>）。供身份回滚等「从历史写回」场景。
+ *  文件在该提交不存在 → 返回 undefined；git 异常（非仓库/路径越界）同样返回 undefined（调用方判 NOT_FOUND）。
+ *  stripFinalNewline:false 保留文件结尾换行（回滚写回时字节级一致，不丢末行空行）。 */
+export async function gitShowFile(
+  workspace: string,
+  relPath: string,
+  ref = 'HEAD',
+): Promise<string | undefined> {
+  const result = await execa('git', ['show', `${ref}:${relPath}`], {
+    cwd: workspace,
+    shell: false,
+    extendEnv: false,
+    reject: false,
+    stripFinalNewline: false,
+  });
+  if (result.exitCode !== 0) return undefined;
+  return result.stdout;
+}

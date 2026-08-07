@@ -21,13 +21,19 @@ import type {
   KnowledgeIndexResult,
   KnowledgeRecallResult,
 } from '../core/knowledge.js';
+import {
+  archiveStaleKnowledge,
+  listKnowledgeArchive,
+  purgeKnowledgeArchive,
+  restoreKnowledge,
+} from '../core/knowledge-retention.js';
 import { FileLock } from '../core/locks.js';
 import { initializeFactory, readConfig } from '../core/config.js';
 import { CreateAgentService, type CreateAgentInput } from '../core/create-agent.js';
 import { generateEmployeeProfile, generateEmployeeSkeleton } from '../core/employee-generator.js';
 import { renderRawExperience, rawExperienceRelPath } from '../core/experience.js';
 import { validateIdentityGuard } from '../core/identity-guard.js';
-import { ensureIdentityBaseline } from '../core/identity-baseline.js';
+import { ensureIdentityBaseline, IDENTITY_DOCS } from '../core/identity-baseline.js';
 import {
   maybeEnforceIdentityProtocol,
   parseProposalFrontmatter,
@@ -78,7 +84,7 @@ import { UsageDb, type UsageFilter, type UsageSummaryRow } from '../core/usage-l
 import { PruneService, type PruneOptions, type PruneResult } from '../core/prune.js';
 import { TrashService, type TrashEntryDto, type TrashPreview } from '../core/trash.js';
 import { ProcessRunner, type LoggedRunOptions } from '../core/process-runner.js';
-import { gitCommitFile, gitStatusShort } from '../core/git.js';
+import { gitCommitFile, gitShowFile, gitStatusShort } from '../core/git.js';
 import {
   updateCurrentState,
   ensureAgentDocsAllowed,
@@ -387,6 +393,94 @@ export class FactoryApplication {
   async knowledgeVerify(id: string): Promise<KnowledgeConsistency> {
     const { registry } = await this.getAgent(id);
     return this.knowledgeIndex(registry).then((index) => index.verifyConsistency());
+  }
+
+  // D-041 P2-1：knowledge 遗忘归档公开入口（CLI knowledge retention / restore / purge）。
+  async knowledgeArchiveStale(
+    id: string,
+    options: { retentionDays?: number } = {},
+  ): Promise<Awaited<ReturnType<typeof archiveStaleKnowledge>>> {
+    const { registry } = await this.getAgent(id);
+    const result = await archiveStaleKnowledge({
+      workspace: registry.workspace.path,
+      ...(options.retentionDays !== undefined ? { retentionDays: options.retentionDays } : {}),
+    });
+    if (result.archived.length > 0) {
+      await this.knowledgeIndex(registry).then((index) => index.ingest());
+    }
+    return result;
+  }
+
+  async knowledgeListArchive(
+    id: string,
+  ): Promise<Awaited<ReturnType<typeof listKnowledgeArchive>>> {
+    const { registry } = await this.getAgent(id);
+    return listKnowledgeArchive(registry.workspace.path);
+  }
+
+  async knowledgeRestore(
+    id: string,
+    archiveRelPath: string,
+    targetRel?: string,
+  ): Promise<{ restored: string }> {
+    const { registry } = await this.getAgent(id);
+    const result = await restoreKnowledge(registry.workspace.path, archiveRelPath, targetRel);
+    await this.knowledgeIndex(registry).then((index) => index.ingest());
+    return result;
+  }
+
+  async knowledgePurgeArchive(id: string, archiveRelPath: string): Promise<void> {
+    const { registry } = await this.getAgent(id);
+    await purgeKnowledgeArchive(registry.workspace.path, archiveRelPath);
+    await this.knowledgeIndex(registry).then((index) => index.ingest());
+  }
+
+  // D-041 P2-2：身份 git 回滚——把某文件在指定提交（缺省 HEAD，即回退到「上一版本」）的内容
+  // 写回工作区，走 evolve 单文件提交（可回溯），并刷新身份基线（身份文档回滚后基线同步到新内容，
+  // 使对账反映回滚后的状态，而非旧的权威快照）。
+  // 受限清单：四份自维护身份文档 + CONSTITUTION + IDENTITY_BASELINE + GOALS/OPERATING_SYSTEM/
+  // POLICIES/ROLE/CONSTITUTION 均属身份区；知识/技能/workflows 由员工自主、git checkout 即可回退，
+  // 不提供 rollback 逃生口（与「人工只走聊天改身份」对齐：CLI 回滚只服务身份文档）。
+  async identityRollback(
+    id: string,
+    relPath: string,
+    options: { ref?: string } = {},
+  ): Promise<{ relPath: string; ref: string; restoredAt: string }> {
+    const { registry, agent } = await this.getAgent(id);
+    const workspace = registry.workspace.path;
+    const ref = options.ref ?? 'HEAD';
+    // 只允许回滚身份文档（含基线）。知识/技能等可进化区由员工 git 自主管理，不在此逃生口范围。
+    const identityDocs = [
+      ...IDENTITY_DOCS,
+      'agent/IDENTITY_BASELINE.md',
+      'agent/CURRENT_STATE.md',
+    ] as const;
+    if (!(identityDocs as readonly string[]).includes(relPath)) {
+      throw new AgentCtlError(
+        'VALIDATION_ERROR',
+        `identity rollback 仅支持身份文档（${identityDocs.join('、')}），不支持 ${relPath}。`,
+      );
+    }
+    const file = assertInside(workspace, path.resolve(workspace, relPath), '身份文档');
+    await assertInsideReal(this.paths.workspaceRoot, file, '身份文档');
+    const content = await gitShowFile(workspace, relPath, ref);
+    if (content === undefined) {
+      throw new AgentCtlError('NOT_FOUND', `提交 ${ref} 下不存在 ${relPath}（或 git 读取失败）。`, {
+        remediation: '请用 git log --oneline -- <file> 确认提交存在，再指定 --ref。',
+      });
+    }
+    await atomicWriteFile(file, content, 0o644);
+    // 身份文档回滚后刷新基线：使对账反映回滚后的内容，而非旧权威快照（避免回滚后仍被判漂移）。
+    const baseline = await ensureIdentityBaseline({
+      workspace,
+      description: agent.description,
+    });
+    if (baseline.wrote) {
+      await this.commitAgentFile(workspace, 'agent/IDENTITY_BASELINE.md', 'evolve: 更新 身份基线');
+    }
+    const message = `evolve: 回滚 ${relPath} 到 ${ref}`;
+    await this.commitAgentFile(workspace, relPath, message);
+    return { relPath, ref, restoredAt: new Date().toISOString() };
   }
 
   async knowledgeRead(id: string, relPath: string): Promise<{ relPath: string; content: string }> {
@@ -1313,6 +1407,28 @@ export class FactoryApplication {
     await this.commitSelfEvolution(agent, registry.workspace.path, blockedRel);
     // TASK-031（D-028）：员工自我配置定时任务 reconcile。
     await reconcileEmployeeJobs(registry, agent, this.paths);
+    // D-041 P2-1：knowledge 遗忘归档——raw/refined 超保留期条目移入 knowledge/.archive/
+    // （移走非删除，可恢复），并从索引隐退。settleActive 末尾低频调用（周期 settle 也覆盖）。
+    // .archive/ 已 .gitignore：移走即自动从 evolve 提交消失，无需额外提交。
+    await this.maybeArchiveStaleKnowledge(id);
+  }
+
+  // D-041 P2-1：knowledge 遗忘归档。best-effort：归档/重建索引失败仅告警，不阻断自进化链。
+  private async maybeArchiveStaleKnowledge(id: string): Promise<void> {
+    try {
+      const { registry } = await this.getAgent(id);
+      const result = await archiveStaleKnowledge({ workspace: registry.workspace.path });
+      if (result.archived.length > 0) {
+        await this.knowledgeIndex(registry).then((index) => index.ingest());
+        console.warn(
+          `[knowledge-retention] ${id} 已归档 ${result.archived.length} 条陈旧经验到 knowledge/.archive/（保留 ${result.skipped} 条失败跳过）。`,
+        );
+      }
+    } catch (error) {
+      console.warn(
+        `[knowledge-retention] 归档失败（跳过）：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   // D-041 P1-3：提案账本同步。扫描 agent/proposals/*.md，将提案登记进账本

@@ -649,3 +649,100 @@ describe('提案账本同步 + enforced 对账（D-041 P1-3）', () => {
     warnSpy.mockRestore();
   });
 });
+
+describe('身份 git 回滚 + knowledge 遗忘归档（D-041 P2）', () => {
+  it('identity rollback 把身份文档恢复到历史提交内容，走 evolve 提交且工作区干净', async () => {
+    const { app, paths } = await setup();
+    const workspace = path.join(paths.workspaceRoot, 'worker-a');
+    const roleFile = path.join(workspace, 'agent', 'ROLE.md');
+    const original = await fs.readFile(roleFile, 'utf8');
+
+    // 员工在任务中修改岗位文档并提交（HEAD 变为新内容）。
+    const { ProcessRunner } = await import('../src/core/process-runner.js');
+    vi.spyOn(ProcessRunner.prototype, 'runLogged').mockImplementation(async () => {
+      await fs.appendFile(roleFile, '\n- 已学习：优先使用异步批量处理。\n');
+      return fakeResult('完成。');
+    });
+    await runAdminJob(app, 'role-change', '学习并更新岗位描述');
+
+    // 回退目标 = 修改前的提交（git log 时间倒序，第 2 条即原创建提交）。
+    const commits = (
+      await execa('git', ['log', '--format=%H', '--', 'agent/ROLE.md'], {
+        cwd: workspace,
+        shell: false,
+        extendEnv: false,
+        reject: false,
+      })
+    ).stdout
+      .split('\n')
+      .filter(Boolean);
+    expect(commits.length).toBeGreaterThanOrEqual(2);
+    const beforeCommit = commits[1];
+
+    const result = await app.identityRollback('worker-a', 'agent/ROLE.md', {
+      ref: beforeCommit,
+    });
+    expect(result.relPath).toBe('agent/ROLE.md');
+    expect(result.ref).toBe(beforeCommit);
+    // 工作区文件恢复为历史内容（含岗位定位锚点完整）。
+    expect(await fs.readFile(roleFile, 'utf8')).toBe(original);
+    // 回滚本身有 evolve 提交，且工作区干净（文件与提交一致）。
+    const log = await gitLog(workspace, 'agent/ROLE.md');
+    expect(log.some((line) => line.includes(`evolve: 回滚 agent/ROLE.md`))).toBe(true);
+    const status = await execa('git', ['status', '--short'], {
+      cwd: workspace,
+      shell: false,
+      extendEnv: false,
+      reject: false,
+    });
+    expect(status.stdout).not.toContain('ROLE.md');
+  });
+
+  it('identity rollback 拒绝非身份文档；目标提交无该文件时报 NOT_FOUND', async () => {
+    const { app, paths } = await setup();
+    const workspace = path.join(paths.workspaceRoot, 'worker-a');
+    await fs.ensureDir(path.join(workspace, 'knowledge', 'lessons'));
+    await fs.writeFile(path.join(workspace, 'knowledge', 'lessons', 'note.md'), '# 知识\n');
+    // 知识/技能等可进化区不提供 rollback 逃生口（员工 git 自主管理）。
+    await expect(app.identityRollback('worker-a', 'knowledge/lessons/note.md')).rejects.toThrow(
+      '仅支持身份文档',
+    );
+    // 目标提交不存在该文件（无效 ref）→ NOT_FOUND。
+    await expect(
+      app.identityRollback('worker-a', 'agent/GOALS.md', {
+        ref: '0000000000000000000000000000000000000000',
+      }),
+    ).rejects.toThrow('不存在');
+  });
+
+  it('settleActive 末尾归档陈旧 raw 经验到 knowledge/.archive/（P2-1 钩子）', async () => {
+    const { app, paths } = await setup();
+    const workspace = path.join(paths.workspaceRoot, 'worker-a');
+    // 播种一条超保留期（90 天）的 raw 经验；fresh 的留原处。
+    const stale = new Date(Date.now() - 3 * 30 * 24 * 3600_000).toISOString().slice(0, 10);
+    const fresh = new Date(Date.now() - 24 * 3600_000).toISOString().slice(0, 10);
+    const rawDir = path.join(workspace, 'knowledge', 'lessons', 'raw');
+    await fs.ensureDir(rawDir);
+    await fs.writeFile(path.join(rawDir, `${stale}-ops.md`), '旧经验\n');
+    await fs.writeFile(path.join(rawDir, `${fresh}-ops.md`), '新经验\n');
+
+    await app.settleEmployee('worker-a');
+
+    // 陈旧条目移入 .archive/<date>/raw/，从 lessons/ 消失；fresh 条目不动。
+    expect(await fs.pathExists(path.join(rawDir, `${stale}-ops.md`))).toBe(false);
+    expect(
+      await fs.pathExists(
+        path.join(workspace, 'knowledge', '.archive', stale, 'raw', `${stale}-ops.md`),
+      ),
+    ).toBe(true);
+    expect(await fs.pathExists(path.join(rawDir, `${fresh}-ops.md`))).toBe(true);
+    // 归档目录已 .gitignore：移走的条目不进 git 跟踪（与「归档不进正式检索」一致）。
+    const status = await execa('git', ['status', '--short', '--ignored'], {
+      cwd: workspace,
+      shell: false,
+      extendEnv: false,
+      reject: false,
+    });
+    expect(status.stdout).not.toContain(`.archive/${stale}`);
+  });
+});

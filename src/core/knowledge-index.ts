@@ -321,6 +321,9 @@ export class KnowledgeIndexImpl implements KnowledgeIndex {
     if (!(await fs.pathExists(this.root))) return results;
     const visit = async (directory: string): Promise<void> => {
       for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+        // D-041 P2-1：跳过点目录（knowledge/.archive/ 遗忘归档）——归档条目不进索引、
+        // 不参与 recall（保留在磁盘可恢复，正式检索中隐退）。
+        if (entry.name.startsWith('.')) continue;
         const file = path.join(directory, entry.name);
         if (entry.isDirectory()) {
           await visit(file);

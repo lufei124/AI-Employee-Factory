@@ -1,5 +1,24 @@
 # Decisions
 
+## D-041：分层自进化协议 M4——knowledge 遗忘归档 + 身份 git 回滚 + 账本压缩为摘要
+
+- 状态：Accepted（已实施，TASK-043）
+- 日期：2026-08-07
+- 背景：P0（TASK-040）建了「身份不可静默削弱」地板，P1（TASK-041）让自进化链「默认开 + 有沉淀」，M3（TASK-042）把「人工只能通过飞书聊天改身份」变成系统级硬约束。本批（M4/P2）补齐「记忆有界有淘汰」与「回滚逃生口」：**knowledge 遗忘归档**（raw/refined 无限累积会索引膨胀、检索信噪比下降）与 **身份 git 回滚**（身份改错后的人肉可回退通道）+ **账本压缩为摘要**（两条 JSONL 账本超限不再纯丢弃最早行，而是压成统计摘要保留痕迹）。
+- 决定：
+  - **P2-1 knowledge 遗忘归档**（新增 `src/core/knowledge-retention.ts`）：
+    - `archiveStaleKnowledge`：`lessons/raw/` 与 `lessons/refined/` 超 `retentionDays`（默认 90）的条目 **`fs.move` 到 `knowledge/.archive/<归档日期>/<层>/`**（移走非删除、可恢复），按「日期 + 层」两级分桶——raw/refined 同名文件（`<date>-<agent>.md`）不互相覆盖，恢复时无歧义回 `lessons/<层>/`。软链接条目拒移（防逃逸，记 skipped）。
+    - **归档即隐退**：`.archive/` 是点目录，`KnowledgeIndexImpl.scan` 递归时跳过 → 归档条目不进 `.index.json`、不参与 recall；工作区 `.gitignore` 排除 `knowledge/.archive/` → 归档不进员工 git（避免 git 无限膨胀）。恢复时移回 lessons/ 后重新入索引、重新进 evolve 提交。
+    - `restoreKnowledge` / `purgeKnowledgeArchive`：复用 TrashService 语义——restore 移回 lessons/ 原位（目标已存在则拒绝，不覆盖），purge 彻底删除；路径经 `assertArchiveEntry` 校验必须落在 `.archive` 树内（防 `..` 逃逸）。
+    - **接入**：`settleActive` 末尾低频调用（不依赖 transcript，周期 settle 也触发；best-effort，归档/重建索引失败仅告警不阻断链）；CLI `agentctl knowledge retention` 手动触发，另有 `knowledge archive-list` / `restore` / `purge` 子命令。
+  - **P2-2 身份 git 回滚**：`git.ts` 新增 `gitShowFile(workspace, relPath, ref)`（`git show <ref>:<path>`，`stripFinalNewline:false` 保留末行换行、字节级一致）。CLI `agentctl identity rollback <id> <file> [--ref <commit>]`：git show 写回工作区 → 走 `evolve: 回滚 <file> 到 <ref>` 单文件提交（可回溯）→ 刷新身份基线（`evolve: 更新 身份基线`，使对账反映回滚后状态、不误判漂移）。**受限清单**：只允许回滚五份身份文档 + IDENTITY_BASELINE + CURRENT_STATE；知识/技能/workflows 属可进化区由员工 git 自主管理，不提供 rollback 逃生口（与「人工只走聊天改身份」对齐）。技能回滚沿用已有 `SkillService.rollback`。
+  - **P2-3 账本压缩为摘要**：`truncateLedger` 与 `truncateReflectionSignals` 超上限（5000 行）时，由「纯丢弃最早行」改为「压缩最早批为 1 行统计摘要 + 保留最近 `maxLines-1` 行原始」——摘要行记 `{event:'summary', proposals, decisions, approved, byProposalId}` / `{date, summary:true, importance, count, span, topics}`，**不带 `user_anchor`**（不会被误读为批准依据）；统计痕迹保留而非纯数据丢失，对账/触发语义不受影响。
+- 边界：本批 **不引入 doctor 检查项 / Web 进化历史页 / recall 覆盖 refined**（M5）。归档是「移走非删除」——数据仍在本机 `.archive/`（gitignored）可恢复，不涉及云端删除；身份回滚只限身份文档，不提供知识/技能回滚逃生口。`.archive` 不进入正式记忆与正式检索，恢复后重新入列。
+- 原因：经验两级会无限累积（raw 始终落盘、refined 持续提炼），无淘汰则索引膨胀、检索信噪比下降——「记忆有界有淘汰」是四区模型可进化区的闭环（对齐调研的有界记忆）；身份回滚提供「改错 → 人工可回退」的最后逃生口，与「一切写入 git 版本化」的承诺一致；账本压缩为摘要避免纯丢弃（对账统计仍有据可查）。
+- 影响：新增 `knowledge-retention.ts` + `tests/knowledge-retention.test.ts`；`knowledge-index.ts` scan 跳过点目录；`templates.ts` `.gitignore` 增 `knowledge/.archive/`；`git.ts`（gitShowFile + stripFinalNewline）；`factory-application.ts`（maybeArchiveStaleKnowledge + settleActive 链序增补 + knowledgeArchiveStale/ListArchive/Restore/PurgeArchive + identityRollback）；`cli-program.ts`（knowledge retention 子命令 + registerIdentityCommands）；`reflection.ts`/`proposal-ledger.ts`（truncate 压缩为摘要）；增测 git（gitShowFile）、self-evolution（identityRollback 恢复+拒绝清单+NOT_FOUND + settleActive 归档钩子）；全量测试 438 通过（此前 421）。
+
+---
+
 ## D-041：分层自进化协议 M3——提案账本对账 + Web 只读化 + 创建骨架模板
 
 - 状态：Accepted（已实施，TASK-042）

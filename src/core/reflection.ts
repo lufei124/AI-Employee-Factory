@@ -105,7 +105,9 @@ export function shouldReflect(
   return idleHours >= maxIdleHours;
 }
 
-/** 截断信号文件：超上限（默认 5000 行）只保留最近 N 行，防无限累积（D-041 P2-3 同源策略）。 */
+/** 截断信号文件：超上限（默认 5000 行）只保留最近 N 行，防无限累积（D-041 P2-3 同源策略）。
+ *  超限时把最早的一批信号**压缩为一行摘要**（统计+主题聚合），再保留最近的原始行——比
+ *  直接丢最旧行多留一层统计痕迹（何时产生过多少信号），对齐「账本超限压缩为摘要」的 P2-3 目标。 */
 export async function truncateReflectionSignals(
   signalsFile: string,
   maxLines = 5000,
@@ -113,7 +115,40 @@ export async function truncateReflectionSignals(
   const content = await fs.readFile(signalsFile, 'utf8').catch(() => '');
   const lines = content.split('\n').filter((line) => line.trim().length > 0);
   if (lines.length <= maxLines) return;
-  await fs.writeFile(signalsFile, `${lines.slice(-maxLines).join('\n')}\n`, { mode: 0o600 });
+  // 压缩最早的一批为一行摘要，保留最近 maxLines-1 行原始 + 1 行摘要 = maxLines。
+  const keepRaw = maxLines - 1;
+  const raw = lines.slice(-keepRaw);
+  const early = lines.slice(0, lines.length - keepRaw);
+  const summary = summarizeReflectionSignals(early);
+  await fs.writeFile(signalsFile, [...(summary ? [summary] : []), ...raw].join('\n') + '\n', {
+    mode: 0o600,
+  });
+}
+
+/** 把一批信号行压缩为一行摘要 JSON（统计 + 主题聚合）。行损坏则跳过。 */
+export function summarizeReflectionSignals(lines: readonly string[]): string | undefined {
+  const signals: ReflectionSignal[] = [];
+  for (const line of lines) {
+    try {
+      const parsed = JSON.parse(line) as ReflectionSignal;
+      if (parsed && typeof parsed.importance === 'number') signals.push(parsed);
+    } catch {
+      // 损坏行跳过。
+    }
+  }
+  if (signals.length === 0) return undefined;
+  const topics = [...new Set(signals.flatMap((signal) => signal.topics ?? []))].slice(0, 20);
+  const first = signals[0]?.date ?? '';
+  const last = signals.at(-1)?.date ?? '';
+  return JSON.stringify({
+    date: last,
+    summary: true,
+    importance: signals.reduce((sum, signal) => sum + signal.importance, 0),
+    count: signals.length,
+    span: first && last && first !== last ? `${first}..${last}` : last,
+    topics,
+    transcriptFile: `#${signals.length} 条早期信号摘要`,
+  });
 }
 
 /** 员工工作区内的信号文件路径。 */

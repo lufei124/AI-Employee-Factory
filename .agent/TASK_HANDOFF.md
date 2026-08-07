@@ -2,45 +2,40 @@
 
 ## 身份
 
-Task ID: TASK-042
+Task ID: TASK-043
 
-Task title: 分层自进化协议 M3（D-041）——提案账本对账（proposal-ledger）+ Web 身份文档/Skills 只读化 + 创建骨架模板
+Task title: 分层自进化协议 M4（D-041 P2）——knowledge 遗忘归档 + 身份 git 回滚 + 账本上限
 
-Outgoing/current agent: claude-20260806-01
+Outgoing/current agent: claude-20260807-01
 
-Intended next role/agent: 用户或后续维护者（TASK-042 已实施并 commit；后续阶段 M4-M5：遗忘归档 + identity rollback CLI、doctor 检查项 + Web 进化历史 + 检索增强）
+Intended next role/agent: 用户或后续维护者（TASK-043 已实施并 commit；D-041 剩余 M5：doctor 检查项 + Web 进化历史 + 检索增强）
 
 Branch/worktree: main
 
-Status: 分层自进化协议 M3 已实现，全量测试/构建/lint 通过，已 commit（未 push）
+Status: 分层自进化协议 M4 已实现，全量测试/构建/lint/tsc 通过，已 commit（未 push）
 
-更新时间：2026-08-06 21:05 +0800
+更新时间：2026-08-07 10:35 +0800
 
 ## 已完成
 
-- **`src/core/proposal-ledger.ts`（新，D-041 P1-3 提案账本对账硬门）**：轻量 JSONL 账本 `~/.ai-employees/logs/proposals/<id>.jsonl`（0600，上限 5000 行）。`parseProposalFrontmatter`（宽容解析，缺字段不抛错）、`recordProposal`/`recordDecision`（best-effort，失败仅 warn）、`readLedger`（损坏行跳过）、`truncateLedger`、`hasApprovedAnchor`（`decision=approved` + 带 `user_anchor`）。`appliedWithoutAnchor(workspace, ledger)`：ROLE/POLICIES/CONSTITUTION 相对基线超出 `allowedIdentityDiff` 可进化范围（整删/重写/锚点缺失）且无带 `user_anchor` 的 `applied` 提案依据 → 「未授权身份改动」；基线缺失返回空（交 doctor 告警）。`maybeEnforceIdentityProtocol` 按 `identity_protocol` 分级——默认 `advisory`（仅 warn 留痕，不阻断）；`enforced`（用户显式开启）→ 违规文件**不提交** + warn + CURRENT_STATE 记录「检测到未授权身份改动已拒绝提交」。**提交拒绝 ≠ 恢复文件**：保留工作区脏文件供人工 `git diff`/`git checkout` 决策，不悄悄回滚。
-- **`src/application/factory-application.ts`（接线）**：`syncProposalLedger`（settle 时扫描 `agent/proposals/*.md` 登记提案；`applied`+`user_anchor` 的登记批准决策）；`enforceIdentityProtocol`（读取 `agent.memory.identity_protocol`，enforced 时对账，`recordState` 回调写 CURRENT_STATE + 若脏则 `chore: 记录未授权身份改动` 提交）；**settleActive 链序不变量**：`syncProposalLedger` → `enforceIdentityProtocol` → `ensureIdentityBaseline(excludeDocs: blockedRel)` → `commitSelfEvolution(blockedRel)`——enforced 对账跑在基线重快照前，被拦截的违规改动经 `excludeDocs` 不吸收进基线（保留既有基线条目，下次 settle 仍能发现）。`commitSelfEvolution` 增 `blockedRel` 参数跳过违规文件 + relPaths 增补 `agent/CONSTITUTION.md`。新增 `generateSkeleton`（委托 `generateEmployeeSkeleton`）。
-- **`src/core/identity-baseline.ts`（P1-3）**：`IDENTITY_DOCS` 扩为五份（含 `agent/CONSTITUTION.md`，宪法区纳入基线快照供对账）；`ensureIdentityBaseline` 增 `excludeDocs`（被排除文档沿用既有基线条目，不吸收未授权改动）。
-- **`src/core/identity-guard.ts`（P1-3）**：新增 `agent/CONSTITUTION.md` 锚点（`使命`/`变更流程` 标题）——宪法区员工不可静默改动，要改走聊天明确指示。
-- **创建骨架化（决策②）**：
-  - `templates/agent-skeleton/`（新）：`CONSTITUTION.md`（使命 + `<!-- constitution:anchors -->` 红线锚点块 + 变更流程）。
-  - `src/core/employee-generator.ts`：`generateEmployeeSkeleton(brief)`——prompt 收敛产出 `{id, name, description, goals[1-3], skills[0-2]}`；保留 `generatedProfileSchema`/`generateEmployeeProfile` 兼容（CLI `--describe` 仍走完整蓝图）。
-  - `src/core/create-agent.ts` `resolveProfile` 简化：responsibilities 缺省 `[description]`（岗位定位即初始职责）、policies 缺省红线模板、escalation 缺省通用上报。
-  - `src/core/templates.ts`：ROLE 增 `## 协作协议` 段（四区模型 + 提案通道）、GOALS 增 `## 演进记录` 留痕行、CONSTITUTION 从模板播种、基线注释更新为五份文档。
-  - `src/web/server.ts`：`GET /api/v1/agents/generate` 改走 `generateSkeleton`（Web 用骨架）。
-  - `web/src/pages/CreateAgentPage.tsx`：Step 1 重写——一句话 + name/id/description/goals/skills 编辑字段；responsibilities/policies/escalation 降为「将播种的基础模板预览」只读区。
-- **Web 只读化（决策①）**：`AgentDetailPage.tsx` `DocumentsTab` 移除编辑（`ReactMarkdown` 全文预览 + `（只读）` 标 + dirty 徽章 + 页脚提示走飞书聊天）、`SkillsTab` 移除安装/导入/卸载入口；`web/src/api.ts` 移除 `saveDocument`/`uploadSkill`/`removeSkill`；`src/web/server.ts` `PUT /documents/:key` 直接 403 `READONLY`（CLI 与飞书聊天是唯一改身份通道，Skill 后端路由保留为用户逃生口）。
-- **文档**：`docs/DECISIONS.md` 新增 D-041 M3 ADR；README 更新（创建→骨架、Web 只读、身份守卫增提案账本、路线图 M3 已完成）；`.agent/TASK_BOARD.md` / `.agent/FILE_LOCKS.md` 登记 TASK-042 为 DONE/RELEASED。
+- **`src/core/knowledge-retention.ts`（新，D-041 P2-1 knowledge 遗忘归档）**：`archiveStaleKnowledge` 把 `lessons/raw/` 与 `lessons/refined/` 超 `retentionDays`（默认 90）的条目 `fs.move` 到 `knowledge/.archive/<归档日期>/<层>/`（移走非删除、可恢复），按「日期 + 层」两级分桶——raw/refined 同名文件（`<date>-<agent>.md`）不互相覆盖，恢复时无歧义回 `lessons/<层>/`。软链接条目拒移（防逃逸，记 skipped）。归档即隐退：`.archive/` 是点目录，`KnowledgeIndexImpl.scan` 递归时跳过 → 不参与 recall；工作区 `.gitignore` 排除 `knowledge/.archive/` → 不进员工 git。`restoreKnowledge` / `purgeKnowledgeArchive` 复用 TrashService 语义（restore 移回原位、目标已存在拒绝覆盖；purge 彻底删除），路径经 `assertArchiveEntry` 校验必须落在 `.archive` 树内（防 `..` 逃逸）。
+- **`src/application/factory-application.ts`（接线）**：`settleActive` 末尾新增 `maybeArchiveStaleKnowledge`（归档 >0 时重建索引 + warn；best-effort 失败仅告警，不阻断自进化链）；公开入口 `knowledgeArchiveStale` / `knowledgeListArchive` / `knowledgeRestore` / `knowledgePurgeArchive`（各在归档/恢复/删除后重建索引）。新增 `identityRollback(id, relPath, {ref})`——**受限清单**（五份身份文档 + IDENTITY_BASELINE + CURRENT_STATE，知识/技能/workflows 属可进化区不提供逃生口），`assertInside` + `assertInsideReal` 双重越界校验，`gitShowFile` 读历史快照（undefined → NOT_FOUND + remediation），`atomicWriteFile` 写回 → `ensureIdentityBaseline` 刷新基线（写了则 `evolve: 更新 身份基线`）→ `evolve: 回滚 <file> 到 <ref>` 单文件提交。
+- **`src/core/git.ts`（P2-2）**：新增 `gitShowFile(workspace, relPath, ref='HEAD')`——`git show <ref>:<path>`，`stripFinalNewline:false` 保留末行换行（回滚写回字节级一致），文件不存在/非仓库返回 undefined。
+- **`src/core/knowledge-index.ts`（P2-1）**：`scan` 递归遍历时跳过点目录（`.archive`），归档条目不进 `.index.json`、不参与 recall。
+- **`src/core/templates.ts`（P2-1）**：工作区 `.gitignore` 种子增 `knowledge/.archive/`（归档不进员工 git）。
+- **`src/cli-program.ts`**：`knowledge` 子命令增 `retention`（手动归档，`--days` 透传保留期）/ `archive-list` / `restore` / `purge`；新增 `registerIdentityCommands` → `agentctl identity rollback <agent-id> <file> [--ref <commit>]`（`--yes` 跳过确认）。
+- **`src/core/reflection.ts` / `src/core/proposal-ledger.ts`（P2-3 账本压缩为摘要）**：`truncateReflectionSignals` / `truncateLedger` 超上限（5000 行）时由「纯丢弃最早行」改为「压缩最早批为 1 行统计摘要 + 保留最近 maxLines-1 行原始」——摘要行记 `{event:'summary', proposals, decisions, approved, byProposalId}` / `{date, summary:true, importance, count, span, topics}`，**不带 `user_anchor`**（不会被误读为批准依据）；统计痕迹保留而非纯数据丢失，对账/触发语义不受影响。
+- **文档**：`docs/DECISIONS.md` 新增 D-041 M4 ADR；README 更新（D-041 节增知识遗忘归档/身份回滚 bullet + 路线图 M4 已完成）；`.agent/TASK_BOARD.md` / `.agent/FILE_LOCKS.md` 登记 TASK-043 为 DONE/RELEASED。
 
 ## 验证
 
-- `npm test`：全量 421 通过（此前 394，新增 27 用例——proposal-ledger 19 + create-agent 1 + identity-baseline 2 + web-management-api 1 + web-ui 2 + self-evolution 3，改写 web-ui 卸载用例为只读断言）。
+- `npm test`：全量 438 通过（此前 421，新增 17 用例——knowledge-retention 12 + git gitShowFile 2 + self-evolution 3）。
 - `npm run build`：通过（tsc + vite，仅既有 chunk-size 警告）。
-- `npm run lint`：eslint + prettier 全绿（新增 `.prettierignore` 排除 gitignored `.claude/settings.local.json` 本地文件）。
+- `npm run lint`：eslint + prettier 全绿。
+- `npx tsc --noEmit`：通过。
 
 ## 待确认 / 后续
 
 - 已 commit（AGENTS.md 常驻规则「任务完成即 commit」，已提交 main，不 push）。
-- **M4（P2）**：`knowledge-retention.ts` 遗忘归档（raw/refined 超 retentionDays 移 `.archive/`，可恢复）+ `identity rollback` CLI（`agentctl identity rollback <id> <file>`）。
 - **M5（P3）**：doctor 检查项（identity-baseline/identity-guard/proposal-ledger/memory-flags/knowledge-retention/reflection）+ Web 进化历史页（`git log --grep evolve:` + CURRENT_STATE）+ `knowledge recall` 覆盖 refined/。
 - `identity_edits`（`proposal_required|direct`）仍仅声明未生效（P1 预留），后续按需启用。

@@ -125,14 +125,16 @@ describe('recordProposal / recordDecision / readLedger / truncateLedger（D-041 
     expect((stat.mode & 0o777).toString(8)).toBe('600');
   });
 
-  it('truncateLedger 只保留最近 maxLines 行', async () => {
+  it('truncateLedger 压缩最早批为摘要 + 保留最近原始行（P2-3 压缩为摘要）', async () => {
     const { logsRoot } = await setup();
     for (let i = 0; i < 10; i += 1)
       await recordProposal(logsRoot, 'ops', { proposal_id: `p-${i}` });
     await truncateLedger(logsRoot, 'ops', 3);
     const ledger = await readLedger(logsRoot, 'ops');
+    // 上限 3 行 = 1 行摘要 + 最近 2 行原始。
     expect(ledger).toHaveLength(3);
-    expect(ledger[0]).toMatchObject({ proposal_id: 'p-7' });
+    expect(ledger[0]).toMatchObject({ event: 'summary', proposals: 8, decisions: 0 });
+    expect(ledger[1]).toMatchObject({ proposal_id: 'p-8' });
     expect(ledger[2]).toMatchObject({ proposal_id: 'p-9' });
   });
 

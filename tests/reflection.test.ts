@@ -62,7 +62,7 @@ describe('appendReflectionSignal / readReflectionSignals（D-041 P1-2）', () =>
     expect(accumulatedImportance(signals)).toBe(5);
   });
 
-  it('truncateReflectionSignals 只保留最近 maxLines 行（防无限累积）', async () => {
+  it('truncateReflectionSignals 压缩最早批为摘要 + 保留最近原始行（P2-3 压缩为摘要）', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentctl-reflection-'));
     roots.push(root);
     const file = path.join(root, REFLECTION_SIGNALS_FILE);
@@ -74,7 +74,13 @@ describe('appendReflectionSignal / readReflectionSignals（D-041 P1-2）', () =>
     }
     await truncateReflectionSignals(file, 5);
     const signals = await readReflectionSignals(file);
+    // 上限 5 行 = 1 行摘要 + 最近 4 行原始。
     expect(signals).toHaveLength(5);
+    const [first, ...rest] = signals;
+    expect((first as { summary?: boolean }).summary).toBe(true);
+    expect((first as { count?: number }).count).toBe(8);
+    expect(rest).toHaveLength(4);
+    for (const s of rest) expect((s as { summary?: boolean }).summary).toBeUndefined();
   });
 });
 

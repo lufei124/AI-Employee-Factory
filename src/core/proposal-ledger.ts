@@ -188,7 +188,9 @@ export async function recordDecision(
 /** 账本上限（行数）。超限只保留最近 maxLines 行（P2-3）。 */
 export const PROPOSAL_LEDGER_MAX_LINES = 5000;
 
-/** 截断账本到最近 maxLines 行。best-effort。 */
+/** 截断账本到最近 maxLines 行。best-effort。超限时把最早的一批**压缩为一行摘要**（统计各
+ *  提案/决策事件数量），再保留最近原始行——比直接丢最旧行多留一层统计痕迹（对齐「账本超限
+ *  压缩为摘要」的 P2-3 目标），且摘要行不带 user_anchor（不会被误判为批准依据）。 */
 export async function truncateLedger(
   logsRoot: string,
   agentId: string,
@@ -199,10 +201,47 @@ export async function truncateLedger(
     const content = await fs.readFile(file, 'utf8').catch(() => '');
     const lines = content.split('\n').filter((line) => line.trim().length > 0);
     if (lines.length <= maxLines) return;
-    await atomicWriteFile(file, `${lines.slice(-maxLines).join('\n')}\n`, 0o600);
+    const keepRaw = maxLines - 1;
+    const raw = lines.slice(-keepRaw);
+    const early = lines.slice(0, lines.length - keepRaw);
+    const summary = summarizeLedger(early);
+    const next: string[] = [];
+    if (summary) next.push(summary);
+    next.push(...raw);
+    await atomicWriteFile(file, `${next.join('\n')}\n`, 0o600);
   } catch {
     // best-effort：截断失败不影响主流程。
   }
+}
+
+/** 把最早的一批账本行压缩为一行摘要 JSON（按 event/proposal_id/status/decision 统计）。 */
+export function summarizeLedger(lines: readonly string[]): string | undefined {
+  const rows: LedgerRow[] = [];
+  for (const line of lines) {
+    try {
+      rows.push(JSON.parse(line) as LedgerRow);
+    } catch {
+      // 损坏行跳过。
+    }
+  }
+  if (rows.length === 0) return undefined;
+  const counts: Record<string, number> = {};
+  for (const row of rows)
+    counts[`${row.event}:${row.proposal_id}`] =
+      (counts[`${row.event}:${row.proposal_id}`] ?? 0) + 1;
+  const proposals = rows.filter((row) => row.event === 'proposal').length;
+  const decisions = rows.filter((row) => row.event === 'decision').length;
+  const approved = rows.filter(
+    (row) => row.event === 'decision' && row.decision === 'approved',
+  ).length;
+  return JSON.stringify({
+    ts: rows.at(-1)?.ts ?? '',
+    event: 'summary',
+    proposals,
+    decisions,
+    approved,
+    byProposalId: counts,
+  });
 }
 
 /** 对账结果：某份身份文档的漂移是否构成「未授权身份改动」。 */

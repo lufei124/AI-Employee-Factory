@@ -329,6 +329,7 @@ export function createProgram(): Command {
   registerKnowledgeCommands(program);
   registerPruneCommands(program);
   registerUsageCommands(program);
+  registerIdentityCommands(program);
 
   program
     .command('archive <agent-id>')
@@ -970,5 +971,80 @@ function registerKnowledgeCommands(program: Command): void {
       }
       for (const issue of consistency.issues) console.log(`- ${issue.detail}`);
       process.exitCode = 6;
+    });
+  // D-041 P2-1：knowledge 遗忘归档命令组。
+  group
+    .command('retention <agent-id>')
+    .description(
+      '将 lessons/raw 与 lessons/refined 中超过保留期（默认 90 天）的条目移入 knowledge/.archive/（移走非删除，可恢复）',
+    )
+    .option('--days <number>', '保留天数', '90')
+    .action(async (id: string, options: { days?: string }) => {
+      const { application } = context();
+      const days = options.days !== undefined ? Number(options.days) : 90;
+      if (!Number.isFinite(days) || days <= 0)
+        throw new AgentCtlError('VALIDATION_ERROR', '--days 必须是正整数。');
+      const result = await application.knowledgeArchiveStale(id, { retentionDays: days });
+      if (result.archived.length === 0) {
+        console.log('没有需要归档的陈旧条目。');
+        return;
+      }
+      for (const entry of result.archived) console.log(`- ${entry.from} → ${entry.to}`);
+      console.log(chalk.green(`✓ 已归档 ${result.archived.length} 条，索引已重建。`));
+    });
+  group
+    .command('archive-list <agent-id>')
+    .description('列出 knowledge/.archive/ 下已归档的经验条目（可恢复）')
+    .action(async (id: string) => {
+      const { application } = context();
+      const entries = await application.knowledgeListArchive(id);
+      if (entries.length === 0) return console.log('归档为空。');
+      for (const entry of entries) console.log(`${entry.date}\t${entry.relPath}`);
+    });
+  group
+    .command('restore <agent-id> <archive-rel-path> [target-rel-path]')
+    .description(
+      '从 knowledge/.archive/ 恢复一条经验条目回 lessons/（移回即重新入索引）。可选指定恢复目标相对路径',
+    )
+    .action(async (id: string, archiveRelPath: string, targetRel?: string) => {
+      const { application } = context();
+      const result = await application.knowledgeRestore(id, archiveRelPath, targetRel);
+      console.log(chalk.green(`✓ 已恢复 → knowledge/${result.restored}`));
+    });
+  group
+    .command('purge <agent-id> <archive-rel-path>')
+    .description('彻底删除一条已归档经验条目（不可恢复，谨慎使用）')
+    .option('--yes')
+    .action(async (id: string, archiveRelPath: string, options: { yes?: boolean }) => {
+      const { application } = context();
+      await confirmDanger(`永久删除归档条目 ${archiveRelPath}？`, options.yes === true);
+      await application.knowledgePurgeArchive(id, archiveRelPath);
+      console.log(chalk.green('✓ 已永久删除。'));
+    });
+}
+
+// D-041 P2-2：身份文档 git 回滚命令组。员工身份文档（ROLE/GOALS/OPERATING_SYSTEM/POLICIES/
+// CONSTITUTION/IDENTITY_BASELINE）全部进 evolve 提交历史；本组把某文件在指定提交的内容写回
+// 工作区（git show → 写盘 → evolve 提交 + 基线刷新），是身份文档的手动纠错逃生口。
+function registerIdentityCommands(program: Command): void {
+  const group = program.command('identity').description('员工身份文档管理');
+  group
+    .command('rollback <agent-id> <file>')
+    .description(
+      '把员工身份文档回滚到指定提交（缺省 HEAD 上一版本）。写回工作区 + evolve 提交 + 刷新身份基线',
+    )
+    .option('--ref <commit>', '回滚到的提交（git show 的 ref，缺省 HEAD）')
+    .option('--yes')
+    .action(async (id: string, file: string, options: { ref?: string; yes?: boolean }) => {
+      const { application } = context();
+      const ref = options.ref ?? 'HEAD';
+      await confirmDanger(
+        `将 ${id} 的身份文档 ${file} 回滚到 ${ref}？现有改动将被覆盖并进 evolve 提交。`,
+        options.yes === true,
+      );
+      const result = await application.identityRollback(id, file, { ref });
+      console.log(
+        chalk.green(`✓ ${result.relPath} 已回滚到 ${result.ref}（${result.restoredAt}）`),
+      );
     });
 }
