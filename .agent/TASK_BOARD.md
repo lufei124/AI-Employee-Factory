@@ -867,7 +867,7 @@ Result: 代码——launchd-service.ts 加 keepAlive?: boolean，renderLaunchdPl
 Task ID: TASK-053
 Title: 员工 user-operations 身份文档解锁 + 伴生问题修复（纯运维）
 Owner agent: claude-20260807-01
-Status: ACTIVE
+Status: DONE
 Branch/worktree: main
 Allowed scope: 员工工作区 ~/AI-Employees/agents/user-operations/（agent/ 身份文档、.claude/settings.json、automation/jobs/ 孤儿 plist、.gitignore、skills/ 下 .env.example、knowledge/ 索引、CURRENT_STATE）；.agent 簿记；无 Factory 代码改动
 Forbidden scope: 不改 Factory 源码/测试/Web（纯运维）；不建通用身份解锁机制（用户拍板一次性手工修）；不自动恢复外部 launchd 任务（引导用 Factory Job）；不改 agent.yaml 内容
@@ -875,5 +875,6 @@ Dependencies: TASK-052 收尾发现 user-operations（2026-08-03 创建，早于
 Expected output: ROLE.md 插「# 岗位定位」+ description；POLICIES.md 追加权限边界红线段（覆盖 5 个红线词）；CONSTITUTION.md 播种模板；agentctl settle 后 guard 通过 + 基线刷新 + evolve 提交；settings.json 回滚 defaultMode + 撤危险 Bash 放行（保留 Factory 放行）；launchctl bootout 外部任务 com.uv.lifereboots.feedback-daily + 删孤儿 plist；knowledge rebuild 生成 .index.json；.gitignore 去 .env.example 例外 + git rm --cached；CURRENT_STATE 状态行修正；doctor 全绿
 Acceptance criteria: `agentctl doctor user-operations` 身份锚点硬门/Secrets/知识库索引 pass、身份基线一致、无新增 FAIL；员工 git log 出现 ROLE/POLICIES/CONSTITUTION 的 evolve: 提交；`launchctl list | grep feedback-daily` 无输出；settings.json 无 chmod/cp/plutil/launchctl/agentctl 放行且 defaultMode=default；全量 npm test 无回归 + build/lint 全绿；任务完成即 commit（不 push）
 Started at: 2026-08-07 18:08 +0800
-Updated at: 2026-08-07 18:08 +0800
+Updated at: 2026-08-07 18:52 +0800
+Result: 身份文档解锁——ROLE.md 开头插「# 岗位定位」+ agent.yaml.description +「## 长期职责」锚点（保留原业务内容）；POLICIES.md 追加「## 权限边界（系统红线）」段（一行覆盖人工审批/生产写入/对外发布/删除数据/Git push 全部 5 个红线词）；CONSTITUTION.md 播种 templates/agent-skeleton 模板（含使命/变更流程锚点）。`agentctl bridge settle user-operations` 后 identity-guard 全通过、无拒提交告警，生成 4 个 evolve: 提交（ROLE/POLICIES/CONSTITUTION + 身份基线刷新）。settings.json 回滚——defaultMode acceptEdits→default，撤掉 Bash(chmod/cp/plutil/launchctl/agentctl:*) 放行，保留 Factory 放行与业务脚本（node/python/npm/lark-cli）。外部 launchd——`launchctl bootout gui/$(id -u)/com.uv.lifereboots.feedback-daily` 卸载（原从工作区 automation/jobs/ plist 直接 load，无 LaunchAgents 拷贝），删孤儿 plist，daily_feedback_wrapper.sh 保留作参考；需要恢复每天反馈收集走 Factory automation/jobs/*.yaml（managed_by: employee）。knowledge rebuild 生成 .index.json（索引一致）；.gitignore 撤 !.env.example 例外 + git rm --cached skills/game-feedback-collector/.env.example + 补 D-042/D-043 knowledge 派生规则（.index.json/.archive/.retrieved.md）；CURRENT_STATE 系统块「运行器：未登录→CC Switch 同步」「飞书：未授权→已授权」（registry authorization: ready）。验证——doctor 32 通过/3 警告/0 失败（身份锚点硬门、Secrets、知识库索引、身份基线全 pass；3 警告均为既有：Codex 未安装、memory.enforced 未声明、skill-self adopt ENOENT）；launchctl 无 feedback-daily；settings.json 无越权放行；员工 git log 出现 4 条 evolve 身份提交 + proposals 账本为空；全量 npm test 505/506（1 条 application.test.ts dashboard running 计数为既有并行 flake，单独跑通过）+ build/lint 全绿。无 Factory 代码改动。
 ```
