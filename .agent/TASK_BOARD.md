@@ -878,3 +878,18 @@ Started at: 2026-08-07 18:08 +0800
 Updated at: 2026-08-07 18:52 +0800
 Result: 身份文档解锁——ROLE.md 开头插「# 岗位定位」+ agent.yaml.description +「## 长期职责」锚点（保留原业务内容）；POLICIES.md 追加「## 权限边界（系统红线）」段（一行覆盖人工审批/生产写入/对外发布/删除数据/Git push 全部 5 个红线词）；CONSTITUTION.md 播种 templates/agent-skeleton 模板（含使命/变更流程锚点）。`agentctl bridge settle user-operations` 后 identity-guard 全通过、无拒提交告警，生成 4 个 evolve: 提交（ROLE/POLICIES/CONSTITUTION + 身份基线刷新）。settings.json 回滚——defaultMode acceptEdits→default，撤掉 Bash(chmod/cp/plutil/launchctl/agentctl:*) 放行，保留 Factory 放行与业务脚本（node/python/npm/lark-cli）。外部 launchd——`launchctl bootout gui/$(id -u)/com.uv.lifereboots.feedback-daily` 卸载（原从工作区 automation/jobs/ plist 直接 load，无 LaunchAgents 拷贝），删孤儿 plist，daily_feedback_wrapper.sh 保留作参考；需要恢复每天反馈收集走 Factory automation/jobs/*.yaml（managed_by: employee）。knowledge rebuild 生成 .index.json（索引一致）；.gitignore 撤 !.env.example 例外 + git rm --cached skills/game-feedback-collector/.env.example + 补 D-042/D-043 knowledge 派生规则（.index.json/.archive/.retrieved.md）；CURRENT_STATE 系统块「运行器：未登录→CC Switch 同步」「飞书：未授权→已授权」（registry authorization: ready）。验证——doctor 32 通过/3 警告/0 失败（身份锚点硬门、Secrets、知识库索引、身份基线全 pass；3 警告均为既有：Codex 未安装、memory.enforced 未声明、skill-self adopt ENOENT）；launchctl 无 feedback-daily；settings.json 无越权放行；员工 git log 出现 4 条 evolve 身份提交 + proposals 账本为空；全量 npm test 505/506（1 条 application.test.ts dashboard running 计数为既有并行 flake，单独跑通过）+ build/lint 全绿。无 Factory 代码改动。
 ```
+
+```text
+Task ID: TASK-054
+Title: 修复 doctor 既有两警告——skill-self self-upsert ENOENT（Factory bug）+ 旧 agent.yaml 补 memory.enforced
+Owner agent: claude-20260807-01
+Status: ACTIVE
+Branch/worktree: main
+Allowed scope: src/core/skills.ts（upsert 源即目标自毁修复）、tests/skills.test.ts（新增 self-upsert 用例）；员工 agent.yaml（memory 块补 enforced: true）；.agent 簿记
+Forbidden scope: 不改 autoAdoptSelfSkills 触发逻辑（保留自维护技能自进化语义）；不动 authority_order 内容；不改 digest 算法覆盖范围
+Dependencies: TASK-053 收尾 doctor 剩 3 警告中 2 项——skill-self adopt ENOENT（TASK-051 已记录）根因是 autoAdoptSelfSkills 对已改写的原位技能调 upsert(source==target)，upsert 先 remove target 再 fs.copy(resolved) → source 已删 → ENOENT lstat（catch 里 restoreFromArchive 把目录救回，故目录仍在但每次 settle 报错）；memory.enforced 未声明（旧 agent.yaml，authority_order 已合法）
+Expected output: upsert 增加「resolved===target」分支——原位刷新 .agentctl.yaml（新 digest + nextVersion）+ project 投影，不做先删再拷贝的自我替换；新增测试覆盖 self-upsert（digest 变化 → 元数据刷新 + 投影保持 + 目录不丢）；agent.yaml memory 块补 enforced: true（authority_order 以 agent 开头、无重复，validateMemoryConfig 通过）
+Acceptance criteria: settle 后无「[skill-self] 自动 adopt 失败」；doctor「记忆强制」warn → pass（已启用运行时强制）；doctor 剩余警告仅 Codex 未安装（既有，与本任务无关）；npm test/build/lint 全绿；任务完成即 commit（不 push）
+Started at: 2026-08-07 18:58 +0800
+Updated at: 2026-08-07 18:58 +0800
+```
