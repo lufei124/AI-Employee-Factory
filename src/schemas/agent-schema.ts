@@ -66,8 +66,9 @@ export const portableMemorySchema = z.object({
   // D-041 P1-4：身份修订协议。'advisory'（默认，warn+拒提交留现场）/ 'enforced'（违规文件拒提交 +
   // CURRENT_STATE 记录）。optional 向后兼容。
   identity_protocol: z.enum(['advisory', 'enforced']).optional(),
-  // D-041 P1-4：身份编辑方式。'proposal_required'（核心身份改动须提案批准）/ 'direct'（用户聊天直接
-  // 授权可直改）。本批仅声明，M3 提案对账时生效。
+  // D-041 P1-4：身份编辑方式。'proposal_required'（默认，核心身份改动须提案批准——
+  // 对账要求 applied+user_anchor 依据）/ 'direct'（用户在聊天直接授权可直改核心身份——
+  // 对账跳过「未授权」判定，但 identity-guard 锚点硬门永远生效）。D-043 起生效。
   identity_edits: z.enum(['proposal_required', 'direct']).optional(),
 });
 export type PortableMemorySchema = z.infer<typeof portableMemorySchema>;

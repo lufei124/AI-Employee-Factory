@@ -422,30 +422,40 @@ export class DoctorService {
     // D-041 P3-2：提案账本对账。身份文档相对基线改动超出可进化范围且无 user_anchor 批准依据
     // → 未授权身份改动（fail）。基线缺失时 baselineDrift 返回 null → 无基线无从对账（交由
     // identity-baseline 检查项告警，此处不误伤）。
+    // D-043（identity_edits 生效）：direct=聊天直改模式 → 对账跳过（不判未授权，detail 标注）；
+    // proposal_required（默认）维持提案门。identity-guard 锚点硬门在任何模式下都单独 fail。
     const ledger = await readLedger(this.paths.logsDir, agentId);
-    const unauthorized = await appliedWithoutAnchor(agent.workspace.path, ledger);
+    const edits = portableConfig?.memory.identity_edits ?? 'proposal_required';
+    const unauthorized = await appliedWithoutAnchor(agent.workspace.path, ledger, edits);
     const protocol = await readIdentityProtocol(agent.workspace.path);
     add(
-      unauthorized.length === 0
+      edits === 'direct'
         ? {
             id: 'proposal-ledger',
             label: '提案账本',
             status: 'pass',
-            detail: `无未授权身份改动（协议 ${protocol}）`,
+            detail: `direct 模式（聊天直改，跳过提案门；锚点硬门仍生效）`,
           }
-        : {
-            id: 'proposal-ledger',
-            label: '提案账本',
-            status: 'fail',
-            detail: `未授权身份改动：${unauthorized
-              .slice(0, 3)
-              .map((item) => `${item.relPath}（${item.reason}）`)
-              .join('、')}（协议 ${protocol}）。`,
-            remediation:
-              protocol === 'enforced'
-                ? 'enforced 模式已拒提交违规文件，保留工作区脏文件供 git diff/checkout 决策。'
-                : '身份改动须先在飞书聊天中经用户批准（user_anchor 落账本），或回滚单文件。',
-          },
+        : unauthorized.length === 0
+          ? {
+              id: 'proposal-ledger',
+              label: '提案账本',
+              status: 'pass',
+              detail: `无未授权身份改动（协议 ${protocol}）`,
+            }
+          : {
+              id: 'proposal-ledger',
+              label: '提案账本',
+              status: 'fail',
+              detail: `未授权身份改动：${unauthorized
+                .slice(0, 3)
+                .map((item) => `${item.relPath}（${item.reason}）`)
+                .join('、')}（协议 ${protocol}）。`,
+              remediation:
+                protocol === 'enforced'
+                  ? 'enforced 模式已拒提交违规文件，保留工作区脏文件供 git diff/checkout 决策。'
+                  : '身份改动须先在飞书聊天中经用户批准（user_anchor 落账本），或回滚单文件。',
+            },
     );
     // D-041 P3-2：三个自进化开关（transcript_persist/experience_extraction/skill_self_creation）
     // 缺失（undefined）→ 按默认开处理（warn 引导补齐）；显式 false 尊重用户关闭意图（不误伤）。

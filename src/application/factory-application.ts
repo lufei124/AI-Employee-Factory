@@ -774,6 +774,11 @@ export class FactoryApplication {
         agentId: agent.id,
         logsRoot: this.paths.logsDir,
         protocol,
+        // D-043（identity_edits 生效）：direct=聊天直改模式（对账跳过提案门，硬门仍生效）；
+        // proposal_required（默认）维持提案批准门。
+        ...(agent.memory.identity_edits !== undefined
+          ? { identityEdits: agent.memory.identity_edits }
+          : {}),
         recordState: async (message: string) => {
           const file = path.join(workspace, 'agent', 'CURRENT_STATE.md');
           const result = await updateCurrentState(file, { last_event: message }).catch(

@@ -650,6 +650,161 @@ describe('提案账本同步 + enforced 对账（D-041 P1-3）', () => {
     warnSpy.mockRestore();
   });
 
+  // D-043（identity_edits 生效）：direct=用户在聊天直接授权可直改核心身份。
+  // 此处验证 settleActive 链：identity_edits=direct + enforced → 合规显著改动放行提交；
+  // proposal_required（默认）→ 仍拦截。红线词整删在两种模式下都被 identity-guard 硬门拦截。
+  it('identity_edits=direct：合规显著改动放行提交（无 user_anchor 也提交，evolve:）', async () => {
+    const { app, paths } = await setup();
+    const workspace = path.join(paths.workspaceRoot, 'worker-a');
+    const policiesFile = path.join(workspace, 'agent', 'POLICIES.md');
+
+    // 开启 identity_protocol=enforced + identity_edits=direct（用户在聊天直接授权可直改核心身份）。
+    const agentYaml = path.join(workspace, 'agent.yaml');
+    const YAML = (await import('yaml')).default;
+    const parsed = YAML.parse(await fs.readFile(agentYaml, 'utf8'));
+    parsed.memory.identity_protocol = 'enforced';
+    parsed.memory.identity_edits = 'direct';
+    await fs.writeFile(agentYaml, YAML.stringify(parsed));
+
+    // 员工在任务中显著改动 POLICIES（改动行占比 >30%，但保留全部红线词——identity-guard 硬门合规）。
+    // 无 user_anchor 提案依据；direct 模式对账跳过 → 放行提交。
+    const { ProcessRunner } = await import('../src/core/process-runner.js');
+    vi.spyOn(ProcessRunner.prototype, 'runLogged').mockImplementation(async () => {
+      await fs.writeFile(
+        policiesFile,
+        [
+          '# 权限与上报规则',
+          '',
+          '## 权限边界',
+          '',
+          '生产写入、对外发布、Git push 和删除数据必须经人工审批。',
+          '',
+          '## 主动上报',
+          '',
+          '需要更高权限或需人工决策时上报。',
+          '',
+          '## 加急通道',
+          '',
+          '紧急时可直接联系主管，但生产写入、对外发布、Git push 和删除数据仍须人工审批。',
+          '',
+          '## 保密要求',
+          '',
+          '涉及客户数据的操作须谨慎，并遵守生产写入、对外发布、Git push 和删除数据须审批的边界。',
+          '',
+        ].join('\n'),
+      );
+      return fakeResult('完成。');
+    });
+
+    await runAdminJob(app, 'ledger-direct', '更新规则');
+
+    // POLICIES.md 已提交（direct 模式跳过提案门）。
+    const policiesLog = await gitLog(workspace, 'agent/POLICIES.md');
+    expect(policiesLog.some((line) => line.includes('evolve:'))).toBe(true);
+  });
+
+  it('identity_edits=proposal_required（默认）：同改动仍被拦截（提案门维持）', async () => {
+    const { app, paths } = await setup();
+    const workspace = path.join(paths.workspaceRoot, 'worker-a');
+    const policiesFile = path.join(workspace, 'agent', 'POLICIES.md');
+
+    // 只开 enforced，identity_edits 保持默认 proposal_required。
+    const agentYaml = path.join(workspace, 'agent.yaml');
+    const YAML = (await import('yaml')).default;
+    const parsed = YAML.parse(await fs.readFile(agentYaml, 'utf8'));
+    parsed.memory.identity_protocol = 'enforced';
+    await fs.writeFile(agentYaml, YAML.stringify(parsed));
+
+    // 与上例完全相同的显著改动（保留红线词，guard 合规）。
+    const { ProcessRunner } = await import('../src/core/process-runner.js');
+    vi.spyOn(ProcessRunner.prototype, 'runLogged').mockImplementation(async () => {
+      await fs.writeFile(
+        policiesFile,
+        [
+          '# 权限与上报规则',
+          '',
+          '## 权限边界',
+          '',
+          '生产写入、对外发布、Git push 和删除数据必须经人工审批。',
+          '',
+          '## 主动上报',
+          '',
+          '需要更高权限或需人工决策时上报。',
+          '',
+          '## 加急通道',
+          '',
+          '紧急时可直接联系主管，但生产写入、对外发布、Git push 和删除数据仍须人工审批。',
+          '',
+          '## 保密要求',
+          '',
+          '涉及客户数据的操作须谨慎，并遵守生产写入、对外发布、Git push 和删除数据须审批的边界。',
+          '',
+        ].join('\n'),
+      );
+      return fakeResult('完成。');
+    });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await runAdminJob(app, 'ledger-required', '更新规则');
+
+    // POLICIES.md 未提交（proposal_required 拦截，脏文件保留）。
+    const policiesLog = await gitLog(workspace, 'agent/POLICIES.md');
+    expect(policiesLog.some((line) => line.includes('evolve:'))).toBe(false);
+    const status = await execa('git', ['status', '--short'], {
+      cwd: workspace,
+      shell: false,
+      extendEnv: false,
+      reject: false,
+    });
+    expect(status.stdout).toContain('POLICIES.md');
+    warnSpy.mockRestore();
+  });
+
+  it('identity_edits=direct：整删红线词仍被 identity-guard 硬门拦截（硬门不受 direct 影响）', async () => {
+    const { app, paths } = await setup();
+    const workspace = path.join(paths.workspaceRoot, 'worker-a');
+    const policiesFile = path.join(workspace, 'agent', 'POLICIES.md');
+
+    // 开启 enforced + identity_edits=direct。
+    const agentYaml = path.join(workspace, 'agent.yaml');
+    const YAML = (await import('yaml')).default;
+    const parsed = YAML.parse(await fs.readFile(agentYaml, 'utf8'));
+    parsed.memory.identity_protocol = 'enforced';
+    parsed.memory.identity_edits = 'direct';
+    await fs.writeFile(agentYaml, YAML.stringify(parsed));
+
+    // 员工整删红线词（远超对账范围，且 guard 硬门必拦）。
+    const { ProcessRunner } = await import('../src/core/process-runner.js');
+    vi.spyOn(ProcessRunner.prototype, 'runLogged').mockImplementation(async () => {
+      await fs.writeFile(
+        policiesFile,
+        '# 权限与上报规则\n\n## 权限边界\n\n所有操作须谨慎。\n\n## 主动上报\n\n需要时上报。\n',
+      );
+      return fakeResult('完成。');
+    });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await runAdminJob(app, 'ledger-direct-guard', '更新规则');
+
+    // POLICIES.md 未提交（guard 硬门，与 identity_edits 模式无关）。
+    const policiesLog = await gitLog(workspace, 'agent/POLICIES.md');
+    expect(policiesLog.some((line) => line.includes('evolve:'))).toBe(false);
+    const status = await execa('git', ['status', '--short'], {
+      cwd: workspace,
+      shell: false,
+      extendEnv: false,
+      reject: false,
+    });
+    expect(status.stdout).toContain('POLICIES.md');
+    // warn 留痕为 identity-guard（不是 identity-protocol）。
+    expect(
+      warnSpy.mock.calls.some((call) =>
+        String(call[0]).includes('[identity-guard] 拒绝提交 agent/POLICIES.md'),
+      ),
+    ).toBe(true);
+    warnSpy.mockRestore();
+  });
+
   it('enforced：带 user_anchor 的 applied 提案 → 显著改动放行提交', async () => {
     const { app, paths } = await setup();
     const workspace = path.join(paths.workspaceRoot, 'worker-a');

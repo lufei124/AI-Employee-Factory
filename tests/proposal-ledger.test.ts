@@ -10,6 +10,7 @@ import {
   maybeEnforceIdentityProtocol,
   parseProposalFrontmatter,
   proposalLedgerPath,
+  readIdentityEdits,
   readLedger,
   recordDecision,
   recordProposal,
@@ -233,6 +234,47 @@ describe('appliedWithoutAnchor（D-041 P1-3）', () => {
     seedWorkspace(bare); // 不写基线
     expect(await appliedWithoutAnchor(bare, await readLedger(logsRoot, 'ops'))).toEqual([]);
   });
+
+  // D-043（identity_edits 生效）：direct=用户在聊天直接授权可直改核心身份。
+  it('direct 模式：整删 POLICIES 红线词也放行（对账跳过提案门）', async () => {
+    const { workspace, logsRoot } = await setup();
+    // 整删红线词（远超 allowedIdentityDiff，identity-guard 硬门会单独拦截，但这里只测对账层）。
+    fs.writeFileSync(
+      path.join(workspace, 'agent/POLICIES.md'),
+      '# 权限与上报规则\n\n## 权限边界\n\n所有操作须谨慎。\n\n## 主动上报\n\n需要时上报。\n',
+    );
+    const ledger = await readLedger(logsRoot, 'ops');
+    expect(await appliedWithoutAnchor(workspace, ledger, 'direct')).toEqual([]);
+    // 对照组：proposal_required（默认）同改动判违规。
+    const violations = await appliedWithoutAnchor(workspace, ledger, 'proposal_required');
+    expect(violations).toHaveLength(1);
+    expect(violations[0].relPath).toBe('agent/POLICIES.md');
+  });
+
+  it('identity_edits 缺省（undefined）→ 按 proposal_required 对账', async () => {
+    const { workspace, logsRoot } = await setup();
+    fs.writeFileSync(
+      path.join(workspace, 'agent/POLICIES.md'),
+      '# 权限与上报规则\n\n## 权限边界\n\n所有操作须谨慎。\n\n## 主动上报\n\n需要时上报。\n',
+    );
+    const ledger = await readLedger(logsRoot, 'ops');
+    expect(await appliedWithoutAnchor(workspace, ledger, undefined)).toHaveLength(1);
+  });
+
+  it('readIdentityEdits：agent.yaml 缺失/无 identity_edits → 默认 proposal_required；direct 读回', async () => {
+    const { workspace } = await setup();
+    // 无 agent.yaml → 默认 proposal_required。
+    expect(await readIdentityEdits(workspace)).toBe('proposal_required');
+    // 显式 direct → 读回 direct。
+    fs.writeFileSync(path.join(workspace, 'agent.yaml'), 'memory:\n  identity_edits: direct\n');
+    expect(await readIdentityEdits(workspace)).toBe('direct');
+    // 显式 proposal_required → 读回 proposal_required。
+    fs.writeFileSync(
+      path.join(workspace, 'agent.yaml'),
+      'memory:\n  identity_edits: proposal_required\n',
+    );
+    expect(await readIdentityEdits(workspace)).toBe('proposal_required');
+  });
 });
 
 describe('maybeEnforceIdentityProtocol（D-041 P1-3）', () => {
@@ -305,6 +347,51 @@ describe('maybeEnforceIdentityProtocol（D-041 P1-3）', () => {
       },
     });
     expect(recorded).toEqual([]);
+  });
+
+  // D-043（identity_edits 生效）：direct 模式对账跳过 → enforced 不拦截。
+  it('enforced + identity_edits=direct：整删红线词也不拦截（对账跳过，硬门另行生效）', async () => {
+    const { workspace, logsRoot } = await setup();
+    fs.writeFileSync(
+      path.join(workspace, 'agent/POLICIES.md'),
+      '# 权限与上报规则\n\n## 权限边界\n\n所有操作须谨慎。\n\n## 主动上报\n\n需要时上报。\n',
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const recorded: string[] = [];
+    const result = await maybeEnforceIdentityProtocol({
+      workspace,
+      agentId: 'ops',
+      logsRoot,
+      protocol: 'enforced',
+      identityEdits: 'direct',
+      recordState: async (message) => {
+        recorded.push(message);
+      },
+    });
+    expect(result.blocked).toBe(false);
+    expect(result.unauthorized).toEqual([]);
+    expect(recorded).toEqual([]); // 无 CURRENT_STATE 记录
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('enforced + identity_edits=proposal_required：整删红线词仍拦截（提案门维持）', async () => {
+    const { workspace, logsRoot } = await setup();
+    fs.writeFileSync(
+      path.join(workspace, 'agent/POLICIES.md'),
+      '# 权限与上报规则\n\n## 权限边界\n\n所有操作须谨慎。\n\n## 主动上报\n\n需要时上报。\n',
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await maybeEnforceIdentityProtocol({
+      workspace,
+      agentId: 'ops',
+      logsRoot,
+      protocol: 'enforced',
+      identityEdits: 'proposal_required',
+    });
+    expect(result.blocked).toBe(true);
+    expect(result.unauthorized).toHaveLength(1);
+    warn.mockRestore();
   });
 });
 

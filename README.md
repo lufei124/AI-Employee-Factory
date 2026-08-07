@@ -248,6 +248,7 @@ AI 员工的进化（记忆/岗位/目标/规则/技能）**只在聊天/干活�
 - **身份基线**：系统把五份身份文档（含 `CONSTITUTION.md`）快照到 `agent/IDENTITY_BASELINE.md`（含 sha256），`agent.yaml.description` 为岗位定位唯一权威；基线漂移可被 doctor / 进化历史检测。
 - **提案审批**：对核心身份的改动走 `agent/proposals/*.md`（现状→拟改→理由→证据 `because of ...`）→ 飞书聊天里**用户明确「同意/批准」后**才落盘；员工不得自行 proposed→applied。
 - **提案账本对账**（P1-3）：员工写提案/批准决策登记到轻量 JSONL 账本 `~/.ai-employees/logs/proposals/<id>.jsonl`（0600，上限 5000 行）。每次 settle 对账——ROLE/POLICIES/CONSTITUTION 相对基线**超出可进化范围**（整删/重写/锚点缺失）的改动，若无带 `user_anchor` 的 `applied` 提案依据，即判「未授权身份改动」。`identity_protocol` 默认 `advisory`（仅告警）；显式设为 `enforced` 后违规文件**拒绝提交** + CURRENT_STATE 留痕（保留脏文件供人工决策，不自动回滚）。
+- **身份编辑方式**（D-043）：`agent.yaml` 的 `memory.identity_edits` 默认 `proposal_required`（上述提案门）；设为 `direct`（用户在聊天直接授权可直改核心身份）后对账跳过「未授权」判定——但 **identity-guard 锚点硬门永远生效**（红线词/岗位标题/宪法锚点仍由提交前校验护住，信任模式只放宽流程门，不关闭内容地板）。doctor 的 `proposal-ledger` 检查项在 direct 模式下直接 pass 并标注模式。
 - **知识遗忘归档**（P2-1）：`knowledge/lessons/raw|refined/` 超 90 天的陈旧条目自动**移入 `knowledge/.archive/<日期>/<层>/`**（移走非删除、可恢复），从索引与 git 中隐退；`agentctl knowledge archive-list / restore / purge` 可管理，`agentctl knowledge retention` 手动触发。
 - **身份回滚**（P2-2）：`agentctl identity rollback <id> <file> [--ref <commit>]` 把身份文档恢复到历史提交内容（git show 写回 + `evolve:` 提交 + 刷新基线），可回退改错的身份；只限身份文档，知识/技能由员工 git 自主管理。
 - **进化历史**（P3-1）：Web 员工详情「进化历史」tab 只读展示 `evolve:` 自进化提交流（可回溯）+ CURRENT_STATE + 使用统计；**点开看**——点提交看该提交变更的文件清单（状态徽章 A/M/D/R），点文件看该提交下文件全文（`git show`，只读，禁止越界读取工作区外/git 内部路径）。`agentctl identity proposals <id>` 列出提案账本状态机（含批准依据 `user_anchor`），审计哪些身份改动有批准依据。

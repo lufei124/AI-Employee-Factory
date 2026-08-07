@@ -382,9 +382,27 @@ describe('DoctorService', () => {
       expect(status('identity-guard')).toBe('pass'); // 标题锚点仍在
       expect(status('proposal-ledger')).toBe('fail');
 
-      // memory-flags：移除 agent.yaml 三开关（undefined）→ warn。
+      // D-043（identity_edits 生效）：direct=聊天直改模式 → proposal-ledger pass（对账跳过，
+      // detail 标注 direct；identity-guard 锚点硬门在任何模式下单独生效）。
       await rebaseline('负责用户反馈收集、分析与闭环跟进');
       const agentYaml = path.join(workspace, 'agent.yaml');
+      const docDirect = YAML.parse(await fs.readFile(agentYaml, 'utf8')) as {
+        memory: { identity_edits?: 'proposal_required' | 'direct' };
+      };
+      docDirect.memory.identity_edits = 'direct';
+      await fs.writeFile(agentYaml, YAML.stringify(docDirect));
+      const reportDirect = await new DoctorService(paths, registry).run('user-operations');
+      const ledgerCheck = reportDirect.checks.find((c) => c.id === 'proposal-ledger');
+      expect(ledgerCheck?.status).toBe('pass');
+      expect(ledgerCheck?.detail).toContain('direct 模式');
+      // direct 只豁免提案门，不豁免锚点硬门。
+      expect(status('identity-guard')).toBe('pass'); // ROLE 已复位，锚点完整
+      // 复位 identity_edits。
+      delete docDirect.memory.identity_edits;
+      await fs.writeFile(agentYaml, YAML.stringify(docDirect));
+
+      // memory-flags：移除 agent.yaml 三开关（undefined）→ warn。
+      await rebaseline('负责用户反馈收集、分析与闭环跟进');
       const doc = YAML.parse(await fs.readFile(agentYaml, 'utf8')) as {
         memory: {
           transcript_persist?: boolean;

@@ -271,11 +271,17 @@ export function hasApprovedAnchor(ledger: readonly LedgerRow[], targetFile?: str
  * - 只对「受保护身份区」对账：ROLE.md / POLICIES.md / CONSTITUTION.md。可进化区
  *   （GOALS / OPERATING_SYSTEM / knowledge / skills）由员工自主，不走提案门。
  * - `allowedIdentityDiff` 判定为「可进化」的小幅改动 → 不算违规（无需提案依据）。
+ * - **D-043（identity_edits 生效）**：`identity_edits: 'direct'`（用户在聊天直接授权可
+ *   直改核心身份）→ 对账跳过「未授权」判定，直接返回空。**identity-guard 锚点硬门
+ *   永远生效**（红线词/岗位定位/宪法锚点仍由提交前校验保护，不因信任模式关闭）；
+ *   `proposal_required`（默认）/undefined → 维持提案批准门。
  */
 export async function appliedWithoutAnchor(
   workspace: string,
   ledger: readonly LedgerRow[],
+  identityEdits?: 'proposal_required' | 'direct',
 ): Promise<UnauthorizedChange[]> {
+  if (identityEdits === 'direct') return []; // D-043：聊天直改模式，跳过提案门（硬门仍生效）。
   const drift = await baselineDrift(workspace);
   if (!drift) return [];
   // 读取基线快照（供 allowedIdentityDiff 对比原文）。缺失/不可解析时本函数返回空：
@@ -312,6 +318,21 @@ export interface EnforceResult {
   unauthorized: UnauthorizedChange[];
 }
 
+/** identity_edits 值（与 agent-schema 一致，本地镜像避免循环依赖）。 */
+export type IdentityEdits = 'proposal_required' | 'direct';
+
+/** 读取员工身份编辑模式（agent.yaml 缺失时默认 proposal_required）。 */
+export async function readIdentityEdits(workspace: string): Promise<IdentityEdits> {
+  try {
+    const doc = YAML.parse(await fs.readFile(path.join(workspace, 'agent.yaml'), 'utf8')) as {
+      memory?: { identity_edits?: IdentityEdits };
+    };
+    return doc.memory?.identity_edits ?? 'proposal_required';
+  } catch {
+    return 'proposal_required';
+  }
+}
+
 /** 读取员工身份协议模式（agent.yaml 缺失时默认 advisory）。 */
 export async function readIdentityProtocol(workspace: string): Promise<IdentityProtocol> {
   try {
@@ -330,6 +351,10 @@ export async function readIdentityProtocol(workspace: string): Promise<IdentityP
  * - `enforced`：违规文件不提交 + CURRENT_STATE 记录「检测到未授权身份改动已拒绝提交」。
  *   **提交拒绝 ≠ 恢复文件**：保留工作区脏文件供人工 git diff / checkout 决策。
  *
+ * D-043（identity_edits 生效）：`identity_edits: 'direct'` 时对账跳过（`appliedWithoutAnchor`
+ * 返回空）——用户在聊天直接授权可直改核心身份；`proposal_required`（默认）维持提案门。
+ * **identity-guard 锚点硬门不受影响**（提交前校验仍在 commitSelfEvolution）。
+ *
  * 返回值 blocked=true 表示调用方（commitSelfEvolution）应跳过违规文件的提交。
  */
 export async function maybeEnforceIdentityProtocol(input: {
@@ -337,13 +362,15 @@ export async function maybeEnforceIdentityProtocol(input: {
   agentId: string;
   logsRoot: string;
   protocol: IdentityProtocol;
+  /** identity_edits 模式（D-043）。undefined → proposal_required。 */
+  identityEdits?: IdentityEdits;
   /** CURRENT_STATE 记录函数（enforced + 违规时调用）。缺省不记录。 */
   recordState?: (message: string) => Promise<void>;
 }): Promise<EnforceResult> {
-  const { workspace, agentId, logsRoot, protocol, recordState } = input;
+  const { workspace, agentId, logsRoot, protocol, identityEdits, recordState } = input;
   if (protocol !== 'enforced') return { blocked: false, unauthorized: [] };
   const ledger = await readLedger(logsRoot, agentId);
-  const unauthorized = await appliedWithoutAnchor(workspace, ledger);
+  const unauthorized = await appliedWithoutAnchor(workspace, ledger, identityEdits);
   if (unauthorized.length === 0) return { blocked: false, unauthorized: [] };
   for (const entry of unauthorized) {
     console.warn(

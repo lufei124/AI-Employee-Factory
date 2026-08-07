@@ -1,5 +1,22 @@
 # Decisions
 
+## D-043：identity_edits 生效——`direct` 聊天直改 / `proposal_required` 提案门（D-041 遗留接线）
+
+- 状态：Accepted（已实施，TASK-047）
+- 日期：2026-08-07
+- 背景：D-041 P1-4 在 agent-schema 声明了 `identity_edits: 'proposal_required' | 'direct'` 字段，但注释明确「本批仅声明，M3 提案对账时生效」——声明从未接入对账/协议/doctor 任何一处，员工只要把 `identity_protocol` 设为 `enforced`，无论 `identity_edits` 是什么都会被提案门拦截。用户清点看板时点名「identity_edits 声明未实现」。本批把 D-041 预留语义接上：`proposal_required`（默认）= 核心身份改动须带 user_anchor 的已批准提案（现状）；`direct` = 用户在聊天直接授权可直改核心身份，对账跳过「未授权」判定。**identity-guard 锚点硬门永远生效**——`direct` 只豁免提案门，不豁免红线词/岗位标题/宪法锚点保护（安全性质：信任模式可以放宽流程门，但不可关闭内容地板）。
+- 决定：
+  - **`appliedWithoutAnchor(workspace, ledger, identityEdits?)`**：`identityEdits === 'direct'` → 直接返回 `[]`（跳过基线漂移对账）；`proposal_required`/undefined → 维持现状。硬门（identity-guard）不在此层，仍在 `commitSelfEvolution` 提交前内容校验独立生效。
+  - **`maybeEnforceIdentityProtocol`** 增 `identityEdits` 输入字段并透传对账；enforced + direct → 不拦截、不写 CURRENT_STATE。
+  - **`FactoryApplication.enforceIdentityProtocol`** 读 `agent.memory.identity_edits`（此处 agent 已是 AgentConfig，条件展开传递，exactOptionalPropertyTypes 安全）；`doctor.ts` 的 `proposal-ledger` 检查项读 `portableConfig.memory.identity_edits`（doctor 侧 agent 是 RegistryAgent 无 memory 字段，memory 在便携配置 agent.yaml 中），direct → pass + detail 标注「direct 模式（聊天直改，跳过提案门；锚点硬门仍生效）」。
+  - **新增 `readIdentityEdits(workspace)` helper**（与 `readIdentityProtocol` 同模式，agent.yaml 缺失默认 `proposal_required`），供对账层独立读取；目前调用方各自持有配置对象（factory 用 agent.memory、doctor 用 portableConfig），helper 保留为对称的公开契约。
+  - schema 注释同步更新（不再「仅声明」），明确 D-043 起生效与硬门语义。
+- 边界：`direct` **不豁免** identity-guard 锚点硬门（红线词整删仍拒提交，测试覆盖三种模式）；`direct` 只影响「未授权」判定，`identity_protocol: advisory` 依旧只 warn 不拦截；未显式设置 `identity_edits`（存量 agent.yaml）一律按 `proposal_required`（默认保守）。
+- 原因：用户要求「identity_edits 生效」——字段声明了就必须有语义。两种模式的定位：`proposal_required` 是默认保守（任何显著身份改动都要留 user_anchor 批准依据，可审计）；`direct` 是信任模式的逃生口——用户已在本会话直接授权改动时，强制提案流程是摩擦而非安全（红线词/宪法锚点仍被硬门护住，不会被静默削弱）。分级与 `identity_protocol` 的 advisory/enforced 正交：前者管「什么改动算合法」，后者管「检测到非法改动怎么处置」。
+- 影响：`proposal-ledger.ts`（appliedWithoutAnchor 第三参 + IdentityEdits 类型 + readIdentityEdits + maybeEnforceIdentityProtocol 透传）、`factory-application.ts`（enforceIdentityProtocol 传 identity_edits）、`doctor.ts`（proposal-ledger 检查项 direct 分支）、`agent-schema.ts`（注释更新）；增测 proposal-ledger（direct 整删放行 / 缺省 proposal_required / readIdentityEdits 读回）、self-evolution（settleActive 全链：direct 合规显著改动放行提交 / proposal_required 同改动仍拦截 / direct 下整删红线词仍被 identity-guard 硬门拦截）、doctor（direct → pass + detail 标注）；全量测试 + build/lint/tsc 全绿。
+
+---
+
 ## D-042：.md 记忆检索增强——BM25 召回引擎升级 + 运行时 RAG 注入
 
 - 状态：Accepted（已实施，TASK-046）
